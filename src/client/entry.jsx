@@ -1,9 +1,9 @@
 /**
  * Browser half of `dsh-vcs-panel`.
  *
- * Registers the `Git` entry in `conversation.view`, the eight UI dictionaries,
- * and one stylesheet. All host data comes from the authenticated `/api/vcs.*`
- * routes; nothing here writes to the repository.
+ * Registers the version control entry in `conversation.view`, the eight UI
+ * dictionaries, and one stylesheet. All host data comes from the authenticated
+ * `/api/vcs.*` routes; nothing here writes to the repository.
  */
 
 import { useEffect, useState } from 'react'
@@ -45,7 +45,7 @@ export function apply(ctx) {
    * The translate function reads the locale at call time; this wrapper makes
    * the view re-render when the switch happens.
    * @param {object} props - standard Conversation view props.
-   * @returns {object} the Git view with the active locale.
+   * @returns {object} the version control view with the active locale.
    */
   function LocalizedVcsView(props) {
     const [locale, setLocale] = useState(() => ctx.locale.getLocale().active)

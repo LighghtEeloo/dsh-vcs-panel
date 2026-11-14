@@ -16,6 +16,15 @@ function placeholders(text) {
   return [...text.matchAll(/\{(\w+)\}/gu)].map(match => match[1]).sort()
 }
 
+/** Approximate display width, counting CJK/fullwidth glyphs as two columns. */
+function displayWidth(text) {
+  let width = 0
+  for (const char of text) {
+    width += /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u.test(char) ? 2 : 1
+  }
+  return width
+}
+
 /** Every source file below a directory. */
 function sourceFiles(directory) {
   const files = []
@@ -83,6 +92,13 @@ test('every literal t(key) and every dynamic key resolves in every dictionary', 
 
   const missing = [...used].filter(key => DICTIONARIES.en[key] === undefined).sort()
   assert.deepEqual(missing, [])
+})
+
+test('view labels stay short enough for the conversation tab', () => {
+  for (const locale of LOCALES) {
+    const label = DICTIONARIES[locale]['view.label']
+    assert.ok(displayWidth(label) <= 12, `${locale} view.label is ${displayWidth(label)} columns: ${label}`)
+  }
 })
 
 test('every dictionary language has plugin metadata', () => {

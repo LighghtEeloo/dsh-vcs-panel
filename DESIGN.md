@@ -32,7 +32,7 @@ staging、commit、push、分支、stash、rebase 全部堆进一个面板，看
 ### 位置与布局
 
 插件注册到 `conversation.view` ring，id 为 `vcs`，order 20：Chat（0）、Trajectory（10）之后。
-标签为 `Git`。
+标签：中文为“版本管理”，其余语言为 `VCS`（避免名称过长被截断）。
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐

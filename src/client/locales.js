@@ -4,11 +4,13 @@
  * Keys are flat and interpolate `{name}` placeholders. Display metadata lives
  * in `locale/*.json`; these dictionaries are bundled into the Client half.
  * Missing locales fall back to English through the Host locale service.
+ * `view.label` stays compact (`VCS`, or the short Chinese name) so the
+ * conversation tab does not truncate it.
  */
 
 /** English. */
 const en = {
-  'view.label': 'Git',
+  'view.label': 'VCS',
   'top.repositories': 'Repository',
   'top.noRepository': 'No repository',
   'top.unborn': 'No commits yet',
@@ -105,7 +107,7 @@ const en = {
 
 /** Simplified Chinese. */
 const zh = {
-  'view.label': 'Git',
+  'view.label': '版本管理',
   'top.repositories': '仓库',
   'top.noRepository': '没有仓库',
   'top.unborn': '尚无提交',
@@ -202,7 +204,7 @@ const zh = {
 
 /** Japanese. */
 const ja = {
-  'view.label': 'Git',
+  'view.label': 'VCS',
   'top.repositories': 'リポジトリ',
   'top.noRepository': 'リポジトリなし',
   'top.unborn': 'コミットなし',
@@ -299,7 +301,7 @@ const ja = {
 
 /** Spanish. */
 const es = {
-  'view.label': 'Git',
+  'view.label': 'VCS',
   'top.repositories': 'Repositorio',
   'top.noRepository': 'Sin repositorio',
   'top.unborn': 'Todavía sin commits',
@@ -396,7 +398,7 @@ const es = {
 
 /** French. */
 const fr = {
-  'view.label': 'Git',
+  'view.label': 'VCS',
   'top.repositories': 'Dépôt',
   'top.noRepository': 'Aucun dépôt',
   'top.unborn': 'Aucun commit',
@@ -493,7 +495,7 @@ const fr = {
 
 /** German. */
 const de = {
-  'view.label': 'Git',
+  'view.label': 'VCS',
   'top.repositories': 'Repository',
   'top.noRepository': 'Kein Repository',
   'top.unborn': 'Noch keine Commits',
@@ -590,7 +592,7 @@ const de = {
 
 /** Russian. */
 const ru = {
-  'view.label': 'Git',
+  'view.label': 'VCS',
   'top.repositories': 'Репозиторий',
   'top.noRepository': 'Нет репозитория',
   'top.unborn': 'Коммитов пока нет',
@@ -687,7 +689,7 @@ const ru = {
 
 /** Portuguese. */
 const pt = {
-  'view.label': 'Git',
+  'view.label': 'VCS',
   'top.repositories': 'Repositório',
   'top.noRepository': 'Sem repositório',
   'top.unborn': 'Ainda sem commits',

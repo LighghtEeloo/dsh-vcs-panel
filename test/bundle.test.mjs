@@ -41,7 +41,7 @@ test('client.js registers the expected module id and exports apply/inject', () =
   assert.equal(typeof plugin.apply, 'function')
 })
 
-test('apply registers the locale dictionaries, one stylesheet, and the Git view', () => {
+test('apply registers the locale dictionaries, one stylesheet, and the version control view', () => {
   const { plugin } = loadBundle()
   const effects = []
   const localeCalls = []

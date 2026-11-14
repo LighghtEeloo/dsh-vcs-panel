@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-> DeepSeek Harness 会话里的只读 Git 页：工作区改动、文件 diff，以及带 lane 图的提交历史。
+> DeepSeek Harness 会话里的只读版本管理页：工作区改动、文件 diff，以及带 lane 图的提交历史。
 
 **状态：v0.1.0。** 产品设计见 [`DESIGN.md`](DESIGN.md)，变更见 [`CHANGELOG.md`](CHANGELOG.md)。
 
@@ -19,7 +19,7 @@ dsh plugin --profile desktop add link:/path/to/dsh-vcs-panel
 
 ## 能做什么
 
-会话视图页签里会多出一个 `Git`（位于 Chat、Trajectory 之后），不打开终端就能回答两个问题：
+会话视图页签里会多出一个“版本管理”（英文及其他语言显示 `VCS`，避免名称过长被截断；位于 Chat、Trajectory 之后），不打开终端就能回答两个问题：
 
 - **Changes（改动）** — 现在改了什么。已暂存、未暂存、未跟踪三组，可折叠目录树，文件级增删行数，以及选中文件的 unified / split diff（可自动换行）。重命名会同时显示旧、新路径，并按源路径比较。
 - **History（历史）** — 仓库怎么走到这里。从 `HEAD` 或所有分支可达的提交、彩色 lane 图、ref 徽标，以及选中提交的完整 ID、父提交、作者/提交者、消息和变更文件。提交内选中文件后，显示相对第一父提交的 diff（根提交与空树比较）。

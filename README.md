@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-> A read-only Git tab for DeepSeek Harness conversations: working-tree changes, file diffs, and commit history with a lane graph.
+> A read-only version control tab for DeepSeek Harness conversations: working-tree changes, file diffs, and commit history with a lane graph.
 
 **Status: v0.1.0.** See [`DESIGN.md`](DESIGN.md) for the product design and [`CHANGELOG.md`](CHANGELOG.md) for changes.
 
@@ -19,7 +19,7 @@ Restart DSH after installing the Host half.
 
 ## What you get
 
-A `Git` view appears in the conversation view tabs, after Chat and Trajectory. It answers two questions without opening a terminal:
+A `VCS` (version control) view appears in the conversation view tabs, after Chat and Trajectory. It answers two questions without opening a terminal:
 
 - **Changes** — what is modified right now. Staged, unstaged, and untracked groups, a collapsible directory tree, per-file added/deleted counts, and the selected file's diff in unified or split layout with optional line wrapping. Renames show both names and compare against the source path.
 - **History** — how the repository got here. Commits reachable from `HEAD` or from all branches, a colored lane graph, ref badges, and the selected commit's full id, parents, author/committer, message, and changed files. Selecting a file inside a commit shows its diff against the first parent (root commits compare against the empty tree).
@@ -60,7 +60,7 @@ The panel ships Chinese, English, Japanese, Spanish, French, German, Russian, an
 index.js              Host: authenticated read-only /api/vcs.* routes
 lib/                  Host internals: git runner, path containment, parsers, route handlers
 src/client/           Client sources (React, no Harness Client package imports)
-  entry.jsx           Registers the Git view, locale dictionaries, and stylesheet
+  entry.jsx           Registers the version control view, locale dictionaries, and stylesheet
   VcsView.jsx         Panel shell: data loading, selection, keyboard, resizing, persistence
   api.js              Fetch layer for the Host routes
   changes/            Changes list, directory tree, diff pane
