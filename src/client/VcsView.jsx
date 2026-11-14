@@ -91,6 +91,11 @@ export function VcsView({ sessionId, t, locale }) {
   const detailControl = useRef(null)
 
   const narrow = width > 0 && width < NARROW_WIDTH
+  const repositoriesReady = repositories.status === 'ready'
+  const repoInfo = repositories.list.find(entry => entry.path === state.repo) ?? null
+  const capabilities = status.data?.capabilities ?? repoInfo?.capabilities ?? null
+  const worktreeRow = capabilities?.workingCopy !== 'commit'
+  const workingCopyNode = capabilities?.workingCopyNode ?? null
 
   /** The state as it should be stored, including the live reading positions. */
   const persisted = useCallback(() => ({
@@ -130,7 +135,7 @@ export function VcsView({ sessionId, t, locale }) {
   }, [update])
 
   /** Remember one repository's selection and restore the next one's. */
-  const switchRepo = useCallback(nextRepo => {
+  const switchRepo = useCallback((nextRepo, nextCapabilities) => {
     const current = stateRef.current
     if (current.repo !== null && current.repo !== nextRepo) {
       perRepoRef.current.set(current.repo, {
@@ -142,6 +147,11 @@ export function VcsView({ sessionId, t, locale }) {
       })
     }
     const saved = nextRepo === null ? undefined : perRepoRef.current.get(nextRepo)
+    const ranges = Array.isArray(nextCapabilities?.ranges) ? nextCapabilities.ranges : null
+    const savedRef = saved?.ref
+    const ref = ranges?.some(range => range.value === savedRef)
+      ? savedRef
+      : (nextCapabilities?.defaultRange ?? 'HEAD')
     setNarrowDetail(false)
     setNotice(null)
     setDirChildren({})
@@ -159,9 +169,18 @@ export function VcsView({ sessionId, t, locale }) {
       collapsed: saved?.collapsed ?? {},
       folds: {},
       anchor: null,
-      ref: saved?.ref ?? 'HEAD',
+      ref,
     })
   }, [update])
+
+  // The persisted range belongs to one backend; a Jujutsu selection must not
+  // start on `HEAD`, and a Git selection must not start on `@`.
+  useEffect(() => {
+    if (capabilities === null) return
+    const ranges = Array.isArray(capabilities.ranges) ? capabilities.ranges : []
+    if (ranges.length === 0 || ranges.some(range => range.value === state.ref)) return
+    update({ ref: capabilities.defaultRange ?? ranges[0].value })
+  }, [capabilities, state.ref, update])
 
   // Panel width decides the single-column layout and where the file list goes.
   useLayoutEffect(() => {
@@ -183,11 +202,12 @@ export function VcsView({ sessionId, t, locale }) {
       const list = Array.isArray(answer.repositories) ? answer.repositories : []
       setRepositories({ status: 'ready', list, truncated: answer.truncated === true, error: null })
       const previousRepo = stateRef.current.repo
-      const nextRepo = list.find(entry => entry.path === previousRepo)?.path
-        ?? list.find(entry => entry.enclosing)?.path
-        ?? list[0]?.path
+      const nextEntry = list.find(entry => entry.path === previousRepo)
+        ?? list.find(entry => entry.enclosing)
+        ?? list[0]
         ?? null
-      if (nextRepo !== previousRepo) switchRepo(nextRepo)
+      const nextRepo = nextEntry?.path ?? null
+      if (nextRepo !== previousRepo) switchRepo(nextRepo, nextEntry?.capabilities)
       if (list.length === 0) setRefreshing(false)
     }).catch(error => {
       if (error?.name === 'AbortError') return
@@ -200,7 +220,7 @@ export function VcsView({ sessionId, t, locale }) {
   // Working-tree status for the chosen repository; it also settles the
   // default selection until the user picks a node.
   useEffect(() => {
-    if (state.repo === null) {
+    if (!repositoriesReady || state.repo === null) {
       setStatus(idleStatus())
       return undefined
     }
@@ -222,7 +242,7 @@ export function VcsView({ sessionId, t, locale }) {
       setRefreshing(false)
     })
     return () => { controller.abort() }
-  }, [api, state.repo, revision, selectNode])
+  }, [api, repositoriesReady, state.repo, revision, selectNode])
 
   // Reset loaded history whenever the range changes.
   useEffect(() => {
@@ -236,7 +256,8 @@ export function VcsView({ sessionId, t, locale }) {
 
   // First history page, invalidated by refresh.
   useEffect(() => {
-    if (state.repo === null) return undefined
+    if (!repositoriesReady || state.repo === null) return undefined
+    if (capabilities !== null && !capabilities.ranges.some(range => range.value === state.ref)) return undefined
     const key = `${state.repo}|${state.ref}|${revision}`
     if (logKeyRef.current === key) return undefined
     const controller = new AbortController()
@@ -263,7 +284,7 @@ export function VcsView({ sessionId, t, locale }) {
       controller.abort()
       if (!settled && logKeyRef.current === key) logKeyRef.current = ''
     }
-  }, [api, state.repo, state.ref, revision])
+  }, [api, capabilities, repositoriesReady, state.repo, state.ref, revision])
 
   // Returning to the panel after a while refreshes once, without polling.
   useEffect(() => {
@@ -301,10 +322,16 @@ export function VcsView({ sessionId, t, locale }) {
     pageControllerRef.current = null
   }, [sessionId])
 
-  const head = headOf(status.data, log.commits, state.ref)
-  const layout = useMemo(() => buildGraph(graphInput(log.commits, head)), [head, log.commits])
-  const commitIndex = useMemo(() => indexCommits(log.commits), [log.commits])
-  const selectedRow = rowOf(commitIndex, state.node)
+  const head = worktreeRow ? headOf(status.data, log.commits, state.ref) : null
+  const layout = useMemo(
+    () => buildGraph(graphInput(log.commits, head, { worktreeRow })),
+    [head, log.commits, worktreeRow],
+  )
+  const commitIndex = useMemo(
+    () => indexCommits(log.commits, workingCopyNode),
+    [log.commits, workingCopyNode],
+  )
+  const selectedRow = rowOf(commitIndex, state.node, { worktreeRow })
   const summary = state.node === null || state.node === WORKTREE
     ? null
     : log.commits[commitIndex.get(state.node)] ?? null
@@ -387,20 +414,20 @@ export function VcsView({ sessionId, t, locale }) {
 
   /** Choose the node on one timeline row. */
   const selectRow = useCallback(index => {
-    const node = nodeAt(log.commits, index)
+    const node = nodeAt(log.commits, index, { worktreeRow, workingCopyNode })
     if (node === null) return
     selectNode(node, true)
     if (narrow) setNarrowDetail(true)
-  }, [log.commits, narrow, selectNode])
+  }, [log.commits, narrow, selectNode, worktreeRow, workingCopyNode])
 
   /** Keyboard movement along the timeline; the selection follows the cursor. */
   const moveTimeline = useCallback(delta => {
     const next = selectedRow < 0 ? 0 : selectedRow + delta
-    const node = next < 0 ? null : nodeAt(log.commits, next)
+    const node = next < 0 ? null : nodeAt(log.commits, next, { worktreeRow, workingCopyNode })
     if (node === null) return
     selectNode(node, true)
     focusTimelineRow(next)
-  }, [focusTimelineRow, log.commits, selectNode, selectedRow])
+  }, [focusTimelineRow, log.commits, selectNode, selectedRow, worktreeRow, workingCopyNode])
 
   /** Move the keyboard into the selected node's files. */
   const openDetail = useCallback(() => {
@@ -420,8 +447,8 @@ export function VcsView({ sessionId, t, locale }) {
   const selectCommit = useCallback(sha => {
     selectNode(sha, true)
     const index = commitIndex.get(sha)
-    if (index !== undefined && !narrow) focusTimelineRow(index + 1)
-  }, [commitIndex, focusTimelineRow, narrow, selectNode])
+    if (index !== undefined && !narrow) focusTimelineRow(index + (worktreeRow ? 1 : 0))
+  }, [commitIndex, focusTimelineRow, narrow, selectNode, worktreeRow])
 
   // Read through a ref so the detail's request effects do not restart on every status answer.
   const statusDataRef = useRef(null)
@@ -430,8 +457,8 @@ export function VcsView({ sessionId, t, locale }) {
   /** A selected commit vanished (amend, rebase): fall back to the default. */
   const onMissing = useCallback(() => {
     const node = preferredNode({ node: null, nodeChosen: false }, statusDataRef.current)
-    selectNode(node ?? WORKTREE, false)
-  }, [selectNode])
+    selectNode(node ?? (worktreeRow ? WORKTREE : workingCopyNode), false)
+  }, [selectNode, worktreeRow, workingCopyNode])
 
   const onReading = useCallback(anchor => {
     anchorRef.current = anchor
@@ -490,18 +517,19 @@ export function VcsView({ sessionId, t, locale }) {
   const stopResize = () => { dragRef.current = null }
 
   if (repositories.status === 'error') {
-    const missing = repositories.error?.code === 'git-missing'
+    const missing = repositories.error?.code === 'vcs-missing'
     return (
       <div className="vcs-root" data-conversation-composer-overlay="" ref={rootRef} tabIndex={-1}>
         <div className="vcs-center">
-          <p className="vcs-empty-title">{missing ? t('error.gitMissing') : t('repositories.error')}</p>
-          <p className="vcs-note">{missing ? t('error.gitMissingHint') : errorMessage(t, repositories.error)}</p>
+          <p className="vcs-empty-title">{missing ? t('error.vcsMissing') : t('repositories.error')}</p>
+          <p className="vcs-note">{missing ? t('error.vcsMissingHint') : errorMessage(t, repositories.error)}</p>
           <button type="button" className="vcs-button" onClick={refresh}>{t('error.retry')}</button>
         </div>
       </div>
     )
   }
 
+  const missingTool = status.status === 'error' && status.error?.code === 'vcs-missing'
   const detailWidth = narrow ? width : width - state.sidebarWidth - RESIZER_WIDTH
   const navInline = detailWidth < SIDE_NAV_WIDTH
   const showTimeline = !narrow || !narrowDetail
@@ -519,8 +547,12 @@ export function VcsView({ sessionId, t, locale }) {
       <TopBar
         repositories={repositories.list}
         repo={state.repo}
-        onRepoChange={repo => { switchRepo(repo) }}
+        onRepoChange={repo => {
+          const entry = repositories.list.find(candidate => candidate.path === repo)
+          switchRepo(repo, entry?.capabilities)
+        }}
         status={status.data}
+        capabilities={capabilities}
         refMode={state.ref}
         onRefMode={ref => { update({ ref }) }}
         onRefresh={refresh}
@@ -537,6 +569,12 @@ export function VcsView({ sessionId, t, locale }) {
           <p className="vcs-empty-title">{t('empty.repository')}</p>
           <p className="vcs-note">{t('empty.repositoryHint')}</p>
         </div>
+      ) : missingTool ? (
+        <div className="vcs-center">
+          <p className="vcs-empty-title">{t('error.vcsMissing')}</p>
+          <p className="vcs-note">{t('error.vcsMissingHint')} {errorMessage(t, status.error)}</p>
+          <button type="button" className="vcs-button" onClick={refresh}>{t('error.retry')}</button>
+        </div>
       ) : (
         <div className="vcs-main">
           {showTimeline ? (
@@ -547,6 +585,7 @@ export function VcsView({ sessionId, t, locale }) {
                 layout={layout}
                 status={status.data}
                 statusState={status.status}
+                worktreeRow={worktreeRow}
                 selectedRow={selectedRow}
                 onSelectRow={selectRow}
                 onMove={moveTimeline}
@@ -626,6 +665,7 @@ export function VcsView({ sessionId, t, locale }) {
                   initialAnchor={anchorRef.current}
                   onReading={onReading}
                   control={detailControl}
+                  capabilities={capabilities}
                   t={t}
                   locale={locale}
                 />

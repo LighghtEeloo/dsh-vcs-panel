@@ -29,6 +29,15 @@ import {
   validateSha,
 } from '../lib/paths.js'
 import { buildStatusGroups, parseNumstat, parsePorcelainV2, STATUS_GROUP_MAX } from '../lib/status.js'
+import {
+  isJjBinaryDiff,
+  jjFilePattern,
+  mergeJjFiles,
+  parseJjCommit,
+  parseJjEntry,
+  parseJjRefs,
+  parseJjStats,
+} from '../lib/jujutsu.js'
 
 const NUL = '\u0000'
 const SHA = 'a'.repeat(40)
@@ -430,4 +439,84 @@ test('sameRepoPath folds a trailing separator and repositoryName names the leaf'
   assert.equal(sameRepoPath('/work/repo', '/work/other'), false)
   assert.equal(repositoryName('/work/repo/'), 'repo')
   assert.equal(repositoryName('/'), '/')
+})
+
+
+test('parseJjCommit reads parents, refs, times, and descriptions', () => {
+  const record = {
+    sha: 'a'.repeat(40),
+    changeId: 'abcdefghijkl',
+    parents: ['b'.repeat(40), '0'.repeat(40)],
+    author: 'Ada',
+    authorTime: '1700000000',
+    committer: 'Grace',
+    committerTime: '1700000001',
+    subject: 'subject',
+    description: 'subject\n\nbody\n',
+    workingCopy: true,
+    empty: false,
+    conflict: true,
+    localBookmarks: [JSON.stringify({ name: 'main', conflict: false })],
+    remoteBookmarks: [JSON.stringify({ name: 'main', remote: 'origin', tracked: true })],
+    tags: [JSON.stringify({ name: 'v1', remote: null })],
+  }
+  const commit = parseJjCommit(record)
+  assert.equal(commit.sha, record.sha)
+  assert.equal(commit.changeId, 'abcdefghijkl')
+  assert.deepEqual(commit.parents, ['b'.repeat(40)])
+  assert.equal(commit.author, 'Ada')
+  assert.equal(commit.authorTime, 1_700_000_000_000)
+  assert.equal(commit.committer, 'Grace')
+  assert.equal(commit.committerTime, 1_700_000_001_000)
+  assert.equal(commit.subject, 'subject')
+  assert.equal(commit.message, 'subject\n\nbody')
+  assert.equal(commit.workingCopy, true)
+  assert.equal(commit.conflict, true)
+  assert.deepEqual(commit.refs, [
+    { name: 'main', kind: 'bookmark' },
+    { name: 'main@origin', kind: 'remote' },
+    { name: 'v1', kind: 'tag' },
+  ])
+})
+
+test('parseJjRefs skips malformed records and keeps the three kinds apart', () => {
+  const refs = parseJjRefs({
+    localBookmarks: [JSON.stringify({ name: 'main' }), 'not json', JSON.stringify({ name: '' })],
+    remoteBookmarks: [JSON.stringify({ name: 'main', remote: 'origin' })],
+    tags: [JSON.stringify({ name: 'v1' })],
+  })
+  assert.deepEqual(refs, [
+    { name: 'main', kind: 'bookmark' },
+    { name: 'main@origin', kind: 'remote' },
+    { name: 'v1', kind: 'tag' },
+  ])
+  assert.deepEqual(parseJjRefs({}), [])
+})
+
+test('mergeJjFiles pairs counts and keeps rename sources only for renames and copies', () => {
+  const stats = parseJjStats([
+    JSON.stringify({ path: 'a.txt', added: 2, removed: 1, status: 'M' }),
+    JSON.stringify({ path: 'renamed.txt', added: 0, removed: 0, status: 'R' }),
+  ])
+  const files = mergeJjFiles([
+    parseJjEntry({ path: 'a.txt', source: 'a.txt', status: 'M', fileType: 'file' }),
+    parseJjEntry({ path: 'renamed.txt', source: 'old.txt', status: 'R', fileType: 'file' }),
+    parseJjEntry({ path: 'conflict.txt', source: 'conflict.txt', status: 'M', fileType: 'conflict', conflict: true }),
+  ], stats)
+  assert.deepEqual(files[0], { path: 'a.txt', status: 'M', added: 2, deleted: 1, binary: false })
+  assert.deepEqual(files[1], {
+    path: 'renamed.txt', status: 'R', origPath: 'old.txt', added: 0, deleted: 0, binary: false,
+  })
+  assert.deepEqual(files[2], {
+    path: 'conflict.txt', status: 'U', added: 0, deleted: 0, binary: false, conflict: true,
+  })
+})
+
+test('jjFilePattern quotes only the fileset string, and binary patches are recognised', () => {
+  assert.equal(jjFilePattern('dir/a "b".txt'), 'file:"dir/a \\"b\\".txt"')
+  assert.equal(jjFilePattern('plain.txt'), 'file:"plain.txt"')
+  assert.equal(isJjBinaryDiff('diff --git a/x b/x\n'), false)
+  assert.equal(isJjBinaryDiff('diff --git a/x b/x\n\uFFFD\u0001'), true)
+  assert.equal(isJjBinaryDiff('\u0000'), true)
+  assert.equal(isJjBinaryDiff('Binary files a/x and b/x differ'), true)
 })

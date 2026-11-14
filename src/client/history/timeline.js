@@ -6,15 +6,21 @@
  * between row indexes and timeline nodes and build the lane-graph input.
  */
 
-import { WORKTREE } from '../state.js'
+import { WORKING_COPY, WORKTREE } from '../state.js'
 
 /**
- * The lane-graph input: the working-tree node, then the commits.
+ * The lane-graph input.
+ *
+ * A backend with a separate working tree contributes a virtual first node
+ * whose parent is HEAD; a backend whose working copy is a commit contributes
+ * the commits as they came.
  * @param {object[]} commits - loaded commits in list order.
  * @param {string | null} head - the commit HEAD points to, or null without one.
+ * @param {{ worktreeRow?: boolean }} [options] - layout choice.
  * @returns {object[]} nodes for `buildGraph`.
  */
-export function graphInput(commits, head) {
+export function graphInput(commits, head, { worktreeRow = true } = {}) {
+  if (!worktreeRow) return [...commits]
   const worktree = { sha: WORKTREE, parents: head === null ? [] : [head], refs: [], worktree: true }
   return [worktree, ...commits]
 }
@@ -39,24 +45,29 @@ export function headOf(status, commits, range) {
  * The node shown on one timeline row.
  * @param {object[]} commits - loaded commits.
  * @param {number} index - row index.
+ * @param {{ worktreeRow?: boolean }} [options] - layout choice.
  * @returns {string | null} the node, or null past the end.
  */
-export function nodeAt(commits, index) {
-  if (index === 0) return WORKTREE
-  return commits[index - 1]?.sha ?? null
+export function nodeAt(commits, index, { worktreeRow = true, workingCopyNode = WORKING_COPY } = {}) {
+  const commit = worktreeRow ? commits[index - 1] : commits[index]
+  if (worktreeRow && index === 0) return WORKTREE
+  if (commit === undefined || commit === null) return null
+  return commit.workingCopy === true ? workingCopyNode : commit.sha
 }
 
 /**
  * The timeline row showing one node.
  * @param {Map<string, number>} commitIndex - commit id to commit index.
  * @param {string | null} node - the node.
+ * @param {{ worktreeRow?: boolean }} [options] - layout choice.
  * @returns {number} the row index, or -1 when the node is not loaded.
  */
-export function rowOf(commitIndex, node) {
-  if (node === WORKTREE) return 0
+export function rowOf(commitIndex, node, { worktreeRow = true } = {}) {
+  if (worktreeRow && node === WORKTREE) return 0
   if (node === null) return -1
   const index = commitIndex.get(node)
-  return index === undefined ? -1 : index + 1
+  if (index === undefined) return -1
+  return worktreeRow ? index + 1 : index
 }
 
 /**

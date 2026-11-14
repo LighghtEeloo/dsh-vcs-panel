@@ -42,7 +42,7 @@ export const SELECTED_RING_RADIUS = 6.5
  * @typedef {{ x: number, y: number }} GraphPoint
  * @typedef {{ points: GraphPoint[], color: number, dashed?: boolean }} GraphPath
  * @typedef {{ start: GraphPoint, control: GraphPoint, end: GraphPoint, color: number }} GraphLink
- * @typedef {{ center: GraphPoint, color: number, type: 'default'|'head'|'merge'|'worktree' }} GraphDot
+ * @typedef {{ center: GraphPoint, color: number, type: 'default'|'head'|'merge'|'worktree'|'working' }} GraphDot
  * @typedef {{
  *   paths: GraphPath[],
  *   links: GraphLink[],
@@ -183,7 +183,7 @@ export function Graph({
         {visibleDots.map((dot) => {
           const cx = dot.center.x
           const cy = dot.center.y * rowHeight
-          if (dot.type === 'worktree') {
+          if (dot.type === 'worktree' || dot.type === 'working') {
             return (
               <g key={`dot-${dot.index}`}>
                 {dot.selected ? (
@@ -196,7 +196,7 @@ export function Graph({
                   />
                 ) : null}
                 <circle
-                  className="vcs-graph-dot vcs-graph-dot-worktree"
+                  className={`vcs-graph-dot ${dot.type === 'worktree' ? 'vcs-graph-dot-worktree' : 'vcs-graph-dot-working'}`}
                   cx={cx}
                   cy={cy}
                   r={HEAD_DOT_RADIUS}

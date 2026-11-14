@@ -10,11 +10,14 @@
 /** Prefix that keeps this plugin's keys apart from any other tab state. */
 const KEY_PREFIX = 'vcs:'
 
-/** The timeline node standing for the working tree; commits use their full id. */
+/** The synthetic working-tree row; commits use their own id. */
 export const WORKTREE = 'worktree'
 
-/** Ref modes the history range accepts. */
-export const REFS = ['HEAD', 'all']
+/** The working-copy commit of a backend whose working copy is a commit. */
+export const WORKING_COPY = '@'
+
+/** Ref modes a persisted range may name; the active backend narrows this list. */
+export const REFS = ['HEAD', '@', 'all']
 
 /** Sidebar width bounds, in CSS pixels. */
 export const SIDEBAR_MIN = 280
@@ -80,7 +83,9 @@ function booleanKeys(value) {
  * @returns {boolean} true for {@link WORKTREE} or a hexadecimal commit id.
  */
 export function isNode(value) {
-  return value === WORKTREE || (typeof value === 'string' && /^[0-9a-f]{7,64}$/iu.test(value))
+  return value === WORKTREE
+    || value === WORKING_COPY
+    || (typeof value === 'string' && /^[0-9a-f]{7,64}$/iu.test(value))
 }
 
 /**
@@ -136,6 +141,9 @@ export function sanitizeState(raw) {
 export function preferredNode(state, status) {
   if (state.nodeChosen && state.node !== null) return state.node
   if (status === null || status === undefined) return state.node
+  // A backend names its own default (the working tree, or `@`). The Git-shaped
+  // fallback below stays for older status payloads and for tests of that rule.
+  if (typeof status.defaultNode === 'string' && status.defaultNode !== '') return status.defaultNode
   if ((status.total ?? 0) > 0) return WORKTREE
   return textOrNull(status.branch?.oid) ?? WORKTREE
 }

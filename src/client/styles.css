@@ -976,3 +976,80 @@
 .vcs-root[data-narrow] .vcs-repo-select {
   max-width: 150px;
 }
+
+/* Working-copy state and bookmarks --------------------------------------- */
+
+/* A local bookmark is a named pointer, like a branch but not a branch. */
+.vcs-ref-bookmark {
+  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent);
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent);
+}
+
+/* The `@` marker names the working-copy commit in Jujutsu. */
+.vcs-working-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 0.5px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 65%, transparent);
+  border-radius: 999px;
+  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
+  font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+}
+
+.vcs-working-copy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  max-width: 360px;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+.vcs-working-change {
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+}
+
+.vcs-conflict-badge {
+  flex: none;
+  padding: 0 6px;
+  border: 0.5px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 55%, transparent);
+  border-radius: 999px;
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.vcs-working-copy-row .vcs-timeline-title {
+  font-weight: 600;
+}
+
+.vcs-node-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.vcs-node-heading .vcs-node-title {
+  min-width: 0;
+}
+
+.vcs-detail-change {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+}

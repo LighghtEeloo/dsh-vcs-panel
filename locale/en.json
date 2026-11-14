@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Version control panel",
-    "description": "Adds a read-only version control view to every conversation: working-tree changes with file diffs, plus commit history with a lane graph and commit details. It never stages, commits, fetches, pushes, or changes the working tree."
+    "description": "Adds a read-only version control view to every conversation for Git and Jujutsu repositories: working changes with file diffs, plus commit history with a lane graph and commit details. It never stages, commits, fetches, pushes, or rewrites commits or bookmarks. Jujutsu may snapshot the working copy while reading."
   }
 }

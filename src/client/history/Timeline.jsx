@@ -1,7 +1,9 @@
 /**
- * The timeline: the working tree as row 0, loaded commits below it, and the
- * lane graph overlaid.
+ * The timeline: an optional working-tree row, loaded commits, and the lane
+ * graph overlaid.
  *
+ * A backend with a separate working tree contributes row 0; a backend whose
+ * working copy is a commit contributes only its commits, one of which is `@`.
  * The graph and the rows share one scrollport and one row height, so lanes
  * never drift from their rows. Only the visible window is rendered; the graph
  * receives the same window bounds. Rows are two lines: the title gets the full
@@ -13,7 +15,7 @@ import { graphWidth, Graph } from './Graph.jsx'
 import { DEFAULT_ROW_HEIGHT } from './layout.js'
 import { hasSeveralAuthors } from './commits.js'
 import { worktreeSummary } from './timeline.js'
-import { errorMessage, formatCommitTime, formatCount, shortSha } from '../format.js'
+import { errorMessage, formatCommitTime, formatCount, shortChangeId, shortSha } from '../format.js'
 import { RefBadge, Spinner } from '../ui.jsx'
 
 /** Fixed row height in CSS pixels. */
@@ -51,10 +53,10 @@ function WorktreeMeta({ status, statusState, t, locale }) {
 
 /**
  * Render the timeline.
- * @param {{ commits: object[], layout: object, status: object | null, statusState: string, selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
+ * @param {{ commits: object[], layout: object, status: object | null, statusState: string, worktreeRow?: boolean, selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
  */
 export function Timeline({
-  commits, layout, status, statusState, selectedRow, onSelectRow, onMove, onOpen, t, locale,
+  commits, layout, status, statusState, worktreeRow = true, selectedRow, onSelectRow, onMove, onOpen, t, locale,
   loading, loadingMore, error, hasMore, truncated, onLoadMore, onRetry,
   initialScrollTop = 0, onScrollOffset,
 }) {
@@ -95,7 +97,7 @@ export function Timeline({
     else if (bottom > element.scrollTop + element.clientHeight) element.scrollTop = bottom - element.clientHeight
   }, [selectedRow])
 
-  const rowCount = commits.length + 1
+  const rowCount = commits.length + (worktreeRow ? 1 : 0)
   const gutter = graphWidth(layout)
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
   const last = Math.min(rowCount, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN)
@@ -103,9 +105,10 @@ export function Timeline({
   const focusRow = selectedRow >= 0 ? selectedRow : 0
   const now = Date.now()
 
+  const workingSummary = status?.workingCopy?.summary ?? null
   const rows = []
   for (let index = first; index < last; index += 1) {
-    const commit = index === 0 ? null : commits[index - 1]
+    const commit = worktreeRow && index === 0 ? null : commits[worktreeRow ? index - 1 : index]
     const common = {
       type: 'button',
       'data-timeline-index': index,
@@ -126,17 +129,29 @@ export function Timeline({
       )
       continue
     }
+    const workingCopy = commit.workingCopy === true
+    const shortId = typeof commit.changeId === 'string' && commit.changeId !== ''
+      ? shortChangeId(commit.changeId)
+      : shortSha(commit.sha)
+    const subject = commit.subject === '' ? t('commit.noDescription') : commit.subject
     rows.push(
       <button
         key={commit.sha}
-        className="vcs-timeline-row"
-        title={`${shortSha(commit.sha)}  ${commit.subject}`}
+        className={`vcs-timeline-row${workingCopy ? ' vcs-working-copy-row' : ''}`}
+        title={`${workingCopy ? '@  ' : ''}${commit.changeId === undefined ? shortSha(commit.sha) : commit.changeId}  ${subject}`}
         {...common}
       >
-        <span className="vcs-timeline-title">{commit.subject}</span>
+        <span className="vcs-timeline-title">{subject}</span>
         <span className="vcs-timeline-meta">
+          {workingCopy ? <span className="vcs-working-badge" title={t('timeline.workingCopy')}>@</span> : null}
           {commit.refs.slice(0, ROW_REFS).map(reference => <RefBadge key={`${reference.kind}:${reference.name}`} reference={reference} />)}
-          <code className="vcs-timeline-sha">{shortSha(commit.sha)}</code>
+          <code className="vcs-timeline-sha" title={commit.sha}>{shortId}</code>
+          {workingCopy && workingSummary !== null && workingSummary.changed > 0 ? (
+            <>
+              <span>{t('timeline.changes', { count: formatCount(workingSummary.changed, locale) })}</span>
+              <LineStat added={workingSummary.added} deleted={workingSummary.deleted} locale={locale} />
+            </>
+          ) : null}
           {showAuthor ? <span className="vcs-timeline-author">{commit.author}</span> : null}
           <span className="vcs-timeline-time">{formatCommitTime(commit.authorTime, now, locale)}</span>
         </span>

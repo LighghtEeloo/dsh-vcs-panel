@@ -1,10 +1,11 @@
 /**
  * Pure rules for the detail pane shared by the working tree and commits.
  *
- * A selected node is normalized into file groups: the working tree has the
- * staged, unstaged, and untracked groups; a commit has one group of changed
- * files. The file navigation draws those groups as trees, and the diff stream
- * walks the same trees fully expanded, so both list files in the same order.
+ * A selected node is normalized into file groups: a backend with a separate
+ * working tree supplies its status groups; a commit (or a working-copy commit)
+ * has one group of changed files. The file navigation draws those groups as
+ * trees, and the diff stream walks the same trees fully expanded, so both list
+ * files in the same order.
  */
 
 import { buildRows } from './tree.js'

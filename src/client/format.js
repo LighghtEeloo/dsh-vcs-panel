@@ -47,6 +47,15 @@ export function shortSha(sha) {
 }
 
 /**
+ * Shorten a change id for a dense row; the detail shows the full short id.
+ * @param {string} changeId - a change id.
+ * @returns {string} the prefix.
+ */
+export function shortChangeId(changeId) {
+  return changeId.slice(0, 8)
+}
+
+/**
  * Format a count with the active locale's digit grouping.
  * @param {number} value - the count.
  * @param {string} [locale] - BCP 47 locale; browser default when omitted.
@@ -123,7 +132,6 @@ const ERROR_KEYS = {
   'no-session': 'error.noSession',
   'no-cwd': 'error.noCwd',
   'not-a-repo': 'error.notARepo',
-  'git-missing': 'error.gitMissing',
   'not-found': 'error.notFound',
   timeout: 'error.timeout',
   'output-too-large': 'error.outputTooLarge',

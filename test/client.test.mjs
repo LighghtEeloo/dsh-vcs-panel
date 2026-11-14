@@ -3,10 +3,10 @@ import assert from 'node:assert/strict'
 
 import {
   defaultState, isNode, loadState, nodePatch, preferredNode, saveState, sanitizeState, storageKey,
-  SIDEBAR_MIN, SIDEBAR_MAX, WORKTREE,
+  SIDEBAR_MIN, SIDEBAR_MAX, WORKING_COPY, WORKTREE,
 } from '../src/client/state.js'
 import {
-  errorMessage, formatCommitTime, formatCount, lineCounts, shortSha, splitPath, statusKey,
+  errorMessage, formatCommitTime, formatCount, lineCounts, shortChangeId, shortSha, splitPath, statusKey,
 } from '../src/client/format.js'
 import { buildRows, dirKey } from '../src/client/detail/tree.js'
 import {
@@ -70,6 +70,8 @@ test('sanitizeState keeps accepted values and drops unknown ones', () => {
   assert.equal(state.timelineScroll, 88)
   assert.equal('tab' in state, false)
   assert.equal(sanitizeState({ node: WORKTREE }).node, WORKTREE)
+  assert.equal(sanitizeState({ node: WORKING_COPY }).node, WORKING_COPY)
+  assert.equal(sanitizeState({ ref: '@' }).ref, '@')
 })
 
 test('sanitizeState rejects malformed selections, anchors, and ranges', () => {
@@ -90,6 +92,7 @@ test('sanitizeState rejects malformed selections, anchors, and ranges', () => {
   assert.equal(sanitizeState({ anchor: { key: 'a', offset: Number.NaN } }).anchor, null)
   assert.equal(isNode('abc123'), false, 'shorter than an abbreviated id')
   assert.equal(isNode('ABCDEF1'), true)
+  assert.equal(isNode(WORKING_COPY), true)
 })
 
 test('preferredNode follows the working tree until the user chooses', () => {
@@ -104,6 +107,11 @@ test('preferredNode follows the working tree until the user chooses', () => {
   assert.equal(preferredNode({ node: WORKTREE, nodeChosen: true }, clean), WORKTREE, 'a choice stays')
   assert.equal(preferredNode({ node: 'c'.repeat(40), nodeChosen: true }, dirty), 'c'.repeat(40))
   assert.equal(preferredNode(unchosen, null), null, 'nothing to decide before the status answers')
+
+  // A backend names its own default; the Jujutsu default is the working copy.
+  const jj = { total: 2, branch: null, defaultNode: WORKING_COPY }
+  assert.equal(preferredNode(unchosen, jj), WORKING_COPY)
+  assert.equal(preferredNode({ node: 'c'.repeat(40), nodeChosen: true }, jj), 'c'.repeat(40))
 })
 
 test('nodePatch resets reading state and commit folders only when the node changes', () => {
@@ -167,7 +175,17 @@ test('errorMessage localizes known codes and falls back to the Host message', ()
   assert.equal(errorMessage(t, { code: 'timeout', message: 'raw' }), 't:error.timeout')
   assert.equal(errorMessage(t, { code: 'network', message: 'raw' }), 't:error.network')
   assert.equal(errorMessage(t, { code: 'unheard-of', message: 'host text' }), 'host text')
+  assert.equal(
+    errorMessage(t, { code: 'vcs-missing', message: 'jj is not available on this host.' }),
+    'jj is not available on this host.',
+    'the missing-tool message names the backend',
+  )
   assert.equal(errorMessage(t, null), 't:error.internal')
+})
+
+test('shortChangeId keeps change ids readable in a row', () => {
+  assert.equal(shortChangeId('abcdefghijkl'), 'abcdefgh')
+  assert.equal(shortChangeId('abc'), 'abc')
 })
 
 test('formatCommitTime is relative within a week and absolute beyond', () => {
@@ -336,6 +354,21 @@ test('timeline rows put the working tree first and map back to nodes', () => {
   assert.deepEqual(input[0], { sha: WORKTREE, parents: ['c1'], refs: [], worktree: true })
   assert.equal(input.length, 3)
   assert.deepEqual(graphInput([], null)[0].parents, [], 'no commit yet: the working tree has no parent')
+
+  // Without a synthetic row, the loaded commit at row 0 is the node.
+  assert.equal(nodeAt(commits, 0, { worktreeRow: false }), 'c1')
+  const jjCommits = [{ sha: 'c1', workingCopy: true }, { sha: 'c2' }]
+  const jjIndex = indexCommits(jjCommits)
+  assert.equal(nodeAt(jjCommits, 0, { worktreeRow: false }), WORKING_COPY)
+  assert.equal(rowOf(jjIndex, WORKING_COPY, { worktreeRow: false }), 0)
+  assert.equal(jjIndex.get(WORKING_COPY), 0)
+  assert.equal(jjIndex.get('c1'), 0)
+  assert.equal(nodeAt(commits, 1, { worktreeRow: false }), 'c2')
+  assert.equal(nodeAt(commits, 2, { worktreeRow: false }), null)
+  assert.equal(rowOf(index, 'c1', { worktreeRow: false }), 0)
+  assert.equal(rowOf(index, 'c2', { worktreeRow: false }), 1)
+  assert.equal(rowOf(index, WORKING_COPY, { worktreeRow: false }), -1)
+  assert.deepEqual(graphInput(commits, 'c1', { worktreeRow: false }), commits)
 })
 
 test('headOf prefers the status answer and falls back to the HEAD range', () => {

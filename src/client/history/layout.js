@@ -179,7 +179,7 @@ class PathHelper {
  * @returns {{
  *   paths: Array<{ points: Array<{ x: number, y: number }>, color: number, dashed?: boolean }>,
  *   links: Array<{ start: { x: number, y: number }, control: { x: number, y: number }, end: { x: number, y: number }, color: number }>,
- *   dots: Array<{ center: { x: number, y: number }, color: number, type: 'default'|'head'|'merge'|'worktree' }>,
+ *   dots: Array<{ center: { x: number, y: number }, color: number, type: 'default'|'head'|'merge'|'worktree'|'working' }>,
  *   commitLeftMargin: number[],
  * }} Layout with one dot per commit (in commit order) and the content offset for
  *   each row in x pixel space (directly usable as a padding-left).
@@ -301,6 +301,7 @@ export function buildGraph(commits) {
     const color = major ? major.path.color : 0
     let type = 'default'
     if (commit?.worktree === true) type = 'worktree'
+    else if (commit?.workingCopy === true) type = 'working'
     else if (refs.some((ref) => ref && (ref.kind === 'head' || ref.current === true))) type = 'head'
     else if (parents.length > 1) type = 'merge'
     result.dots.push({ center, color, type })

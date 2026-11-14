@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Panneau de gestion de versions",
-    "description": "Ajoute un onglet de gestion de versions en lecture seule à chaque conversation : modifications de l’arbre de travail avec leurs diffs, historique des commits avec un graphe de voies et le détail d’un commit. Il n’indexe, ne valide, ne récupère, ne pousse ni ne modifie l’arbre de travail."
+    "description": "Ajoute à chaque conversation une vue de gestion de versions en lecture seule pour les dépôts Git et Jujutsu : modifications en cours avec leurs diffs, historique des commits avec un graphe de voies et détail d’un commit. Elle n’indexe, ne valide, ne récupère, ne pousse et ne réécrit aucun commit ni signet. Jujutsu peut enregistrer la copie de travail lors de la lecture."
   }
 }

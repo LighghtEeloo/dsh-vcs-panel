@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { WORKTREE } from '../state.js'
-import { errorMessage, formatCount, formatDateTime, shortSha } from '../format.js'
+import { errorMessage, formatCount, formatDateTime, shortChangeId, shortSha } from '../format.js'
 import { messageBody } from '../history/commits.js'
 import { worktreeSummary } from '../history/timeline.js'
 import {
@@ -50,9 +50,14 @@ function CommitHeader({ commitState, summary, onSelectCommit, isLoaded, onRetry,
   const detail = commitState.commit
   const subject = detail?.subject ?? summary?.subject ?? ''
   const body = messageBody(detail?.message)
+  const changeId = detail?.changeId ?? summary?.changeId
+  const workingCopy = detail?.workingCopy === true
   return (
     <header className="vcs-node-header">
-      <h2 className="vcs-node-title">{subject}</h2>
+      <div className="vcs-node-heading">
+        {workingCopy ? <span className="vcs-working-badge" title={t('commit.workingCopy')}>@</span> : null}
+        <h2 className="vcs-node-title">{subject === '' ? t('commit.noDescription') : subject}</h2>
+      </div>
       {commitState.status === 'error' ? (
         <div className="vcs-node-status">
           <span>{t('commit.error')} {errorMessage(t, commitState.error)}</span>
@@ -63,6 +68,12 @@ function CommitHeader({ commitState, summary, onSelectCommit, isLoaded, onRetry,
       ) : (
         <>
           <dl className="vcs-commit-meta">
+            {changeId === undefined ? null : (
+              <>
+                <dt>{t('commit.changeId')}</dt>
+                <dd><code>{changeId}</code></dd>
+              </>
+            )}
             <dt>{t('commit.author')}</dt>
             <dd>{detail.author} <span className="vcs-dim">{formatDateTime(detail.authorTime, locale)}</span></dd>
             {detail.committer !== detail.author || detail.committerTime !== detail.authorTime ? (
@@ -124,9 +135,11 @@ export function DetailPane({
   dirChildren, loadingDirs, dirs, collapsed, onToggleDir,
   folds, onToggleFold, split, wrap, onToggleSplit, onToggleWrap,
   narrow, navInline, onBack, onLeaveNav, onSelectCommit, isLoaded, onMissing,
-  revision, cache, initialAnchor, onReading, control, t, locale,
+  revision, cache, initialAnchor, onReading, control, capabilities, t, locale,
 }) {
-  const isWorktree = node === WORKTREE
+  const isWorktree = node === WORKTREE && capabilities?.workingCopy !== 'commit'
+  const workingCopyNode = capabilities?.workingCopyNode ?? null
+  const isWorkingCopy = workingCopyNode !== null && node === workingCopyNode
   const [commitState, setCommitState] = useState({ status: 'idle', commit: null, truncated: false, error: null })
   const [attempt, setAttempt] = useState(0)
   const [cursor, setCursor] = useState(0)
@@ -152,7 +165,9 @@ export function DetailPane({
     () => (isWorktree ? worktreeGroups(status) : commitGroups(commitState.commit)),
     [commitState.commit, isWorktree, status],
   )
-  const rev = isWorktree ? null : (commitState.commit?.sha ?? node)
+  // The working-copy commit is addressed as `@` so a rewrite between the
+  // commit detail and its diff requests cannot leave the diff on a stale id.
+  const rev = isWorktree ? null : (isWorkingCopy ? workingCopyNode : (commitState.commit?.sha ?? node))
   const sections = useMemo(() => streamSections(groups, dirChildren, rev), [dirChildren, groups, rev])
   const defaults = useMemo(() => defaultFolds(sections), [sections])
 
@@ -312,7 +327,13 @@ export function DetailPane({
           </>
         ) : (
           <>
-            <ShaButton sha={commitState.commit?.sha ?? node} t={t} />
+            {commitState.commit?.workingCopy === true ? (
+              <span className="vcs-working-badge" title={t('commit.workingCopy')}>@</span>
+            ) : null}
+            <ShaButton sha={commitState.commit?.sha ?? summary?.sha ?? node} t={t} />
+            {typeof commitState.commit?.changeId === 'string' && commitState.commit.changeId !== '' ? (
+              <code className="vcs-detail-change" title={t('commit.changeId')}>{shortChangeId(commitState.commit.changeId)}</code>
+            ) : null}
             <span className="vcs-detail-refs">
               {refs.map(reference => <RefBadge key={`${reference.kind}:${reference.name}`} reference={reference} />)}
             </span>

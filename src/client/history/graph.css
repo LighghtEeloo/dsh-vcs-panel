@@ -59,3 +59,8 @@
   stroke-width: 1.5;
   opacity: 0.35;
 }
+
+/* The working-copy commit is real history: a solid hollow ring, not dashed. */
+.vcs-graph-dot-working {
+  stroke-width: 2;
+}

@@ -5,6 +5,8 @@
  * here lets the components stay layout code and the rules stay testable.
  */
 
+import { WORKING_COPY } from '../state.js'
+
 /**
  * The part of a commit message below its subject.
  *
@@ -39,9 +41,19 @@ export function hasSeveralAuthors(commits) {
 
 /**
  * Index loaded commits by full id.
- * @param {Array<{ sha: string }>} commits - loaded commit rows in list order.
- * @returns {Map<string, number>} commit id to row index.
+ *
+ * A backend whose working copy is a commit also maps the stable `@` token to
+ * that row, so selecting the working copy does not store an id that changes
+ * every time the working copy is rewritten.
+ * @param {Array<{ sha: string, workingCopy?: boolean }>} commits - loaded commit rows in list order.
+ * @returns {Map<string, number>} commit id or working-copy token to row index.
  */
-export function indexCommits(commits) {
-  return new Map(commits.map((commit, index) => [commit.sha, index]))
+export function indexCommits(commits, workingCopyNode = WORKING_COPY) {
+  const index = new Map(commits.map((commit, position) => [commit.sha, position]))
+  commits.forEach((commit, position) => {
+    if (commit.workingCopy === true && workingCopyNode !== null && workingCopyNode !== undefined) {
+      index.set(workingCopyNode, position)
+    }
+  })
+  return index
 }

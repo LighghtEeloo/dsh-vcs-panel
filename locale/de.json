@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Versionsverwaltungs-Panel",
-    "description": "Fügt jeder Unterhaltung einen schreibgeschützten Tab für die Versionsverwaltung hinzu: Änderungen im Arbeitsbaum mit Datei-Diffs sowie der Commit-Verlauf mit Lane-Graph und Commit-Details. Es wird nichts bereitgestellt, committet, abgerufen, gepusht oder im Arbeitsbaum geändert."
+    "description": "Fügt jeder Unterhaltung eine schreibgeschützte Versionsverwaltungsansicht für Git- und Jujutsu-Repositories hinzu: laufende Änderungen mit Datei-Diffs sowie Commit-Verlauf mit Lane-Graph und Commit-Details. Es wird nichts bereitgestellt, committet, abgerufen, gepusht oder an Commits bzw. Lesezeichen umgeschrieben. Jujutsu kann beim Lesen die Arbeitskopie als Snapshot sichern."
   }
 }

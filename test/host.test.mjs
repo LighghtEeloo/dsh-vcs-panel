@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -23,6 +24,34 @@ process.env.GIT_CONFIG_NOSYSTEM = '1'
 process.env.GIT_TERMINAL_PROMPT = '0'
 
 const GIT_ENV = { ...process.env }
+
+/** Whether this host can build and read a Jujutsu fixture. */
+const HAS_JJ = (() => {
+  try {
+    execFileSync('jj', ['--version'], { encoding: 'utf8', env: { ...process.env, JJ_CONFIG: '/dev/null' } })
+    return true
+  } catch {
+    return false
+  }
+})()
+
+// Keep Jujutsu fixtures and the Host's jj commands independent of the user's
+// config, and create a fixed identity so signed-commit settings do not apply.
+process.env.JJ_CONFIG = '/dev/null'
+process.env.JJ_USER = 'Test User'
+process.env.JJ_EMAIL = 'test@example.com'
+
+const JJ_ENV = { ...process.env }
+
+/**
+ * Run jj during fixture setup and for read-only assertions.
+ * @param {string} cwd - working directory.
+ * @param {string[]} args - jj arguments.
+ * @returns {string} trimmed stdout.
+ */
+function jj(cwd, args) {
+  return execFileSync('jj', args, { cwd, env: JJ_ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+}
 
 /**
  * Run git during fixture setup and for read-only assertions.
@@ -152,6 +181,34 @@ function buildFixture() {
   const mergeFirstParent = git(merge, ['rev-parse', 'HEAD^1'])
   const mergeSecondParent = git(merge, ['rev-parse', 'HEAD^2'])
 
+  // A colocated Jujutsu repository: @ is a working-copy commit with changes,
+  // its parent is an ordinary commit with `main`, and @ carries `feature`.
+  let jjRepo = null
+  let jjParentSha = null
+  let jjHeadSha = null
+  if (HAS_JJ) {
+    jjRepo = join(scratch, 'jj')
+    mkdirSync(jjRepo)
+    jj(jjRepo, ['git', 'init'])
+    writeFileSync(join(jjRepo, 'tracked.txt'), 'one\ntwo\n')
+    writeFileSync(join(jjRepo, 'to-rename.txt'), 'r\n')
+    writeFileSync(join(jjRepo, 'to-delete.txt'), 'd\n')
+    writeFileSync(join(jjRepo, 'image.bin'), Buffer.from([0, 1, 2]))
+    jj(jjRepo, ['describe', '-m', 'initial commit'])
+    jj(jjRepo, ['bookmark', 'create', 'main', '-r', '@'])
+    jjParentSha = jj(jjRepo, ['log', '-r', '@', '--no-graph', '-T', 'commit_id'])
+
+    jj(jjRepo, ['new', '-m', 'second commit'])
+    writeFileSync(join(jjRepo, 'tracked.txt'), 'one\ntwo\nthree\n')
+    renameSync(join(jjRepo, 'to-rename.txt'), join(jjRepo, 'renamed.txt'))
+    rmSync(join(jjRepo, 'to-delete.txt'))
+    writeFileSync(join(jjRepo, 'added.txt'), 'added\n')
+    writeFileSync(join(jjRepo, 'image.bin'), Buffer.from([9, 9, 0, 9]))
+    jj(jjRepo, ['bookmark', 'create', 'feature', '-r', '@'])
+    jj(jjRepo, ['status'])
+    jjHeadSha = jj(jjRepo, ['log', '-r', '@', '--no-graph', '-T', 'commit_id'])
+  }
+
   return {
     scratch,
     main,
@@ -159,11 +216,14 @@ function buildFixture() {
     unborn,
     plain,
     merge,
+    jj: jjRepo,
     rootSha,
     headSha,
     mergeSha,
     mergeFirstParent,
     mergeSecondParent,
+    jjParentSha,
+    jjHeadSha,
   }
 }
 
@@ -173,6 +233,7 @@ const nestedPath = realpathSync(fixture.nested)
 const unbornPath = realpathSync(fixture.unborn)
 const plainPath = realpathSync(fixture.plain)
 const mergePath = realpathSync(fixture.merge)
+const jjPath = fixture.jj === null ? null : realpathSync(fixture.jj)
 
 after(() => {
   rmSync(fixture.scratch, { recursive: true, force: true })
@@ -389,6 +450,7 @@ const sessions = new Map([
   ['s-merge', { header: { cwd: fixture.merge } }],
   ['s-nocwd', { header: {} }],
 ])
+if (fixture.jj !== null) sessions.set('s-jj', { header: { cwd: fixture.jj } })
 
 /** A host context the handlers accept. */
 function createHost(overrides = {}) {
@@ -427,6 +489,9 @@ test('repositories lists the enclosing repository and one-level children only', 
   )
   assert.equal(body.repositories[0].path, mainPath)
   assert.equal(body.repositories[1].path, nestedPath)
+  assert.equal(body.repositories[0].vcs, 'git')
+  assert.equal(body.repositories[0].capabilities.workingCopy, 'row')
+  assert.deepEqual(body.repositories[0].capabilities.ranges.map(range => range.value), ['HEAD', 'all'])
 })
 
 test('repositories is empty rather than an error when the cwd is not in a repository', async () => {
@@ -1107,7 +1172,7 @@ test('commit rejects malformed and unknown ids', async () => {
   assert.equal(unknown.body.error.code, 'not-found')
 })
 
-test('a host without git answers 503 git-missing', async () => {
+test('a host without git still lists the repository and answers vcs-missing', async () => {
   const missing = createHandlers(createHost({
     subprocess: {
       resolveExecutable: async () => {
@@ -1115,19 +1180,26 @@ test('a host without git answers 503 git-missing', async () => {
       },
     },
   }))
+  const repositories = await call(
+    missing.repositories,
+    route('/api/vcs.repositories', { sessionId: 's-main' }),
+  )
+  assert.equal(repositories.status, 200)
+  assert.equal(repositories.body.repositories[0].vcs, 'git')
+
   const status = await call(
     missing.status,
     route('/api/vcs.status', { sessionId: 's-main', repo: mainPath }),
   )
   assert.equal(status.status, 503)
-  assert.equal(status.body.error.code, 'git-missing')
+  assert.equal(status.body.error.code, 'vcs-missing')
 
-  const repositories = await call(
-    missing.repositories,
-    route('/api/vcs.repositories', { sessionId: 's-main' }),
+  const log = await call(
+    missing.log,
+    route('/api/vcs.log', { sessionId: 's-main', repo: mainPath }),
   )
-  assert.equal(repositories.status, 503)
-  assert.equal(repositories.body.error.code, 'git-missing')
+  assert.equal(log.status, 503)
+  assert.equal(log.body.error.code, 'vcs-missing')
 })
 
 test('a capped git stdout becomes output-too-large', async () => {
@@ -1158,6 +1230,241 @@ test('a capped git stdout becomes output-too-large', async () => {
   )
   assert.equal(status, 413)
   assert.equal(body.error.code, 'output-too-large')
+})
+
+
+test('repositories identifies a Jujutsu workspace and exposes its capabilities', { skip: !HAS_JJ }, async () => {
+  const { status, body } = await call(
+    handlers.repositories,
+    route('/api/vcs.repositories', { sessionId: 's-jj' }),
+  )
+  assert.equal(status, 200)
+  const repo = body.repositories.find(candidate => candidate.path === jjPath)
+  assert.ok(repo)
+  assert.equal(repo.vcs, 'jujutsu')
+  assert.equal(repo.capabilities.workingCopy, 'commit')
+  assert.deepEqual(repo.capabilities.ranges.map(range => range.value), ['@', 'all'])
+  assert.equal(repo.capabilities.defaultRange, '@')
+})
+
+test('Jujutsu status reports the working-copy commit and its summary', { skip: !HAS_JJ }, async () => {
+  const { status, body } = await call(
+    handlers.status,
+    route('/api/vcs.status', { sessionId: 's-jj', repo: jjPath }),
+  )
+  assert.equal(status, 200)
+  assert.equal(body.vcs, 'jujutsu')
+  assert.equal(body.capabilities.workingCopy, 'commit')
+  assert.equal(body.branch, null)
+  assert.equal(body.defaultNode, '@')
+  assert.deepEqual(body.groups, {})
+  assert.equal(body.workingCopy.node, '@')
+  assert.equal(body.workingCopy.commitId, fixture.jjHeadSha)
+  assert.ok(body.workingCopy.changeId.length > 0)
+  assert.equal(body.workingCopy.subject, 'second commit')
+  assert.deepEqual(body.workingCopy.parents, [fixture.jjParentSha])
+  assert.ok(body.workingCopy.refs.some(reference => reference.kind === 'bookmark' && reference.name === 'feature'))
+  assert.equal(body.workingCopy.summary.changed, 5)
+  assert.ok(body.workingCopy.summary.added > 0)
+  assert.ok(body.workingCopy.summary.deleted > 0)
+})
+
+test('Jujutsu log pages the working copy and all visible history', { skip: !HAS_JJ }, async () => {
+  const first = await call(
+    handlers.log,
+    route('/api/vcs.log', { sessionId: 's-jj', repo: jjPath }),
+  )
+  assert.equal(first.status, 200)
+  assert.equal(first.body.commits.length, 2)
+  assert.equal(first.body.commits[0].sha, fixture.jjHeadSha)
+  assert.equal(first.body.commits[0].workingCopy, true)
+  assert.equal(first.body.commits[0].subject, 'second commit')
+  assert.ok(first.body.commits[0].changeId.length > 0)
+  assert.ok(first.body.commits[0].refs.some(reference => reference.kind === 'bookmark' && reference.name === 'feature'))
+  assert.equal(first.body.commits[1].sha, fixture.jjParentSha)
+  assert.equal(first.body.commits[1].workingCopy, false)
+  assert.ok(first.body.commits[1].refs.some(reference => reference.kind === 'bookmark' && reference.name === 'main'))
+  assert.deepEqual(first.body.commits[1].parents, [])
+  assert.equal(first.body.nextSkip, 2)
+
+  const secondPage = await call(
+    handlers.log,
+    route('/api/vcs.log', { sessionId: 's-jj', repo: jjPath, skip: 1, limit: 1 }),
+  )
+  assert.equal(secondPage.body.commits.length, 1)
+  assert.equal(secondPage.body.commits[0].sha, fixture.jjParentSha)
+
+  const all = await call(
+    handlers.log,
+    route('/api/vcs.log', { sessionId: 's-jj', repo: jjPath, ref: 'all' }),
+  )
+  assert.equal(all.body.commits.length, 2)
+
+  const wrongRange = await call(
+    handlers.log,
+    route('/api/vcs.log', { sessionId: 's-jj', repo: jjPath, ref: 'HEAD' }),
+  )
+  assert.equal(wrongRange.status, 400)
+  assert.equal(wrongRange.body.error.code, 'bad-request')
+})
+
+test('Jujutsu commit detail carries change id, refs, and file stats', { skip: !HAS_JJ }, async () => {
+  const workingCopy = await call(
+    handlers.commit,
+    route('/api/vcs.commit', { sessionId: 's-jj', repo: jjPath, sha: '@' }),
+  )
+  assert.equal(workingCopy.status, 200)
+  assert.equal(workingCopy.body.commit.sha, fixture.jjHeadSha)
+  assert.equal(workingCopy.body.commit.workingCopy, true)
+  assert.ok(workingCopy.body.commit.changeId.length > 0)
+  assert.equal(workingCopy.body.commit.subject, 'second commit')
+  assert.equal(workingCopy.body.commit.message, 'second commit')
+  assert.deepEqual(workingCopy.body.commit.parents, [fixture.jjParentSha])
+
+  const files = new Map(workingCopy.body.commit.files.map(file => [file.path, file]))
+  assert.deepEqual(files.get('tracked.txt'), {
+    path: 'tracked.txt', status: 'M', added: 1, deleted: 0, binary: false,
+  })
+  assert.deepEqual(files.get('renamed.txt'), {
+    path: 'renamed.txt', status: 'R', origPath: 'to-rename.txt', added: 0, deleted: 0, binary: false,
+  })
+  assert.deepEqual(files.get('to-delete.txt'), {
+    path: 'to-delete.txt', status: 'D', added: 0, deleted: 1, binary: false,
+  })
+  assert.deepEqual(files.get('added.txt'), {
+    path: 'added.txt', status: 'A', added: 1, deleted: 0, binary: false,
+  })
+  assert.equal(files.get('image.bin').status, 'M')
+
+  const parent = await call(
+    handlers.commit,
+    route('/api/vcs.commit', { sessionId: 's-jj', repo: jjPath, sha: fixture.jjParentSha }),
+  )
+  assert.equal(parent.body.commit.workingCopy, false)
+  assert.equal(parent.body.commit.subject, 'initial commit')
+  assert.ok(parent.body.commit.refs.some(reference => reference.kind === 'bookmark' && reference.name === 'main'))
+  assert.ok(parent.body.commit.files.some(file => file.path === 'tracked.txt' && file.status === 'A'))
+})
+
+test('Jujutsu diff reads text, renames, binaries, and missing files', { skip: !HAS_JJ }, async () => {
+  const base = { sessionId: 's-jj', repo: jjPath, scope: 'commit', rev: '@' }
+  const text = await call(
+    handlers.diff,
+    route('/api/vcs.diff', { ...base, path: 'tracked.txt' }),
+  )
+  assert.equal(text.status, 200)
+  assert.equal(text.body.kind, 'text')
+  assert.deepEqual(text.body.hunks[0].lines, [' one', ' two', '+three'])
+
+  const renamed = await call(
+    handlers.diff,
+    route('/api/vcs.diff', {
+      ...base, path: 'renamed.txt', oldPath: 'to-rename.txt',
+    }),
+  )
+  assert.equal(renamed.status, 200)
+  assert.equal(renamed.body.kind, 'text')
+  assert.deepEqual(renamed.body.hunks, [])
+
+  const binary = await call(
+    handlers.diff,
+    route('/api/vcs.diff', { ...base, path: 'image.bin' }),
+  )
+  assert.equal(binary.status, 200)
+  assert.deepEqual(binary.body, { kind: 'binary', path: 'image.bin' })
+
+  const missing = await call(
+    handlers.diff,
+    route('/api/vcs.diff', { ...base, path: 'not-here.txt' }),
+  )
+  assert.equal(missing.status, 404)
+  assert.equal(missing.body.error.code, 'not-found')
+
+  const wrongScope = await call(
+    handlers.diff,
+    route('/api/vcs.diff', { ...base, scope: 'unstaged', path: 'tracked.txt' }),
+  )
+  assert.equal(wrongScope.status, 400)
+
+  const wrongRev = await call(
+    handlers.diff,
+    route('/api/vcs.diff', { ...base, rev: 'main', path: 'tracked.txt' }),
+  )
+  assert.equal(wrongRev.status, 400)
+
+  const escaped = await call(
+    handlers.diff,
+    route('/api/vcs.diff', { ...base, path: '../secret/secret.txt' }),
+  )
+  assert.equal(escaped.status, 400)
+
+  const untracked = await call(
+    handlers.untracked,
+    route('/api/vcs.untracked', { sessionId: 's-jj', repo: jjPath, path: 'dir/' }),
+  )
+  assert.equal(untracked.status, 400)
+  assert.equal(untracked.body.error.code, 'bad-request')
+})
+
+test('a host without jj answers vcs-missing only when reading', { skip: !HAS_JJ }, async () => {
+  const missing = createHandlers(createHost({
+    subprocess: {
+      resolveExecutable: async (command, _options, _signal) => {
+        if (command === 'jj') throw new Error('jj is not installed')
+        return fakeSubprocess.resolveExecutable(command)
+      },
+    },
+  }))
+  const repositories = await call(
+    missing.repositories,
+    route('/api/vcs.repositories', { sessionId: 's-jj' }),
+  )
+  assert.equal(repositories.status, 200)
+  assert.ok(repositories.body.repositories.some(repository => repository.vcs === 'jujutsu'))
+
+  const status = await call(
+    missing.status,
+    route('/api/vcs.status', { sessionId: 's-jj', repo: jjPath }),
+  )
+  assert.equal(status.status, 503)
+  assert.equal(status.body.error.code, 'vcs-missing')
+})
+
+test('Jujutsu reads keep the working-copy commit unchanged', { skip: !HAS_JJ }, async () => {
+  jj(jjPath, ['status'])
+  const before = jj(jjPath, ['log', '-r', '@', '--no-graph', '-T', 'commit_id'])
+  const beforeFile = (await readFile(join(jjPath, 'tracked.txt'), 'utf8'))
+  const repository = { sessionId: 's-jj', repo: jjPath }
+  await call(handlers.status, route('/api/vcs.status', repository))
+  await call(handlers.log, route('/api/vcs.log', repository))
+  await call(handlers.commit, route('/api/vcs.commit', { ...repository, sha: '@' }))
+  await call(handlers.diff, route('/api/vcs.diff', { ...repository, scope: 'commit', rev: '@', path: 'tracked.txt' }))
+  const after = jj(jjPath, ['log', '-r', '@', '--no-graph', '-T', 'commit_id'])
+  const afterFile = (await readFile(join(jjPath, 'tracked.txt'), 'utf8'))
+  assert.equal(after, before)
+  assert.equal(afterFile, beforeFile)
+})
+
+test('Jujutsu status snapshots a new working-copy change on refresh', { skip: !HAS_JJ }, async () => {
+  writeFileSync(join(jjPath, 'late.txt'), 'late\n')
+  try {
+    const { status, body } = await call(
+      handlers.status,
+      route('/api/vcs.status', { sessionId: 's-jj', repo: jjPath }),
+    )
+    assert.equal(status, 200)
+    assert.equal(body.workingCopy.summary.changed, 6)
+    const first = body.workingCopy.commitId
+    const again = await call(
+      handlers.status,
+      route('/api/vcs.status', { sessionId: 's-jj', repo: jjPath }),
+    )
+    assert.equal(again.body.workingCopy.summary.changed, 6)
+    assert.equal(again.body.workingCopy.commitId, first)
+  } finally {
+    rmSync(join(jjPath, 'late.txt'), { force: true })
+    jj(jjPath, ['status'])
+  }
 })
 
 test('apply registers all six GET routes inside the fence and honors enabled: false', async () => {
