@@ -1,0 +1,25 @@
+dsh-vcs-panel
+Copyright (c) 2026 dsh-vcs-panel contributors
+Licensed under the MIT License; see LICENSE.
+
+This product contains adapted third-party work:
+
+1. FileDiff component
+   Files: src/client/diff/FileDiff.jsx, src/client/diff/FileDiff.css
+   Source: DeepSeek Harness, package @deepseek-ai/dsh-client-ui-deliverables,
+           src/client/FileDiff.tsx and FileDiff.module.css
+   Copyright (c) 2026 DeepSeek
+   License: MIT (see licenses/MIT-DeepSeek.txt)
+
+2. Commit graph layout
+   File: src/client/history/layout.js
+   Source: git-graph-plus, src/git/git-graph-builder.ts, commit c6c2a9a
+           https://github.com/the0807/git-graph-plus
+   License: Apache-2.0 (see licenses/Apache-2.0.txt)
+   That file states it is a port of SourceGit, Copyright (c) SourceGit
+   contributors, MIT (see licenses/MIT-SourceGit.txt). Its header is retained.
+
+3. Host route and Git output parser design
+   Reference: dsh-git-view 1.1.3 (https://github.com/shinchen6/dsh-git-view),
+              Apache-2.0. Path containment, argument allowlisting, and the
+              read-only route set in this plugin differ from that reference.

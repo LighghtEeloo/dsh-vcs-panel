@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Panel de Git",
+    "description": "Añade una pestaña de Git de solo lectura a cada conversación: cambios en el índice, sin indexar y sin seguimiento con sus diferencias de archivo, además del historial de commits con un gráfico de carriles y el detalle de cada commit. No indexa, confirma, descarga, sube ni modifica el árbol de trabajo."
+  }
+}

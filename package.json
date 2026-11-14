@@ -1,0 +1,61 @@
+{
+  "name": "dsh-vcs-panel",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Read-only Git panel for DeepSeek Harness: working-tree changes, their diffs, and commit history with a lane graph.",
+  "icon": "./icon.svg",
+  "type": "module",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "git",
+    "diff",
+    "history"
+  ],
+  "engines": {
+    "dsh": ">=0.2.2-rc.1"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "LICENSE",
+    "NOTICE",
+    "licenses",
+    "README.md",
+    "README.zh.md",
+    "CHANGELOG.md",
+    "DESIGN.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test",
+    "check": "node --test && node scripts/build.mjs --check"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

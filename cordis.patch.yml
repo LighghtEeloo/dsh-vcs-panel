@@ -1,0 +1,8 @@
+# Activates the package: the Host `apply` registers the read-only `/api/vcs.*`
+# routes; the Client half is discovered through package.json `dsh.client`.
+# `enabled: false` registers nothing at all, so the tab cannot appear.
+- insert:
+    - id: dsh-vcs-panel
+      name: 'dsh-vcs-panel'
+      config:
+        enabled: true

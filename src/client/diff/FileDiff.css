@@ -1,0 +1,243 @@
+/**
+ * Adapted from DSH FileDiff, Copyright (c) 2026 DeepSeek, MIT.
+ *
+ * Vendored from DeepSeek Harness
+ * `@deepseek-ai/dsh-client-ui-deliverables/src/client/FileDiff.module.css`.
+ * CSS modules were replaced with the `vcs-diff-` / `vcs-hl-` prefixes so the
+ * stylesheet can be imported as text by the client entry. Theme variables and
+ * dimensions follow the original; no literal UI colors are used.
+ */
+
+.vcs-diff-root {
+  --vcs-diff-empty-fill: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 50%, transparent);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 0;
+  color: var(--dsw-alias-label-primary);
+}
+
+.vcs-diff-status {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 0;
+  padding: 16px;
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.vcs-diff-retry {
+  box-sizing: border-box;
+  padding: 2px 10px;
+  font: inherit;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  background: transparent;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 4px;
+}
+
+.vcs-diff-retry:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.vcs-diff-retry:focus-visible {
+  outline: 1px solid var(--dsw-alias-label-primary);
+  outline-offset: 1px;
+}
+
+.vcs-diff-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 0 16px;
+  overflow: auto;
+  font: var(--dsw-font-markdown-code-block);
+}
+
+.vcs-diff-columns {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* One intrinsic-width track keeps every hunk and row painted across the scrollable content. */
+.vcs-diff-column,
+.vcs-diff-body[data-review-view='unified']:not([data-review-wrap]) {
+  display: grid;
+  grid-template-columns: minmax(max-content, 100%);
+  align-content: start;
+}
+
+.vcs-diff-column {
+  min-width: 0;
+  overflow-x: scroll;
+  overscroll-behavior: none;
+}
+
+.vcs-diff-column + .vcs-diff-column {
+  border-left: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.vcs-diff-side-line {
+  display: grid;
+  grid-template-columns: 3.5em max-content;
+  box-sizing: border-box;
+  min-width: 100%;
+  width: max-content;
+  min-height: 22px;
+  line-height: 22px;
+  white-space: pre;
+}
+
+.vcs-diff-note {
+  margin: 0;
+  padding: 4px 16px 8px;
+  font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.vcs-diff-hunk {
+  margin-bottom: 8px;
+}
+
+.vcs-diff-hunk-header {
+  padding: 4px 16px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: pre;
+}
+
+.vcs-diff-line {
+  display: grid;
+  grid-template-columns: 3.5em 3.5em 1.2em minmax(0, 1fr);
+  box-sizing: border-box;
+  min-height: 22px;
+  line-height: 22px;
+  white-space: pre;
+}
+
+.vcs-diff-split-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 22px;
+  line-height: 22px;
+  white-space: pre;
+}
+
+.vcs-diff-cell {
+  display: grid;
+  grid-template-columns: 3.5em minmax(0, 1fr);
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.vcs-diff-cell + .vcs-diff-cell {
+  border-left: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.vcs-diff-number {
+  padding-right: 8px;
+  color: var(--dsw-alias-label-tertiary);
+  text-align: right;
+  user-select: none;
+}
+
+.vcs-diff-sign {
+  text-align: center;
+  user-select: none;
+}
+
+.vcs-diff-text {
+  padding-right: 16px;
+}
+
+.vcs-diff-body[data-review-wrap] .vcs-diff-line,
+.vcs-diff-body[data-review-wrap] .vcs-diff-split-line {
+  white-space: pre-wrap;
+}
+
+.vcs-diff-body[data-review-wrap] .vcs-diff-text {
+  overflow-wrap: anywhere;
+}
+
+.vcs-diff-add {
+  --vcs-diff-gutter-fill: var(--dsw-alias-file-diff-added-gutter);
+  --vcs-diff-marker: var(--dsw-alias-file-diff-added-marker);
+  background: var(--dsw-alias-file-diff-added-bg);
+}
+
+.vcs-diff-del {
+  --vcs-diff-gutter-fill: var(--dsw-alias-file-diff-deleted-gutter);
+  --vcs-diff-marker: var(--dsw-alias-file-diff-deleted-marker);
+  background: var(--dsw-alias-file-diff-deleted-bg);
+}
+
+.vcs-diff-add .vcs-diff-number,
+.vcs-diff-del .vcs-diff-number {
+  color: var(--vcs-diff-marker);
+  background: var(--vcs-diff-gutter-fill);
+}
+
+.vcs-diff-add .vcs-diff-number:first-child,
+.vcs-diff-del .vcs-diff-number:first-child {
+  box-shadow: inset 3px 0 0 var(--vcs-diff-marker);
+}
+
+.vcs-diff-add .vcs-diff-sign,
+.vcs-diff-del .vcs-diff-sign {
+  color: var(--vcs-diff-marker);
+}
+
+.vcs-diff-context .vcs-diff-text {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.vcs-diff-empty {
+  background: var(--vcs-diff-empty-fill);
+}
+
+/* Token colors come from the host theme's Shiki variables; both themes are covered by DSH. */
+.vcs-hl-keyword {
+  color: var(--shiki-token-keyword, var(--shiki-foreground));
+}
+
+.vcs-hl-string {
+  color: var(--shiki-token-string, var(--shiki-foreground));
+}
+
+.vcs-hl-string-expression {
+  color: var(--shiki-token-string-expression, var(--shiki-foreground));
+}
+
+.vcs-hl-comment {
+  color: var(--shiki-token-comment, var(--shiki-foreground));
+}
+
+.vcs-hl-constant {
+  color: var(--shiki-token-constant, var(--shiki-foreground));
+}
+
+.vcs-hl-number {
+  color: var(--shiki-token-constant, var(--shiki-foreground));
+}
+
+.vcs-hl-function {
+  color: var(--shiki-token-function, var(--shiki-foreground));
+}
+
+.vcs-hl-parameter {
+  color: var(--shiki-token-parameter, var(--shiki-foreground));
+}
+
+.vcs-hl-punctuation {
+  color: var(--shiki-token-punctuation, var(--shiki-foreground));
+}
+
+.vcs-hl-link {
+  color: var(--shiki-token-link, var(--shiki-foreground));
+}

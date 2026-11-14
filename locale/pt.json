@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Painel Git",
+    "description": "Adiciona uma aba Git somente leitura a cada conversa: alterações preparadas, não preparadas e não rastreadas com seus diffs, além do histórico de commits com gráfico de faixas e detalhes do commit. Não prepara, não confirma, não busca, não envia e não altera a árvore de trabalho."
+  }
+}
