@@ -1,25 +1,24 @@
 # 设计：dsh-vcs-panel
 
+本文描述产品理念、形态与关键决策。
+
 ## 要解决的问题
 
 在 DSH 的会话里，用户经常要回答两个问题：**当前工作区改了什么？这些提交是怎么走到今天的？**
 现在要么切到终端跑 `git status` / `git diff` / `git log --graph`，要么装一个 Git 插件；后者常把
 staging、commit、push、分支、stash、rebase 全部堆进一个面板，看和改混在一起，diff 与历史图反而被挤成小区域。
 
-这两个问题落在同一条时间线上：未提交的改动是最新的一段，提交是更早的各段。
+这两个问题可以用同一条时间线呈现：未提交的改动是最新的一段，提交是更早的各段。
 读每一段的方式也相同：先看这一步动了哪些文件，再逐个读 diff。
 所以面板用一条时间线回答“走到了哪里”，用一种详情回答“这一步改了什么”。
 
 这个插件只服务一条路径：**看改动 → 看历史 → 需要时再动手**。
-“动手”留给终端或其他工具；V1 的插件本身只读。
-
-只读是这一版的产品边界，不是永久限制。Jujutsu 的读取本身会快照工作副本，这是后端语义带来的唯一写入；面板不做 stage、commit、checkout 等用户可见的写操作。写操作需要单独设计授权、确认和冲突处理，不进入本设计。
+“动手”留给终端或其他工具；V1 只读，边界见“理念”。
 
 ## 理念
 
-1. **先看，不改。** V1 的所有 Host 路由只读；不 stage、commit、checkout、merge、rebase、push、pull、fetch。
-   Jujutsu 工作副本在读取时由 `jj` 自己快照，这是它的读取语义；面板把这个快照限制在每次读取周期一次，不创建、移动或改写提交与书签。
-   把“读”做快、做准、做稳，比把版本控制的全部能力塞进一个面板更有价值。
+1. **先看，不改。** V1 的 Host 路由只读，写操作留给单独的设计。
+   唯一例外是 Jujutsu 读取时的快照，见“Jujutsu 的读取快照”。
 2. **一条时间线。** 工作区是时间线最新的一端，提交按拓扑顺序排在下面；
    从“看改动”到“看历史”是一次向下滚动，不需要在视图之间切换。面板不做版本控制命令控制台。
 3. **一种详情。** 无论选中工作区还是提交，详情都回答同一个问题：这一步改了哪些文件、每个文件怎么改。
@@ -31,22 +30,22 @@ staging、commit、push、分支、stash、rebase 全部堆进一个面板，看
    不为了一次性读全文件、全历史或全部 diff，把页面拖死。
 6. **安静、可恢复。** 不自动弹窗、不轮询刷屏；切走再回来保留仓库、选中节点和阅读位置；
    刷新是显式动作，或在重新可见时做一次轻量刷新。
-7. **复用先于重写。** diff 内嵌 DSH 内置 `FileDiff` 的源码，适配本地 hunk 类型；图的 lane 算法用
-   `git-graph-plus` 对 SourceGit 的 TypeScript 移植。每一处复用都保留原许可声明。
+7. **复用先于重写。** diff 复用 DSH 内置 `FileDiff` 的源码，图的 lane 算法移植自 `git-graph-plus`；
+   每一处复用都保留原许可声明。具体边界见“复用边界”。
 8. **键盘可达。** 时间线、文件导航和 diff 流都能用键盘移动与跳转；焦点始终可见，常用操作不依赖鼠标。
 
-## 体验
+## 形态
 
 ### 位置与布局
 
-插件注册到 `conversation.view` ring，id 为 `vcs`，order 20：Chat（0）、Trajectory（10）之后。
+插件注册为 `conversation.view` 的 `vcs` 页，排在 Chat、Trajectory 之后。
 标签：中文为“版本管理”，其余语言为 `VCS`（避免名称过长被截断）。
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
 │ [repo ▾]  main ↑2 ↓0   [HEAD | All]                         (lock) (↻) │
 ├────────────────────────┬───────────────────────────────────────────────┤
-│ ◌ Working tree         │ Working tree · 3 files +41 −7    [▯▯] [↩] │
+│ ◌ Working tree         │ Working tree · 3 files +41 −7        [▯▯] [↩] │
 │ ┊ 3 changed  +41 −7    ├──────────────┬────────────────────────────────┤
 │ ◉ incr: rename the vi… │ Staged       │ src/view.jsx            +12 −3 │
 │ │ HEAD → main · 9e4d7… │ ▸ M view.jsx │ @@ -40,6 +40,9 @@              │
@@ -62,7 +61,7 @@ staging、commit、push、分支、stash、rebase 全部堆进一个面板，看
 - 顶部栏：仓库选择器、当前工作状态、历史范围、只读标识、刷新。
   Git 显示当前分支与 ahead/behind；Jujutsu 显示工作副本提交 `@`、变更 ID 和指向它的书签。
   历史范围同样来自后端能力：Git 为 `HEAD` / 所有提交，Jujutsu 为 `@` / 所有提交。
-  只读标识是带说明的锁形图标：它陈述面板的契约，不是可切换的模式；Jujutsu 下提示读取会快照工作副本。
+  只读标识是带说明的锁形图标：它陈述面板的契约，不是可切换的模式。
 - 左栏是时间线，宽 280–480px，可拖拽；宽度按会话保存。
 - 右侧是详情：头部、文件导航、diff 流。详情区宽度 ≥ 720px 时文件导航与 diff 流并排；
   更窄时文件导航收进头部下方，作为可折叠的文件列表。
@@ -80,7 +79,8 @@ staging、commit、push、分支、stash、rebase 全部堆进一个面板，看
 - refs：`HEAD` 指向的分支合成一个徽标（`HEAD → main`），只有分离头指针时才单独显示 `HEAD`；
   本地分支、远程分支、tag 用不同徽标；选中节点高亮。
 - 范围：默认看当前 `HEAD` 的历史，可切到所有分支，选择按会话保存。范围只影响提交，不影响工作区节点。
-- 分页：每页 300 条，底部“加载更多”；最多 10,000 条，超过时明确提示。追加后重新生成图，保持滚动锚点。
+- 分页：底部“加载更多”逐步加载；追加后重新生成图，保持滚动锚点。
+  每页数量、总上限与截断提示由实现设定。
 - 仓库还没有提交时，时间线只有工作区节点；读取失败、历史被截断有独立状态。
 
 ### 详情
@@ -100,16 +100,11 @@ staging、commit、push、分支、stash、rebase 全部堆进一个面板，看
   同一文件同时有已暂存和未暂存改动时，在两组各出现一次，diff 流里也是两段。
 - diff 流：按文件导航的顺序依次排列。每段有吸顶的文件头（状态、路径、增删、折叠），
   本体用内嵌的 `FileDiff`：split/unified、旧/新行号、hunk header、语法高亮，以及创建/删除/无变化/二进制/超大/读取失败状态。
-  左右对比与自动换行是详情级开关，作用于整条流，在详情工具栏以图标按钮呈现，与 DSH 内置 diff 查看器一致：
-  布局按钮用两栏图标表示左右对比，开启时旋转 90°，换行按钮按状态在折行与不折行图标之间切换；两者都置 `aria-pressed`，
+  左右对比与自动换行是详情级开关，作用于整条流，在详情工具栏以图标按钮呈现，与 DSH 内置 diff 查看器一致；
   悬停提示说明点击后的结果。
 - 定位：点文件导航中的文件，diff 流滚到该段；滚动 diff 流时，文件导航高亮当前段。
-- 按需加载：一段接近视口时才请求它的 diff，同时最多 4 个请求；离开视口的未完成请求取消。
-- 上限：
-  - 单文件最多 5000 行（与 `FileDiff` 的 `MAX_RENDERED_LINES` 一致），超过时 Host 返回 oversized。
-  - 单段改动超过 1,000 行时默认折叠。
-  - 整条流累计渲染超过 20,000 行后，后续段默认折叠；展开是显式操作。
-- V1 不做 hunk 间未改动行的 gap 展开，也不做整文件模式；`FileDiff` 本身没有这两项。
+- 按需加载：一段接近视口时才请求它的 diff，同时只保留少量请求；离开视口的未完成请求取消。
+- 上限：单文件渲染、单段折叠与整条流预算都有上限；Host 超限时返回 `oversized`，具体数值由实现设定。
 
 ### 交互与状态
 
@@ -124,205 +119,77 @@ staging、commit、push、分支、stash、rebase 全部堆进一个面板，看
 - 多个仓库：仓库选择器列出会话工作目录所属仓库，以及工作区内一层深的子仓库；切换仓库保留各自的选中节点与范围。
 - 刷新：手动按钮；重新可见时若数据超过一个短 TTL 才自动刷新。没有定时轮询。
   刷新后保留选中节点，diff 流按“当前文件 + 段内偏移”恢复阅读位置。
-- 仓库、选中节点、范围、阅读位置、目录与段的折叠状态、布局开关、栏宽按 `sessionId` 存在 `sessionStorage`；刷新页面可恢复。
-- 不提供设置页；只在 Host 配置层保留 `enabled: false` 的关闭开关，关闭时 Host 不注册路由。
+- 仓库、选中节点、范围、阅读位置、目录与段的折叠状态、布局开关、栏宽按会话保存；刷新页面可恢复。
+- 不提供设置页；整体开关在 Host 配置层。
   视图随 bundle 加载，要移除视图需在 Plugins 里关闭整个 bundle。
 - 明暗主题、焦点环、`prefers-reduced-motion` 全部走宿主 token/约定。
 
-### 不做（V1）
+## 关键决策
 
-- 不写工作区：不 stage/unstage、不 commit、不 discard、不 checkout、不 merge/rebase/cherry-pick/reset、不 stash、不 push/pull/fetch。
-- 不自研 diff 算法/渲染：内嵌 `FileDiff` 源码并适配数据，不引入第三方 diff 组件。
-- 不做冲突编辑、blame、submodule、LFS、GitHub/GitLab API、图片 diff。
-- 不做提交搜索/过滤（除了 HEAD/所有分支）、不做自动刷新定时器、不做多窗口。
-- 不复制 `vscode-git-graph` 的代码（其许可证禁止再分发/子许可/售卖）。
-
-## 机制
-
-### VCS 抽象
+### 后端能力驱动界面
 
 仓库发现不看后端名称，只看根目录标记：`.jj`（Jujutsu）优先于 `.git`，同目录同时存在时按 Jujutsu 读取；
 从会话工作目录向上找到最近的标记，再扫描工作目录下一层带标记的子目录。
-发现的仓库带上 `vcs` 和该后端的能力对象，后者也出现在 status 应答里。
 
-能力是数据，不是分支：`workingCopy`（`row` 或 `commit`）、`workingCopyNode`、`staging`、`untracked`、
-`changeId`、`aheadBehind`、`snapshots`、`ranges`、`defaultRange`。
+能力是数据，不是分支：工作副本形态、是否暂存、是否有变更 ID、ahead/behind、快照、历史范围都由后端声明。
 客户端据此决定用独立工作区行还是 `@` 提交行、用三组还是单组文件、显示分支还是变更 ID、提供哪两个历史范围。
-路由实现放在 `lib/vcs/`：每个后端实现 `require`、`status`、`log`、`commit`、`diff`，可选实现 `untracked`，
-并暴露 `capabilities`。新增后端只需注册标记、实现这些方法与能力对象。
+每个后端实现一组读取方法并暴露自己的能力对象；新增后端只需注册标记与提供这些答案。
 
-两个后端共用一个命令执行器（`lib/command.js`）：固定 argv、清理环境、30s 截止、stdout 8 MB 上限、
-stderr 尾部保留。请求值先归一化，不会拼进 shell 或变成选项。
-Git 额外固定 `--no-pager`、`--no-ext-diff`、`GIT_OPTIONAL_LOCKS=0`；
-Jujutsu 固定 `--color=never`、`--no-pager`，读取时使用 `--ignore-working-copy`。
-读取路径必须落在会话仓库根内：先 `realpath` 再做 containment，符号链接不能逃逸；拒绝 `-` 开头的 path。
+### 读模型：按文件、按需
+
+时间线与统一详情是客户端的组织方式，Host 路由保持按文件粒度：工作状态、提交列表、提交详情各有一条路由，
+diff 流的每一段是一次文件请求。按文件请求让每段各自受行数/字节上限约束，能单独取消和重试，
+也避免一次请求把大提交的全部 patch 读进 Host 内存。Host 计算并归一化 hunk，客户端只负责渲染。
+
+### Jujutsu 的读取快照
 
 Jujutsu 的读取需要先快照工作副本，否则 `@` 永远是上次 `jj` 命令时的状态。
-后端在每次刷新（status 请求）时执行一次快照，其他读取复用最近一次结果，并阻止并发快照；
+后端在每次刷新时执行一次快照，其他读取复用最近一次结果，并阻止并发快照；
 其余读取全部带 `--ignore-working-copy`。这个写入只更新工作副本与操作日志，
 不创建、移动或改写用户可见的提交与书签；锁形标识在 Jujutsu 下明确说明这一点。
 
-### Host
+### 复用边界
 
-Host 半是普通 Node 插件，注册在 DSH 的认证路由栅栏内：
+diff 只有内嵌 `FileDiff` 一套实现；图的 lane 算法移植自 `git-graph-plus` 对 SourceGit 的移植。
+外部插件不能加载 Harness Client 包，这是内嵌 diff 与高亮源码的原因；两处都保留来源与许可声明。
+不引入第三方 diff/图库，也不复制 `vscode-git-graph`（其许可证禁止再分发/子许可/售卖）。
+法律声明见 `NOTICE`。
 
-```js
-export const inject = ['connection', 'sessions', 'subprocess', 'fs']
-```
+### Host 与安全
 
-| 路由 | 作用 | 关键约束 |
-| --- | --- | --- |
-| `GET /api/vcs.repositories` | 工作目录所属仓库 + 一层深子仓库 | 最多 50 个；忽略 `node_modules`；不递归；带 `vcs`/能力 |
-| `GET /api/vcs.status` | 工作状态与改动统计 | Git：分支、ahead/behind、三组文件；Jujutsu：`@`、变更 ID、书签、单组统计 |
-| `GET /api/vcs.untracked` | 展开一个未跟踪目录的直接子项 | 仅 `untracked` 能力为真的后端；最多 500 项；不递归 |
-| `GET /api/vcs.diff` | 一个文件的 hunk | Git：`scope=unstaged/staged/untracked/commit`；Jujutsu：`scope=commit`；最多 2 MB/5000 行 |
-| `GET /api/vcs.log` | 提交列表：`ref`、`limit`、`skip` | 范围由能力给出；每页 300；最多 10,000 |
-| `GET /api/vcs.commit` | 一个提交的元数据与变更文件列表 | Git：十六进制 id；Jujutsu：`@` 或十六进制 id；不返回 patch |
-
-时间线与统一详情是客户端的组织方式，路由保持按文件粒度：工作状态来自 `vcs.status`，
-提交节点来自 `vcs.log` 与 `vcs.commit`，diff 流的每一段是一次 `vcs.diff`。
-按文件请求让每段各自受 5000 行/2 MB 上限约束，能单独取消和重试，
-也避免一次请求把大提交的全部 patch 读进 Host 内存。
-
-所有路由通过 `ctx.connection.fetch.register` 注册，和 DSH 其他路由共用认证栅栏；只读（Jujutsu 快照除外，见上）。
-未跟踪目录默认只显示目录行，展开时走 `vcs.untracked`，避免 status 一次列出全部文件。
-Host 计算并归一化 hunk；客户端 `FileDiff` 只负责渲染，不再二次比较。
-不经过 shell，不用用户输入拼接选项。
-
-限制：单条后端命令 30s 超时、stdout 8 MB、stderr 保留尾部；超时/超限返回结构化错误，
-不把原始环境或绝对路径堆栈抛给浏览器。错误统一为 `{ code, message }`，客户端按状态展示。
-
-### Client
-
-- 构建：`src/client/entry.jsx` 由 esbuild 打成 CommonJS，只有 `react`、`react/jsx-runtime` 保持 external，
-  由宿主模块表提供；`scripts/build.mjs` 再加上 `window.__ModuleLoader__.load` 包装，输出单文件 `client.js`。
-  外部插件不能加载 Harness Client 包，所以 diff 组件与高亮都以内嵌源码的方式打进 bundle。
-  CSS 以文本打包，挂载时注入一个 `<style>`，类名统一使用 `vcs-` 前缀。`client.js` 是产物，不手改。
-- 注册：`ctx.slots.inject('conversation.view', ...)` 注册 `vcs` 页；inject `slots`、`locale`。
-- 语言：`locale` NS 为 `vcs`，维护 zh、en、ja、es、fr、de、ru、pt 八种语言；没有字典时回退英文。
-  日期、相对时间与数字分组按当前语言格式化，语言切换后随视图重新渲染。
-- 状态：视图内 React state + `sessionStorage`（key 为 `vcs:<sessionId>`），不写 Host。
-- 数据层：`api.js` 统一 fetch，`AbortController` 取消过期请求；diff 结果按 `repo + scope + path + rev` 缓存最近 300 条，
-  刷新时清空。不轮询，刷新由挂载、手动按钮、重新可见触发。
-- 时间线：工作区节点作为虚拟节点放在第 0 行，与提交一起交给 lane 布局（见“图的布局”）。
-  列表固定行高 44px（两行文本），只渲染可视区 ±10 行；图与列表共用滚动容器和行高，避免错位。
-- 详情：选中节点先归一成 `FileGroup[]`，文件导航与 diff 流都只读这一结构；
-  工作区与提交的差别只在构造分组和头部时出现。diff 流是分组按导航顺序完全展开后的 `DiffTarget` 序列。
-- diff 流：每段由 `IntersectionObserver` 在接近视口时入队，队列限制并发并取消离开视口的请求；
-  段高度在加载前按增删行数估算，加载后以实测高度为准；阅读位置按“文件 + 段内偏移”记录，不依赖绝对 `scrollTop`。
-- diff：`vcs.diff` 返回 hunk，转成 `FileDiff` 的 state；`FileDiff` 负责 split/unified、行号、hunk header 和状态；
-  `t` 走 vcs locale 适配。内容全部走 React 文本，不塞 `dangerouslySetInnerHTML`。
-- `FileDiff` 源码内嵌在 `src/client/diff/`（组件 + CSS + `diff-rows`），源码头的 MIT/来源说明保留。
-  语法高亮用本地 tokenizer，以宿主主题的 `--shiki-token-*` 变量着色，颜色随主题切换；不支持的语言回退纯文本。
-  工作区与提交的 diff 都用这一个 `FileDiff`，不维护第二套 diff 组件。
-
-### 数据形状
-
-```ts
-type RefKind = 'head' | 'branch' | 'bookmark' | 'remote' | 'tag'
-// Git：current 表示 HEAD 指向的分支（`HEAD -> main`），分离头指针时才有 head
-// Jujutsu：本地书签为 bookmark，远程书签为 remote（名字形如 main@origin）
-type Ref = { name: string; kind: RefKind; current?: true }
-type CommitNode = {
-  sha: string
-  changeId?: string // Jujutsu：稳定的变更 ID
-  parents: string[]
-  refs: Ref[]
-  author: string
-  authorTime: number
-  subject: string
-  workingCopy?: boolean // 该提交是后端的工作副本
-  empty?: boolean
-  conflict?: boolean
-}
-type TimelineNode =
-  | { kind: 'worktree'; changed: number; added: number; deleted: number } // workingCopy: 'row'
-  | { kind: 'commit'; commit: CommitNode } // 普通提交，或 workingCopy: 'commit' 的 @
-
-type FileEntry = {
-  path: string
-  origPath?: string // 重命名/复制的源路径
-  status: string // M、A、D、R、U、?
-  added: number | null
-  deleted: number | null
-  binary?: boolean
-  directory?: boolean // 未展开的未跟踪目录
-}
-type FileGroup = { id: 'staged' | 'unstaged' | 'untracked' | 'commit'; entries: FileEntry[] } // 截断由 status / commit 回答整体标记
-type DiffTarget = {
-  scope: 'staged' | 'unstaged' | 'untracked' | 'commit'
-  path: string
-  oldPath?: string // vcs.diff 的查询参数，取自 FileEntry.origPath
-  rev?: string // scope 为 commit 时必填；Jujutsu 的 @ 也用它
-}
-type VcsCapabilities = {
-  id: string
-  name: string
-  workingCopy: 'row' | 'commit'
-  workingCopyNode: string | null
-  staging: boolean
-  untracked: boolean
-  changeId: boolean
-  aheadBehind: boolean
-  snapshots: boolean
-  ranges: { value: string, label: string, title: string }[]
-  defaultRange: string
-}
-
-type VcsHunk = {
-  oldStart: number; oldLines: number
-  newStart: number; newLines: number
-  lines: string[] // 保留 +/-/空格 前缀
-}
-type VcsFileDiff =
-  | { kind: 'text'; path: string; before: boolean; after: boolean; hunks: VcsHunk[]; coarse?: boolean }
-  | { kind: 'binary'; path: string }
-  | { kind: 'oversized'; path: string }
-type VcsDiffState = 'loading' | 'missing' | 'error' | VcsFileDiff
-```
-
-### 图的布局
-
-- 输入是按后端返回的拓扑顺序排好的 `CommitNode[]`（Git 为 `--topo-order`，Jujutsu 为 `jj log` 的顺序）；
-  lane 分配参考 SourceGit 的 `PathHelper`：`Pass / Goto / End / Highlight`，第一父延续主 lane，
-  其他父建/复用侧 lane，lane 结束时回收颜色。
-- Git 的工作区虚拟节点以固定 id 放在输入的第 0 行，父节点是 `HEAD` 的 sha，因此沿第一父规则延续 `HEAD` 的 lane；
-  渲染时用虚线 path 和空心 dot 区分。范围为所有分支时 `HEAD` 不一定紧跟其后，虚线一直连到 `HEAD` 所在行；
-  仓库还没有提交时虚拟节点没有父节点。
-- Jujutsu 不添加虚拟节点：`@` 作为真实提交参与 lane 计算，dot 用实心 lane 上的空心圆表示工作副本。
-- 输出 `paths[] / links[] / dots[] / commitLeftMargin[]`；React 只负责把坐标映射成 SVG path 与行内元素。
-- 分页追加时整图重算（O(n)，10k 内可接受），不尝试增量修补 lane；滚动锚点按 commit sha 恢复。
-- refs/Selection 作为行数据渲染，不参与 lane 计算；HEAD/merge/root/工作区的 dot 样式单独处理。
-
-### 复用与许可
-
-| 来源 | 用法 | 许可 |
-| --- | --- | --- |
-| `git-graph-plus` | 移植 `git-graph-builder.ts` 的 lane 算法与 `buildPathD` 曲线 | Apache-2.0，保留 NOTICE/署名 |
-| SourceGit | 图算法语义与边界情况对照 | MIT，保留版权声明 |
-| DSH deliverables `FileDiff` | 内嵌/改编 `FileDiff.tsx` + CSS + `diff-rows`，接本地 `VcsHunk` | MIT，保留版权/NOTICE |
-| DSH 主题 | 颜色、字体、圆角、焦点环与 Shiki token 走宿主 CSS 变量 | 跟随 DSH |
-
-diff 只有内嵌 `FileDiff` 一套实现；不引入第三方 diff/图库，不把图形库或 SourceGit 的 C# 渲染层打进 bundle。
+Host 半是普通 Node 插件，只读路由注册在 DSH 的认证栅栏内。
+请求绑定到活跃会话的工作目录；`repo` 查询必须命中服务端自己发现并规范化的仓库集合；
+文件路径经组合文件系统解析后必须仍在仓库根内，符号链接不能逃逸；
+后端以固定 argv 和清理过的环境运行，请求值不会拼进 shell 或变成选项。
+失败统一为 `{ code, message }`，不把原始环境或绝对路径堆栈抛给浏览器。
 
 ## 成功标准
 
 - 打开面板后，工作状态节点与第一页提交在首次加载中出现；默认选中节点的详情先显示头部和文件导航，不等待全部 diff。
-- 同时存在 `.jj` 与 `.git` 的仓库按 Jujutsu 读取；只有 `.jj` 的仓库不会因 Git 不存在而报错；缺少 `jj` 时给出明确的 `vcs-missing`。
+- 同时存在 `.jj` 与 `.git` 的仓库按 Jujutsu 读取；只有 `.jj` 的仓库不会因 Git 不存在而报错；缺少 `jj` 时给出明确提示。
 - 读完一个节点的全部改动只需要滚动；不需要逐个文件点进点出。
-- 5,000 条提交的时间线、200 个文件的 diff 流、5,000 行的单文件 diff 下仍可滚动/选中，不冻结页面；超出上限有明确提示。
+- 数千条提交的时间线、数百个文件的 diff 流、数千行的单文件 diff 下仍可滚动/选中，不冻结页面；超出上限有明确提示。
 - 切换仓库、选中节点、阅读位置后，重新可见能恢复；刷新不会把用户弹回顶部。
 - 明暗主题、窄窗口、键盘操作、八种语言都能用；焦点顺序合理。
-- 路由表里没有用户可见的写操作；Jujutsu 的快照写入被限制为读取周期一次并有明确提示；路径逃逸、选项注入、符号链接逃逸测试全部通过。
+- 路由表里没有用户可见的写操作；Jujutsu 的快照写入被限制为每次刷新一次并有明确提示；
+  路径逃逸、选项注入、符号链接逃逸测试全部通过。
 - 真实使用中，用户不需要为了“看一眼”而打开终端。
 
-## 非目标与后续
+## 边界与后续
 
-V1 刻意不写仓库。后续若要加 stage/commit，必须先补：显式确认、写路由的 CSRF/认证边界、
-失败回滚与并发保护；那是另一个设计，不在这里顺手加。Jujutsu 的 `jj file untrack` 等未跟踪文件形态也不在 V1：
-jj 默认自动跟踪工作区文件，没有 Git 的未跟踪目录可按需展开。
+### V1 不做
 
-时间线让另外两类读操作变得自然，它们同样留给单独的设计：
+- 不写工作区：不 stage/unstage、不 commit、不 discard、不 checkout、不 merge/rebase/cherry-pick/reset、不 stash、不 push/pull/fetch。
+- 不做冲突编辑、blame、submodule、LFS、GitHub/GitLab API、图片 diff。
+- 不做提交搜索/过滤（除了 HEAD/所有分支）、不做自动刷新定时器、不做多窗口。
+- 不做 hunk 间未改动行的 gap 展开，也不做整文件模式。
+- Jujutsu 的 `jj file untrack` 等未跟踪文件形态不在 V1：
+  jj 默认自动跟踪工作区文件，没有 Git 的未跟踪目录可按需展开。
+
+### 后续
+
+写操作需要单独设计：显式确认、写路由的 CSRF/认证边界、失败回滚与并发保护。
+时间线让两类读操作变得自然，同样留给单独的设计：
 
 - 范围对比：在时间线上选两个节点，看它们之间的累计 diff，详情沿用同一结构。
 - 会话关联：把改动对应到会话轮次，回答“agent 这一轮改了什么”。
