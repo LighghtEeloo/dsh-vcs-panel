@@ -2,13 +2,15 @@
   "name": "dsh-vcs-panel",
   "version": "0.1.0",
   "license": "MIT",
-  "description": "Read-only Git panel for DeepSeek Harness: working-tree changes, their diffs, and commit history with a lane graph.",
+  "description": "Read-only version control panel for DeepSeek Harness: working-tree changes, their diffs, and commit history with a lane graph.",
   "icon": "./icon.svg",
   "type": "module",
   "keywords": [
     "deepseek-harness",
     "dsh",
     "dsh-plugin",
+    "vcs",
+    "version-control",
     "git",
     "diff",
     "history"

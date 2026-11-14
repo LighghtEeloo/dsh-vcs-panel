@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Panneau Git",
-    "description": "Ajoute un onglet Git en lecture seule à chaque conversation : modifications indexées, non indexées et non suivies avec leurs diffs, historique des commits avec un graphe de voies et le détail d’un commit. Il n’indexe, ne valide, ne récupère, ne pousse ni ne modifie l’arbre de travail."
+    "title": "Panneau de gestion de versions",
+    "description": "Ajoute un onglet de gestion de versions en lecture seule à chaque conversation : modifications de l’arbre de travail avec leurs diffs, historique des commits avec un graphe de voies et le détail d’un commit. Il n’indexe, ne valide, ne récupère, ne pousse ni ne modifie l’arbre de travail."
   }
 }

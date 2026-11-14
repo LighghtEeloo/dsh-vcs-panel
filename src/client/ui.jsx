@@ -1,5 +1,5 @@
 /**
- * Small controls owned by the Git panel.
+ * Small controls owned by the version control panel.
  *
  * The Host policy forbids external plugins from loading Harness Client
  * packages, so this file keeps the few controls the panel needs (buttons,

@@ -64,7 +64,7 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
       })
     } catch (error) {
       if (error?.name === 'AbortError') throw error
-      throw new ApiError('network', 'The Git panel could not reach the Host.', 0)
+      throw new ApiError('network', 'The version control panel could not reach the Host.', 0)
     }
     let body = null
     try {

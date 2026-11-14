@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Git panel",
-    "description": "Adds a read-only Git tab to every conversation: staged, unstaged, and untracked changes with file diffs, plus commit history with a lane graph and commit details. It never stages, commits, fetches, pushes, or changes the working tree."
+    "title": "Version control panel",
+    "description": "Adds a read-only version control view to every conversation: working-tree changes with file diffs, plus commit history with a lane graph and commit details. It never stages, commits, fetches, pushes, or changes the working tree."
   }
 }

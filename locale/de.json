@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Git-Panel",
-    "description": "Fügt jeder Unterhaltung einen schreibgeschützten Git-Tab hinzu: bereitgestellte, nicht bereitgestellte und nicht verfolgte Änderungen mit Datei-Diffs sowie der Commit-Verlauf mit Lane-Graph und Commit-Details. Es wird nichts bereitgestellt, committet, abgerufen, gepusht oder im Arbeitsbaum geändert."
+    "title": "Versionsverwaltungs-Panel",
+    "description": "Fügt jeder Unterhaltung einen schreibgeschützten Tab für die Versionsverwaltung hinzu: Änderungen im Arbeitsbaum mit Datei-Diffs sowie der Commit-Verlauf mit Lane-Graph und Commit-Details. Es wird nichts bereitgestellt, committet, abgerufen, gepusht oder im Arbeitsbaum geändert."
   }
 }
