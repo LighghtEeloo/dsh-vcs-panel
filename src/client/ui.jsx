@@ -22,13 +22,17 @@ export function Button({ children, onClick, disabled = false, title, className =
   )
 }
 
-/** A square icon-only button; `label` is its accessible name. */
-export function IconButton({ label, children, onClick, disabled = false, title, className = '' }) {
+/**
+ * A square icon-only button; `label` is its accessible name. A toggle passes
+ * `pressed` so assistive technology hears the choice that is on.
+ */
+export function IconButton({ label, children, onClick, disabled = false, title, pressed, className = '' }) {
   return (
     <button
       type="button"
       className={`vcs-icon-button ${className}`.trim()}
       aria-label={label}
+      aria-pressed={pressed}
       title={title ?? label}
       onClick={onClick}
       disabled={disabled}
@@ -139,6 +143,55 @@ export function CopyIcon() {
     <svg className="vcs-icon" viewBox="0 0 16 16" aria-hidden="true">
       <rect x="6" y="6" width="7" height="8" rx="1.4" fill="none" stroke="currentColor" strokeWidth="1.3" />
       <path d="M10 6V4.4A1.4 1.4 0 0 0 8.6 3H4.4A1.4 1.4 0 0 0 3 4.4v6.2A1.4 1.4 0 0 0 4.4 12H6" fill="none" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  )
+}
+
+/**
+ * Two columns: the layout toggle of the diff stream, from DSH's
+ * `compare-split-outline` icon.
+ */
+export function CompareSplitIcon() {
+  return (
+    <svg className="vcs-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M6 1.5H2.5C1.94772 1.5 1.5 1.94772 1.5 2.5V13.5C1.5 14.0523 1.94772 14.5 2.5 14.5H6C6.55228 14.5 7 14.0523 7 13.5V2.5C7 1.94772 6.55228 1.5 6 1.5Z"
+        stroke="currentColor"
+        strokeWidth="1"
+      />
+      <path
+        d="M13.5 1.5H10C9.44772 1.5 9 1.94772 9 2.5V13.5C9 14.0523 9.44772 14.5 10 14.5H13.5C14.0523 14.5 14.5 14.0523 14.5 13.5V2.5C14.5 1.94772 14.0523 1.5 13.5 1.5Z"
+        stroke="currentColor"
+        strokeWidth="1"
+      />
+    </svg>
+  )
+}
+
+/** Wrapped lines: the wrap toggle shows it while wrapping is off, from DSH's `wrap-fill` icon. */
+export function WrapIcon() {
+  return (
+    <svg className="vcs-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M10.9999 8C10.9999 6.89543 10.1046 6 9 6H4.5V5H9C10.6568 5 11.9999 6.34315 11.9999 8C11.9999 9.65685 10.6568 11 9 11H6.20703L6.85351 11.6465L6.14648 12.3535L4.64652 10.8536C4.45126 10.6583 4.45126 10.3417 4.64652 10.1464L6.14648 8.64648L6.85351 9.35352L6.20703 10H9C10.1046 10 10.9999 9.10457 10.9999 8Z"
+        fill="currentColor"
+      />
+      <path d="M2 15H1V1H2V15Z" fill="currentColor" />
+      <path d="M15 15H14V1H15V15Z" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** Straight lines: the wrap toggle shows it while wrapping is on, from DSH's `nowrap-fill` icon. */
+export function NowrapIcon() {
+  return (
+    <svg className="vcs-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M2 15H1V1H2V15Z" fill="currentColor" />
+      <path
+        d="M12.3535 7.64645C12.5487 7.84171 12.5487 8.15829 12.3535 8.35355L9.85352 10.8535L9.14648 10.1465L10.793 8.5H3.5V7.5H10.793L9.14648 5.85352L9.85352 5.14648L12.3535 7.64645Z"
+        fill="currentColor"
+      />
+      <path d="M15 15H14V1H15V15Z" fill="currentColor" />
     </svg>
   )
 }

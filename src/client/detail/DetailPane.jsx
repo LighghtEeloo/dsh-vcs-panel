@@ -13,7 +13,10 @@ import { WORKTREE } from '../state.js'
 import { errorMessage, formatCount, formatDateTime, shortSha } from '../format.js'
 import { messageBody } from '../history/commits.js'
 import { worktreeSummary } from '../history/timeline.js'
-import { BackIcon, BranchIcon, Button, CheckIcon, Chevron, CopyIcon, IconButton, RefBadge, Segmented, Spinner } from '../ui.jsx'
+import {
+  BackIcon, BranchIcon, Button, CheckIcon, Chevron, CompareSplitIcon, CopyIcon, IconButton,
+  NowrapIcon, RefBadge, Spinner, WrapIcon,
+} from '../ui.jsx'
 import { buildRows } from './tree.js'
 import { commitGroups, defaultFolds, sectionKey, streamSections, worktreeGroups } from './detail.js'
 import { FileNav } from './FileNav.jsx'
@@ -316,23 +319,26 @@ export function DetailPane({
           </>
         )}
         <span className="vcs-detail-spacer" />
-        <Segmented
-          value={split ? 'split' : 'unified'}
-          label={t('diff.layout')}
-          options={[
-            { value: 'unified', label: t('diff.unified') },
-            { value: 'split', label: t('diff.split') },
-          ]}
-          onChange={value => { onToggleSplit(value === 'split') }}
-        />
-        <Button
-          className="vcs-diff-wrap"
-          aria-pressed={wrap}
-          title={wrap ? t('diff.unwrap') : t('diff.wrap')}
-          onClick={() => { onToggleWrap(!wrap) }}
-        >
-          {t('diff.wrapShort')}
-        </Button>
+        <span className="vcs-diff-tools">
+          <IconButton
+            label={t('diff.splitAria')}
+            pressed={split}
+            title={split ? t('diff.unified') : t('diff.split')}
+            onClick={() => { onToggleSplit(!split) }}
+            className="vcs-diff-tool vcs-diff-split"
+          >
+            <CompareSplitIcon />
+          </IconButton>
+          <IconButton
+            label={t('diff.wrapAria')}
+            pressed={wrap}
+            title={wrap ? t('diff.unwrap') : t('diff.wrap')}
+            onClick={() => { onToggleWrap(!wrap) }}
+            className="vcs-diff-tool"
+          >
+            {wrap ? <NowrapIcon /> : <WrapIcon />}
+          </IconButton>
+        </span>
       </div>
       <div className="vcs-detail-body" data-nav={navInline ? 'inline' : 'side'}>
         {!navInline && nav !== null ? <aside className="vcs-detail-nav">{nav}</aside> : null}

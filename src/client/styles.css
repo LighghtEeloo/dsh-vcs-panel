@@ -410,6 +410,22 @@
   flex: 1;
 }
 
+.vcs-diff-tools {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+}
+
+.vcs-diff-tool .vcs-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.vcs-diff-split[aria-pressed='true'] .vcs-icon {
+  transform: rotate(90deg);
+}
+
 .vcs-detail-body {
   display: flex;
   flex: 1;
