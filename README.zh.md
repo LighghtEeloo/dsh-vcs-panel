@@ -14,6 +14,7 @@
 - **一种详情。** 选中任意行，按顺序读完所有改动文件的 diff。文件列表跟随 diff 流，diff 在进入视口附近时才加载。
 - **Git 与 Jujutsu 按各自的模型显示。** 仓库根目录的标记决定后端：Git 显示工作区、已暂存/未暂存/未跟踪三组、分支与 ahead/behind；Jujutsu 显示 `@`、变更 ID、书签，每个提交只有一组改动。
 - **面向大仓库。** 虚拟列表、按文件请求、明确的上限和截断提示，保证面板在大历史和大 diff 下仍然可用。
+- **对话结束只有一个入口。** 有文件改动的一轮结束时只显示一个版本管理图标，替代 DSH 自带的改动文件卡片；点击图标切到本页。每轮文件列表被有意去掉，工作区改动始终在页内完整可见。图标在该轮的 DSH 改动记录出现时显示（shell 命令计入，同一工作区内的子代理改动也计入），或该轮有成功的文件写入工具调用时显示。
 - **长在 DSH 上。** 主题 token、焦点环、`prefers-reduced-motion` 和键盘操作跟随宿主；面板会记住本次会话的仓库、选中项和阅读位置。
 - **只读。** 不 stage、commit、checkout、merge、rebase、stash、fetch、pull 或 push；Jujutsu 读取时的快照是面板唯一的写入，锁形提示会说明。
 - **八种界面语言。** 中文、英文、日文、西班牙文、法文、德文、俄文、葡萄牙文；日期、相对时间与数字分组跟随 DSH。
@@ -27,6 +28,8 @@ dsh plugin --profile desktop add link:/path/to/dsh-vcs-panel
 ```
 
 也可以用 `plugin_manager` 的 `install_bundle`，或在 Web 侧栏的 **Plugins** > **Add plugin** 里选择该目录。安装后重启 DSH；`VCS` 页签位于 Chat、Trajectory 之后。
+
+安装同时会隐藏 DSH 在对话里显示的每轮改动卡片，改由版本管理图标作为入口；改动记录器、交付卡片与本机打开都继续工作。卸载插件后卡片恢复。
 
 Jujutsu 仓库需要 Host 的 `PATH` 上有 `jj`；缺少时仍会列出仓库，读取返回 `vcs-missing`。
 

@@ -1053,3 +1053,57 @@
   font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 11px;
 }
+
+/* Turn-tail entry ---------------------------------------------------------- */
+
+/* DSH's changed-files card and this entry replace the same surface, but the
+   card shares its turn-tail registration with the `present` delivery cards and
+   the recorder's summary must keep at least one file. Hide only the card, by
+   its shipped marker, and leave the recorder and delivery cards untouched.
+   Exit condition: remove this rule once DSH offers a supported hide or compact
+   mode for that card; if the marker changes, the card simply returns. */
+[data-turn-tail] [data-changed-files] {
+  display: none !important;
+}
+
+.vcs-turn-tail {
+  display: flex;
+  margin-top: 4px;
+}
+
+.vcs-turn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm, 6px);
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.vcs-turn-icon:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.vcs-turn-icon:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-brand-primary));
+  outline-offset: 1px;
+}
+
+.vcs-turn-glyph {
+  flex: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vcs-turn-icon {
+    transition: none;
+  }
+}

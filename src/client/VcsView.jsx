@@ -57,9 +57,9 @@ function omit(record, key) {
 
 /**
  * Render the version control view for one Session.
- * @param {{ sessionId: string, t: Function, locale?: string }} props - standard Conversation view props plus the active UI locale.
+ * @param {{ sessionId: string, t: Function, locale?: string, viewRequest?: object, completeViewRequest?: Function }} props - standard Conversation view props plus the active UI locale.
  */
-export function VcsView({ sessionId, t, locale }) {
+export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest }) {
   const [state, setState] = useState(() => loadState(sessionId))
   const stateRef = useRef(state)
   stateRef.current = state
@@ -112,6 +112,14 @@ export function VcsView({ sessionId, t, locale }) {
       saveState(sessionId, persisted())
     }, 300)
   }, [persisted, sessionId])
+
+  // A Conversation View request (for example the turn-tail VCS icon) moves
+  // focus into the panel after the view switches, then acknowledges it.
+  useEffect(() => {
+    if (viewRequest?.view !== 'vcs') return
+    rootRef.current?.focus()
+    completeViewRequest?.()
+  }, [viewRequest, completeViewRequest])
 
   useEffect(() => () => {
     if (persistTimer.current !== null) clearTimeout(persistTimer.current)

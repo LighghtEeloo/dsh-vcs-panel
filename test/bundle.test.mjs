@@ -38,16 +38,20 @@ function loadBundle() {
 test('client.js registers the expected module id and exports apply/inject', () => {
   const { plugin, registered } = loadBundle()
   assert.equal(registered.id, 'dsh-vcs-panel')
-  assert.deepEqual(plugin.inject, ['slots', 'locale'])
+  assert.deepEqual(plugin.inject, ['slots', 'locale', 'uiConversation'])
   assert.equal(typeof plugin.apply, 'function')
 })
 
-test('apply registers the locale dictionaries, one stylesheet, and the version control view', () => {
+test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-tail entry', () => {
   const { plugin } = loadBundle()
   const effects = []
   const localeCalls = []
-  const views = []
+  const injections = []
+  const registrations = []
+  const definitions = []
+  const activations = []
   const styles = []
+  const setViews = []
   const document = {
     visibilityState: 'visible',
     head: {
@@ -60,6 +64,10 @@ test('apply registers the locale dictionaries, one stylesheet, and the version c
         remove() { this.removed = true },
       }
     },
+  }
+  const store = {
+    create() { throw new Error('the test never mounts the store') },
+    spec: { actions: { setView() {} } },
   }
   const previousDocument = globalThis.document
   globalThis.document = document
@@ -85,14 +93,29 @@ test('apply registers the locale dictionaries, one stylesheet, and the version c
           return () => undefined
         },
       },
+      uiConversation: {
+        events: {
+          register(definition) {
+            definitions.push(definition)
+            return () => undefined
+          },
+        },
+        binding(sessionId) {
+          return { activate: view => activations.push({ sessionId, view }) }
+        },
+      },
       slots: {
+        entries(key) {
+          assert.equal(key, 'conversation.session')
+          return [{ options: { id: 'session' }, store }]
+        },
         inject(key, callback) {
-          assert.equal(key, 'conversation.view')
+          injections.push(key)
           callback()
           return () => undefined
         },
         register(options, component) {
-          views.push({ options, component })
+          registrations.push({ options, component })
           return () => undefined
         },
       },
@@ -105,38 +128,207 @@ test('apply registers the locale dictionaries, one stylesheet, and the version c
     for (const entries of Object.values(dictionary)) {
       assert.equal(typeof entries['view.label'], 'string')
       assert.equal(typeof entries['diff.loading'], 'string')
+      assert.equal(typeof entries['turn.openHint'], 'string')
     }
 
     assert.equal(styles.length, 1)
     assert.match(styles[0].textContent, /\.vcs-root/)
     assert.match(styles[0].textContent, /\.vcs-diff-body/)
     assert.match(styles[0].textContent, /\.vcs-graph/)
+    assert.match(styles[0].textContent, /\.vcs-turn-icon/)
 
-    assert.equal(views.length, 1)
-    assert.equal(views[0].options.name, 'conversation.view')
-    assert.equal(views[0].options.id, 'vcs')
-    assert.equal(views[0].options.order, 20)
-    assert.equal(views[0].options.locale, 'vcs')
-    assert.equal(views[0].options.label(), 'vcs:view.label')
-    assert.equal(typeof views[0].component, 'function')
+    // The fold that publishes "this Turn changed files" has no view target.
+    assert.equal(definitions.length, 1)
+    assert.equal(definitions[0].kind, 'vcs-changes')
+    assert.equal(definitions[0].target, undefined)
+
+    assert.deepEqual(injections, ['conversation.view', 'conversation.chat.turnTail'])
+    assert.equal(registrations.length, 2)
+
+    const view = registrations[0]
+    assert.equal(view.options.name, 'conversation.view')
+    assert.equal(view.options.id, 'vcs')
+    assert.equal(view.options.order, 20)
+    assert.equal(view.options.locale, 'vcs')
+    assert.equal(view.options.label(), 'vcs:view.label')
+    assert.equal(typeof view.component, 'function')
 
     // The registered wrapper passes the active locale to the view so dates and
     // numbers follow the DSH language rather than the browser's.
-    const tree = views[0].component({ sessionId: 'session-1', t: key => `vcs:${key}` })
+    const tree = view.component({ sessionId: 'session-1', t: key => `vcs:${key}` })
     assert.equal(tree.props.locale, 'zh')
+
+    // The Turn-tail entry reuses the Conversation shell's store handle, which
+    // is what exposes `setView` to a non-header entry.
+    const tail = registrations[1]
+    assert.equal(tail.options.name, 'conversation.chat.turnTail')
+    assert.equal(tail.options.id, 'dsh-vcs-panel')
+    assert.equal(tail.options.order, -10)
+    assert.equal(tail.options.locale, 'vcs')
+    assert.equal(tail.options.store, store)
+    assert.equal(typeof tail.component, 'function')
+
+    const turn = { data: { get: key => (key === 'vcs-changes' ? { changed: true } : undefined) } }
+    const props = {
+      turn,
+      sessionId: 'session-1',
+      t: key => `vcs:${key}`,
+      actions: { setView: view => setViews.push(view) },
+    }
+    const entry = tail.component(props)
+    assert.equal(typeof entry.type, 'function')
+    const rendered = entry.type(entry.props)
+    assert.equal(rendered.props.className, 'vcs-turn-tail')
+    const button = rendered.props.children
+    assert.equal(button.type, 'button')
+    assert.equal(button.props['aria-label'], 'vcs:turn.openHint')
+    assert.equal(button.props.title, 'vcs:turn.openHint')
+    button.props.onClick()
+    assert.deepEqual(activations, [{ sessionId: 'session-1', view: 'vcs' }])
+    assert.deepEqual(setViews, ['vcs'])
+
+    // A store with `openView` leaves a focus request for the view instead.
+    const opened = []
+    const withOpenView = tail.component({
+      ...props,
+      actions: { openView: (view, focus) => opened.push([view, focus]), setView: view => setViews.push(view) },
+    })
+    withOpenView.type(withOpenView.props).props.children.props.onClick()
+    assert.deepEqual(opened, [['vcs', 'turn-tail']])
+    assert.deepEqual(setViews, ['vcs'], 'setView is not also called when openView exists')
+
+    // A Turn without mutation evidence contributes nothing.
+    const unchanged = tail.component({ ...props, turn: { data: { get: () => undefined } } })
+    assert.equal(unchanged.type(unchanged.props), null)
 
     // Every registration is owned by an effect, so unload removes it.
     for (const effect of effects) assert.equal(typeof effect.label, 'string')
     const style = styles[0]
     const localeDisposer = effects.find(effect => effect.label.includes('locale'))?.disposer
     const styleDisposer = effects.find(effect => effect.label.includes('styles'))?.disposer
+    const turnDisposer = effects.find(effect => effect.label.includes('turn changes'))?.disposer
     assert.equal(typeof localeDisposer, 'function')
     assert.equal(typeof styleDisposer, 'function')
+    assert.equal(typeof turnDisposer, 'function')
     styleDisposer()
     assert.equal(style.removed, true)
   } finally {
     globalThis.document = previousDocument
   }
+})
+
+test('the Turn-tail entry waits for the Conversation store when the Chat view declares first', () => {
+  const { plugin } = loadBundle()
+  const registrations = []
+  const store = {
+    create() { throw new Error('the test never mounts the store') },
+    spec: { actions: { setView() {} } },
+  }
+  let entries = []
+  let watcher
+  let watchDisposed = false
+  let tailDisposer
+  const document = {
+    head: { appendChild() {} },
+    createElement() { return { dataset: {}, textContent: '', remove() {} } },
+  }
+  const previousDocument = globalThis.document
+  globalThis.document = document
+  try {
+    plugin.apply({
+      effect(fn) { return fn() },
+      locale: {
+        register() { return () => undefined },
+        bind(ns) { return key => `${ns}:${key}` },
+        getLocale() { return { active: 'en', locales: [], revision: 0 } },
+        subscribe() { return () => undefined },
+      },
+      uiConversation: {
+        events: { register() { return () => undefined } },
+        binding() { return { activate() {} } },
+      },
+      slots: {
+        entries(key) {
+          assert.equal(key, 'conversation.session')
+          return entries
+        },
+        subscribe(key, listener) {
+          assert.equal(key, 'conversation.session')
+          watcher = listener
+          return () => { watchDisposed = true }
+        },
+        inject(key, callback) {
+          const dispose = callback()
+          if (key === 'conversation.chat.turnTail') tailDisposer = dispose
+          return () => undefined
+        },
+        register(options, component) {
+          registrations.push({ options, component })
+          return () => undefined
+        },
+      },
+    })
+
+    // Only the view exists; the store appears after the Chat view declared its slot.
+    assert.deepEqual(registrations.map(entry => entry.options.name), ['conversation.view'])
+    assert.equal(typeof watcher, 'function')
+
+    entries = [{ options: { id: 'session' }, store }]
+    watcher()
+    assert.deepEqual(registrations.map(entry => entry.options.name), ['conversation.view', 'conversation.chat.turnTail'])
+    assert.equal(registrations[1].options.store, store)
+    assert.equal(watchDisposed, true)
+
+    // Disposing the injection removes the entry; the watcher is already gone.
+    assert.equal(typeof tailDisposer, 'function')
+    tailDisposer()
+  } finally {
+    globalThis.document = previousDocument
+  }
+})
+
+test('the Turn-tail entry stays absent when no Conversation store ever appears', () => {
+  const { plugin } = loadBundle()
+  const registrations = []
+  let watcher
+  const document = {
+    head: { appendChild() {} },
+    createElement() { return { dataset: {}, textContent: '', remove() {} } },
+  }
+  const previousDocument = globalThis.document
+  globalThis.document = document
+  try {
+    plugin.apply({
+      effect(fn) { return fn() },
+      locale: {
+        register() { return () => undefined },
+        bind(ns) { return key => `${ns}:${key}` },
+        getLocale() { return { active: 'en', locales: [], revision: 0 } },
+        subscribe() { return () => undefined },
+      },
+      uiConversation: {
+        events: { register() { return () => undefined } },
+        binding() { return { activate() {} } },
+      },
+      slots: {
+        entries() { return [] },
+        subscribe(key, listener) { watcher = listener; return () => undefined },
+        inject(key, callback) { callback(); return () => undefined },
+        register(options) { registrations.push(options) },
+      },
+    })
+    watcher()
+    assert.deepEqual(registrations.map(entry => entry.name), ['conversation.view'])
+  } finally {
+    globalThis.document = previousDocument
+  }
+})
+
+test('the stylesheet hides the shipped changed-files card without touching the recorder', () => {
+  const css = readFileSync(new URL('../src/client/styles.css', import.meta.url), 'utf8')
+  assert.match(css, /\[data-turn-tail\] \[data-changed-files\] \{\s*display: none !important;/u)
+  const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+  assert.doesNotMatch(patch, /workspace-changes/u)
 })
 
 test('no component receives the reserved ref prop (React 18 drops it)', () => {

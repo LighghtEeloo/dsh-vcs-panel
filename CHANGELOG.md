@@ -2,6 +2,11 @@
 
 ## 未发布
 
+- 对话结束时不再展示宿主的“本轮改动”文件卡片，改为一个版本管理图标：点击图标切到 `VCS` 页。图标在该轮的 `workspace/changes` 记录出现时显示，或该轮有成功的文件写入工具调用（`write`、`edit`、`apply_patch`、改写型 `str_replace_editor`）时显示，两者覆盖的改动不同。
+- 修复：把 `workspace-changes` 的 `maxFiles` 设为 0 会被它的 `apply` 拒绝（要求正整数），启用插件时 profile 应用失败并影响对话渲染。改为完全不覆盖宿主配置，用插件样式表按 `[data-turn-tail] [data-changed-files]` 隐藏改动卡片；记录器、摘要、`present` 交付卡片、内联文件链接与本机打开保持工作。卸载插件即恢复卡片。
+- 修复：Turn 改动定义的 Location 数据键写成 `vcs`，而引擎要求数据键等于定义 kind（`vcs-changes`）；只要某个会话有一轮改动，该会话的对话装配就会抛错并整段无法显示。键现在与 kind 共用同一常量，测试断言两者一致。
+- 新增 `vcs-changes` Conversation 定义，按 `workspace/changes` 记录与写入工具调用发布 Turn 数据；turn-tail 入口复用 `conversation.session` 的 Conversation store 来切换视图，store 尚未注册时等待该槽位，始终找不到则入口不出现。切换使用 `openView` 留下焦点请求，`VcsView` 聚焦根节点并确认请求，键盘焦点不会丢失。
+- 新增 `turn.openHint` 本地化键（“打开版本管理”），八种语言同步；入口尺寸与宿主小控件对齐；补充 bundle、fold 与样式规则的回归测试。
 - 文档分层：`DESIGN.md` 保留产品理念、形态与关键决策；路由、数据形状、构建、图布局与复用来源移到新的 `IMPLEMENTATION.md`；第三方版权与许可声明由 `NOTICE` 承载；上限数值集中在 `IMPLEMENTATION.md` 的“上限”表。
 - README 与 README.zh 重写为面向用户的简洁介绍：保留能力、安装、开发与文档入口；交互细节、目录、设计说明、安全细节和半开关说明移出（开关说明在 `IMPLEMENTATION.md`）；移除插件改在 **Plugins** 里完成。
 - 仓库发现改为按根目录标记选择后端：`.jj` 优先于 `.git`，同一目录同时存在时按 Jujutsu 读取；没有对应工具时仍列出仓库，读取时才返回 `vcs-missing`（替代原来的 `git-missing`）。

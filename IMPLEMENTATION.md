@@ -294,11 +294,29 @@ type CommitAnswer = {
 
 ### 注册与本地化
 
-- `entry.jsx` inject `['slots', 'locale']`；`ctx.slots.inject('conversation.view', ...)` 注册
-  `id: 'vcs'`、`order: 20`。
+- `entry.jsx` inject `['slots', 'locale', 'uiConversation']`；`ctx.slots.inject('conversation.view', ...)` 注册
+  `id: 'vcs'`、`order: 20`；同一 `apply` 里注册每轮改动的 Conversation 定义与 turn-tail 入口（见下一节）。
 - `locale` NS 为 `vcs`，八种语言字典在 `src/client/locales.js`；没有字典时回退英文。
   日期、相对时间与数字分组走 `format.js`，语言切换后随视图重新渲染。
 - 插件展示信息（标题与描述）在 `locale/*.json`。
+
+### 对话结束的入口
+
+- turn-tail 入口注册为 `id: 'dsh-vcs-panel'`、`order: -10`、`locale: 'vcs'`，只在该轮有文件改动时渲染一个图标，位置在交付卡片之前。
+- 改动证据来自 `turn.js` 的 `createTurnChangesDefinition()`（kind `vcs-changes`，无 view target）：
+  匹配 `turn/start`、`workspace/changes`、`tool/call` 与 `surfaceOp === 'append'` 的 `tool/result`。
+  记录器按 git 工作树或文件工具捕获的 `workspace/changes` 覆盖 shell 与同一工作区内的子代理改动；
+  `write`、`edit`、`apply_patch` 与改写型 `str_replace_editor` 的成功结果覆盖记录器未覆盖的编辑。两者任一成立即显示图标。
+  定义通过 `buildLocationData` 在 Turn Location 上发布 `{ changed: true }`；Location 数据键必须等于定义 kind，因此键为 `vcs-changes`，与 kind 共用同一个常量。
+- 视图切换借用 `conversation.session` 槽位声明的 Conversation store：`ctx.slots.entries('conversation.session')`
+  找到带 `setView` 动作的 handle，turn-tail 入口以同一个 handle 注册，从而拿到同一实例的 `actions`；
+  点击时先 `ctx.uiConversation.binding(sessionId).activate('vcs')`，再 `actions.openView('vcs', 'turn-tail')`（没有该动作时退回 `setView`）；
+  `openView` 留下 `viewRequest`，`VcsView` 挂载后在 effect 里聚焦根节点并 `completeViewRequest()`，键盘落点不会掉到 `body`。
+  这是本插件唯一依赖宿主内部槽位 store 的地方；`conversation.session` 尚未注册时，入口等待该槽位的注册再挂载，始终找不到 store 或视图动作时入口不出现，面板其余部分不受影响。
+- `cordis.patch.yml` 只插入插件行，不改宿主插件配置。宿主卡片由样式表规则
+  `[data-turn-tail] [data-changed-files] { display: none !important; }` 隐藏：记录器、摘要、交付卡片与本机打开保持原样。
+  `workspace-changes` 的 `maxFiles` 必须在 1 以上（`apply` 拒绝 0），所以不能通过清空摘要来隐藏卡片；
+  该规则依赖宿主卡片上的 `data-changed-files` 与 turn-tail 根上的 `data-turn-tail`，标记变化时卡片重新出现，删除规则即恢复。
 
 ### 状态与持久化
 

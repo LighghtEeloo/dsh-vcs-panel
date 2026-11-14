@@ -11,6 +11,7 @@
 /** English. */
 const en = {
   'view.label': 'VCS',
+  'turn.openHint': 'Open VCS',
   'top.repositories': 'Repository',
   'top.noRepository': 'No repository',
   'top.unborn': 'No commits yet',
@@ -103,6 +104,7 @@ const en = {
 /** Simplified Chinese. */
 const zh = {
   'view.label': '版本管理',
+  'turn.openHint': '打开版本管理',
   'top.repositories': '仓库',
   'top.noRepository': '没有仓库',
   'top.unborn': '尚无提交',
@@ -195,6 +197,7 @@ const zh = {
 /** Japanese. */
 const ja = {
   'view.label': 'VCS',
+  'turn.openHint': 'VCS を開く',
   'top.repositories': 'リポジトリ',
   'top.noRepository': 'リポジトリなし',
   'top.unborn': 'コミットなし',
@@ -287,6 +290,7 @@ const ja = {
 /** Spanish. */
 const es = {
   'view.label': 'VCS',
+  'turn.openHint': 'Abrir VCS',
   'top.repositories': 'Repositorio',
   'top.noRepository': 'Sin repositorio',
   'top.unborn': 'Todavía sin commits',
@@ -379,6 +383,7 @@ const es = {
 /** French. */
 const fr = {
   'view.label': 'VCS',
+  'turn.openHint': 'Ouvrir VCS',
   'top.repositories': 'Dépôt',
   'top.noRepository': 'Aucun dépôt',
   'top.unborn': 'Aucun commit',
@@ -471,6 +476,7 @@ const fr = {
 /** German. */
 const de = {
   'view.label': 'VCS',
+  'turn.openHint': 'VCS öffnen',
   'top.repositories': 'Repository',
   'top.noRepository': 'Kein Repository',
   'top.unborn': 'Noch keine Commits',
@@ -563,6 +569,7 @@ const de = {
 /** Russian. */
 const ru = {
   'view.label': 'VCS',
+  'turn.openHint': 'Открыть VCS',
   'top.repositories': 'Репозиторий',
   'top.noRepository': 'Нет репозитория',
   'top.unborn': 'Коммитов пока нет',
@@ -655,6 +662,7 @@ const ru = {
 /** Portuguese. */
 const pt = {
   'view.label': 'VCS',
+  'turn.openHint': 'Abrir VCS',
   'top.repositories': 'Repositório',
   'top.noRepository': 'Sem repositório',
   'top.unborn': 'Ainda sem commits',
