@@ -8,6 +8,7 @@
  */
 
 import { formatCount, lineCounts, splitPath, statusKey } from '../format.js'
+import { BACK, DOWN, FORWARD, movement, unmodified, UP } from '../keys.js'
 import { Chevron, Spinner } from '../ui.jsx'
 import { sectionKey } from './detail.js'
 
@@ -74,19 +75,23 @@ function Row({ row, t, locale, focusable, reading, onActivate }) {
 
 /**
  * Render the navigation.
- * @param {{ groups: Array<{ id: string, label: string, rows: object[] }>, cursor: number, readingKey: string | null, onActivate: (row: object) => void, onMove: (delta: number) => void, onLeave: () => void, truncated: boolean, t: Function, locale?: string }} props - built groups and handlers.
+ * @param {{ groups: Array<{ id: string, label: string, rows: object[] }>, cursor: number, readingKey: string | null, onActivate: (row: object) => void, onMove: (delta: number) => void, onForward: () => void, onLeave: () => void, truncated: boolean, t: Function, locale?: string }} props - built groups and handlers.
  */
-export function FileNav({ groups, cursor, readingKey, onActivate, onMove, onLeave, truncated, t, locale }) {
-  /** Keys of the navigation: move, activate, return to the timeline. */
+export function FileNav({ groups, cursor, readingKey, onActivate, onMove, onForward, onLeave, truncated, t, locale }) {
+  /** Keys of the navigation: move, forward into the stream, and back to the timeline. */
   const onKeyDown = event => {
-    if (event.altKey || event.ctrlKey || event.metaKey) return
-    if (event.key === 'ArrowDown' || event.key === 'j') {
+    if (!unmodified(event)) return
+    const direction = movement(event)
+    if (direction === DOWN) {
       event.preventDefault()
       onMove(1)
-    } else if (event.key === 'ArrowUp' || event.key === 'k') {
+    } else if (direction === UP) {
       event.preventDefault()
       onMove(-1)
-    } else if (event.key === 'ArrowLeft' || event.key === 'Escape') {
+    } else if (direction === FORWARD) {
+      event.preventDefault()
+      onForward()
+    } else if (direction === BACK || event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
       onLeave()

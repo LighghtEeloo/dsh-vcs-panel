@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { WORKTREE } from '../state.js'
 import { errorMessage, formatCount, formatDateTime, shortChangeId, shortSha } from '../format.js'
+import { BACK, movement, unmodified } from '../keys.js'
 import { messageBody } from '../history/commits.js'
 import { worktreeSummary } from '../history/timeline.js'
 import {
@@ -229,6 +230,26 @@ export function DetailPane({
     focusRow(next)
   }, [cursor, focusRow, navRows])
 
+  /** Move the keyboard into the diff stream; on a folder, open it or step inside. */
+  const forward = useCallback(() => {
+    const at = Math.max(0, Math.min(cursor, navRows.length - 1))
+    const row = navRows[at]
+    if (row === undefined) return
+    if (row.kind === 'dir') {
+      if (!row.expanded) {
+        onToggleDir(row)
+        return
+      }
+      // An open folder's first child is the next visible row below it.
+      const child = navRows[at + 1]
+      if (child !== undefined && child.kind !== 'loading' && child.depth > row.depth) move(1)
+      return
+    }
+    if (row.kind !== 'file') return
+    streamControl.current?.scrollTo(sectionKey(row.group, row.path))
+    streamControl.current?.focus()
+  }, [cursor, move, navRows, onToggleDir])
+
   useEffect(() => {
     control.current = {
       focusNav() {
@@ -255,6 +276,7 @@ export function DetailPane({
         readingKey={readingKey}
         onActivate={activate}
         onMove={move}
+        onForward={forward}
         onLeave={onLeaveNav}
         truncated={isWorktree && status?.truncated === true}
         t={t}
@@ -303,11 +325,13 @@ export function DetailPane({
     <div
       className="vcs-detail"
       onKeyDown={event => {
-        // Escape in the stream returns to the file it is reading.
-        if (event.key !== 'Escape' || event.target?.dataset?.zone !== 'stream') return
+        // Left, `h`, or Escape in the stream returns to the file list.
+        if (event.target?.closest?.('[data-zone="stream"]') == null) return
+        if (!unmodified(event)) return
+        if (event.key !== 'Escape' && movement(event) !== BACK) return
         event.preventDefault()
         event.stopPropagation()
-        if (nav !== null) control.current?.focusNav()
+        if (navRef.current !== null) control.current?.focusNav()
         else onLeaveNav()
       }}
     >

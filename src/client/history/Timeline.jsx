@@ -16,6 +16,7 @@ import { DEFAULT_ROW_HEIGHT } from './layout.js'
 import { hasSeveralAuthors } from './commits.js'
 import { worktreeSummary } from './timeline.js'
 import { errorMessage, formatCommitTime, formatCount, shortChangeId, shortSha } from '../format.js'
+import { DOWN, FORWARD, movement, unmodified, UP } from '../keys.js'
 import { RefBadge, Spinner } from '../ui.jsx'
 
 /** Fixed row height in CSS pixels. */
@@ -161,14 +162,15 @@ export function Timeline({
 
   /** Keys of the timeline: move, open the selected node's files. */
   const onKeyDown = event => {
-    if (event.altKey || event.ctrlKey || event.metaKey) return
-    if (event.key === 'ArrowDown' || event.key === 'j') {
+    if (!unmodified(event)) return
+    const direction = movement(event)
+    if (direction === DOWN) {
       event.preventDefault()
       onMove(1)
-    } else if (event.key === 'ArrowUp' || event.key === 'k') {
+    } else if (direction === UP) {
       event.preventDefault()
       onMove(-1)
-    } else if (event.key === 'Enter' || event.key === 'ArrowRight') {
+    } else if (direction === FORWARD || event.key === 'Enter') {
       event.preventDefault()
       onOpen()
     }
