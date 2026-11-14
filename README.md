@@ -31,6 +31,7 @@ Data refreshes on opening, on the refresh button, and once when the panel become
 ## Interaction
 
 - Click a file or directory to select or fold it; click a commit to inspect it.
+- The panel opens History by default when the working tree is clean, and Changes when it is not. Once you pick a tab, that choice is kept for the session.
 - Keyboard: `↑`/`↓` or `j`/`k` move, `Enter` opens, `Esc` returns in the narrow layout. Keys are ignored in text inputs and selects.
 - The sidebar is resizable (280–480 px) by dragging the divider; arrow keys adjust it when it has focus.
 - Repository, tab, selection, expanded folders, layout choices, and scroll position are stored per session in `sessionStorage` and restored after a page refresh.
@@ -51,7 +52,7 @@ Data refreshes on opening, on the refresh button, and once when the panel become
 
 ## Languages
 
-The panel ships Chinese, English, Japanese, Spanish, French, German, Russian, and Portuguese dictionaries. A locale without a dictionary falls back to English. Plugin metadata (title and description) is in `locale/*.json`.
+The panel ships Chinese, English, Japanese, Spanish, French, German, Russian, and Portuguese dictionaries. A locale without a dictionary falls back to English. Dates, relative times, and digit grouping follow the active DSH language. Plugin metadata (title and description) is in `locale/*.json`.
 
 ## Layout
 

@@ -47,13 +47,14 @@ export function shortSha(sha) {
 }
 
 /**
- * Format a count with the user's digit grouping.
+ * Format a count with the active locale's digit grouping.
  * @param {number} value - the count.
+ * @param {string} [locale] - BCP 47 locale; browser default when omitted.
  * @returns {string} the formatted number.
  */
-export function formatCount(value) {
+export function formatCount(value, locale) {
   try {
-    return new Intl.NumberFormat().format(value)
+    return new Intl.NumberFormat(locale).format(value)
   } catch {
     return String(value)
   }

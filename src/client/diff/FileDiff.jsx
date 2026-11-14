@@ -16,6 +16,7 @@
  */
 
 import { createElement as h, useMemo, useRef } from 'react'
+import { formatCount } from '../format.js'
 import { highlightLines } from './highlight.js'
 
 /** Maximum rendered lines per comparison. */
@@ -220,8 +221,10 @@ function SplitColumns({ hunks, highlights }) {
   )
 }
 
-/** The hunks of a text comparison with their line numbers, unified or side by side. */
-function TextDiff({ diff, split, wrap, t }) {
+/**
+ * The hunks of a text comparison with their line numbers, unified or side by side.
+ */
+function TextDiff({ diff, split, wrap, t, locale }) {
   const note = noteOf(diff)
   const { hunks, truncated } = useMemo(() => renderedHunks(diff.hunks), [diff.hunks])
   const highlights = useMemo(() => hunks.map(hunk => hunkHighlights(hunk, diff.path)), [hunks, diff.path])
@@ -238,7 +241,7 @@ function TextDiff({ diff, split, wrap, t }) {
   }
   if (truncated) {
     children.push(h('p', { key: 'truncated', className: 'vcs-diff-note', 'data-diff-truncated': '' },
-      t('diff.truncated', { count: String(MAX_RENDERED_LINES) })))
+      t('diff.truncated', { count: formatCount(MAX_RENDERED_LINES, locale) })))
   }
   if (split && !wrap) {
     children.push(h(SplitColumns, { key: 'columns', hunks, highlights }))
@@ -292,10 +295,10 @@ function TextDiff({ diff, split, wrap, t }) {
  * as DSH's built-in `FileDiff`.
  * Addition-only and deletion-only comparisons use one column without changing
  * the requested layout.
- * @param {{ state: '*' | 'loading' | 'missing' | 'error' | object | undefined, split: boolean, wrap: boolean, retry: Function, t: Function }} props - comparison state, layout choices, retry action, and localized copy.
+ * @param {{ state: '*' | 'loading' | 'missing' | 'error' | object | undefined, split: boolean, wrap: boolean, retry: Function, t: Function, locale?: string }} props - comparison state, layout choices, retry action, and localized copy.
  * @returns {object} the comparison or its loading, unavailable, or error state.
  */
-export function FileDiff({ state, split, wrap, retry, t }) {
+export function FileDiff({ state, split, wrap, retry, t, locale }) {
   let content
   if (state === undefined || state === 'loading') {
     content = h('p', { className: 'vcs-diff-status', role: 'status' }, t('diff.loading'))
@@ -315,7 +318,7 @@ export function FileDiff({ state, split, wrap, retry, t }) {
     content = h('p', { className: 'vcs-diff-status' }, t('diff.oversized'))
   } else {
     const oneSided = isOneSided(state)
-    content = h(TextDiff, { diff: state, split: split && !oneSided, wrap, t })
+    content = h(TextDiff, { diff: state, split: split && !oneSided, wrap, t, locale })
   }
   return h('div', { className: 'vcs-diff-root' }, content)
 }

@@ -10,7 +10,7 @@ import { formatCount, lineCounts, splitPath, statusKey } from '../format.js'
 import { Chevron, Spinner } from '../ui.jsx'
 
 /** One group heading plus its rows. */
-function Group({ group, t, activeIndex, onSelect, onToggle }) {
+function Group({ group, t, locale, activeIndex, onSelect, onToggle }) {
   if (group.rows.length === 0) return null
   return (
     <div className="vcs-group" role="group" aria-label={group.label}>
@@ -22,6 +22,7 @@ function Group({ group, t, activeIndex, onSelect, onToggle }) {
           key={row.index}
           row={row}
           t={t}
+          locale={locale}
           active={row.index === activeIndex}
           onSelect={onSelect}
           onToggle={onToggle}
@@ -32,7 +33,7 @@ function Group({ group, t, activeIndex, onSelect, onToggle }) {
 }
 
 /** One directory, loading, or file row. */
-function Row({ row, t, active, onSelect, onToggle }) {
+function Row({ row, t, locale, active, onSelect, onToggle }) {
   if (row.kind === 'loading') {
     return (
       <div className="vcs-row vcs-loading-row" style={{ paddingLeft: `${20 + row.depth * 14}px` }} role="status">
@@ -85,8 +86,8 @@ function Row({ row, t, active, onSelect, onToggle }) {
         <span className="vcs-row-stat">
           {counts.added === null || counts.deleted === null ? null : (
             <>
-              {counts.added > 0 ? <span className="vcs-add">+{formatCount(counts.added)}</span> : null}
-              {counts.deleted > 0 ? <span className="vcs-del">−{formatCount(counts.deleted)}</span> : null}
+              {counts.added > 0 ? <span className="vcs-add">+{formatCount(counts.added, locale)}</span> : null}
+              {counts.deleted > 0 ? <span className="vcs-del">−{formatCount(counts.deleted, locale)}</span> : null}
             </>
           )}
         </span>
@@ -97,9 +98,9 @@ function Row({ row, t, active, onSelect, onToggle }) {
 
 /**
  * Render every non-empty group, or the clean state.
- * @param {{ groups: object[], t: Function, empty: boolean, activeIndex: number, onSelect: Function, onToggle: Function, truncated: boolean }} props - built groups and copy.
+ * @param {{ groups: object[], t: Function, locale?: string, empty: boolean, activeIndex: number, onSelect: Function, onToggle: Function, truncated: boolean }} props - built groups and copy.
  */
-export function ChangesList({ groups, t, empty, loading, activeIndex, onSelect, onToggle, truncated }) {
+export function ChangesList({ groups, t, locale, empty, loading, activeIndex, onSelect, onToggle, truncated }) {
   if (loading) {
     return <div className="vcs-empty"><Spinner label={t('changes.loading')} /><p className="vcs-note">{t('changes.loading')}</p></div>
   }
@@ -109,7 +110,7 @@ export function ChangesList({ groups, t, empty, loading, activeIndex, onSelect, 
   return (
     <div className="vcs-groups" aria-label={t('tabs.changes')}>
       {groups.map(group => (
-        <Group key={group.id} group={group} t={t} activeIndex={activeIndex} onSelect={onSelect} onToggle={onToggle} />
+        <Group key={group.id} group={group} t={t} locale={locale} activeIndex={activeIndex} onSelect={onSelect} onToggle={onToggle} />
       ))}
       {truncated ? <p className="vcs-note">{t('changes.truncatedMany')}</p> : null}
     </div>

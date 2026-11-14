@@ -8,8 +8,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createApi } from './api.js'
-import { loadState, saveState, SIDEBAR_MAX, SIDEBAR_MIN } from './state.js'
-import { errorMessage } from './format.js'
+import { loadState, saveState, preferredTab, SIDEBAR_MAX, SIDEBAR_MIN } from './state.js'
+import { errorMessage, formatCount } from './format.js'
 import { buildRows, rowIndexOfFile } from './changes/tree.js'
 import { buildGraph } from './history/layout.js'
 import { ChangesList } from './changes/ChangesList.jsx'
@@ -43,9 +43,9 @@ function clampWidth(value) {
 
 /**
  * Render the Git view for one Session.
- * @param {{ sessionId: string, t: Function }} props - standard Conversation view props.
+ * @param {{ sessionId: string, t: Function, locale?: string }} props - standard Conversation view props plus the active UI locale.
  */
-export function VcsView({ sessionId, t }) {
+export function VcsView({ sessionId, t, locale }) {
   const [state, setState] = useState(() => loadState(sessionId))
   const stateRef = useRef(state)
   stateRef.current = state
@@ -181,13 +181,15 @@ export function VcsView({ sessionId, t }) {
       setStatus({ status: 'ready', data, error: null })
       setRefreshing(false)
       lastLoaded.current = Date.now()
+      const tab = preferredTab(stateRef.current, data.total)
+      if (tab !== stateRef.current.tab) update({ tab })
     }).catch(error => {
       if (error?.name === 'AbortError') return
       setStatus(previous => ({ status: 'error', data: previous.data, error }))
       setRefreshing(false)
     })
     return () => { controller.abort() }
-  }, [api, state.repo, revision])
+  }, [api, state.repo, revision, update])
 
   // Reset loaded history whenever the range changes.
   useEffect(() => {
@@ -297,7 +299,7 @@ export function VcsView({ sessionId, t }) {
           id,
           rows: buildRows(id, entries, stateForTree),
           total: entries.length,
-          label: t(`changes.${id}`, { count: String(entries.length) }),
+          label: t(`changes.${id}`, { count: formatCount(entries.length, locale) }),
         }
       })
       .filter(group => group.rows.length > 0)
@@ -306,7 +308,7 @@ export function VcsView({ sessionId, t }) {
       group.rows = group.rows.map(row => ({ ...row, index: index++ }))
     }
     return built
-  }, [status.data, state.collapsed, state.dirs, dirChildren, loadingDirs, t])
+  }, [status.data, state.collapsed, state.dirs, dirChildren, loadingDirs, t, locale])
 
   const changesRows = useMemo(() => groups.flatMap(group => group.rows), [groups])
 
@@ -357,8 +359,11 @@ export function VcsView({ sessionId, t }) {
     try {
       const answer = await api.untracked(repo, path)
       if (stateRef.current.repo !== repo) return
-      setDirChildren(previous => ({ ...previous, [key]: Array.isArray(answer.entries) ? answer.entries : [] }))
-      if (answer.truncated === true) setNotice(t('changes.untrackedTruncated'))
+      const entries = Array.isArray(answer.entries) ? answer.entries : []
+      setDirChildren(previous => ({ ...previous, [key]: entries }))
+      if (answer.truncated === true) {
+        setNotice(t('changes.untrackedTruncated', { count: formatCount(entries.length, locale) }))
+      }
     } catch (error) {
       if (error?.name === 'AbortError') return
       if (stateRef.current.repo !== repo) return
@@ -371,7 +376,7 @@ export function VcsView({ sessionId, t }) {
         return next
       })
     }
-  }, [api, state.repo, t, update])
+  }, [api, state.repo, t, locale, update])
 
   // Re-open persisted untracked folders once their repository's status is known.
   useEffect(() => {
@@ -586,6 +591,7 @@ export function VcsView({ sessionId, t }) {
         onRefresh={refresh}
         refreshing={refreshing}
         t={t}
+        locale={locale}
       />
       {repositories.status === 'loading' ? (
         <div className="vcs-center"><Spinner label={t('loading.repositories')} /><p className="vcs-note">{t('loading.repositories')}</p></div>
@@ -606,7 +612,7 @@ export function VcsView({ sessionId, t }) {
                   if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
                   event.preventDefault()
                   const next = state.tab === 'changes' ? 'history' : 'changes'
-                  update({ tab: next })
+                  update({ tab: next, tabChosen: true })
                   rootRef.current?.querySelector(`#vcs-tab-${next}`)?.focus()
                 }}
               >
@@ -617,10 +623,10 @@ export function VcsView({ sessionId, t }) {
                   aria-controls="vcs-panel"
                   aria-selected={state.tab === 'changes'}
                   tabIndex={state.tab === 'changes' ? 0 : -1}
-                  onClick={() => { update({ tab: 'changes' }) }}
+                  onClick={() => { update({ tab: 'changes', tabChosen: true }) }}
                 >
                   {t('tabs.changes')}
-                  {changed > 0 ? <span className="vcs-tab-count">{changed}</span> : null}
+                  {changed > 0 ? <span className="vcs-tab-count">{formatCount(changed, locale)}</span> : null}
                 </button>
                 <button
                   type="button"
@@ -629,13 +635,13 @@ export function VcsView({ sessionId, t }) {
                   aria-controls="vcs-panel"
                   aria-selected={state.tab === 'history'}
                   tabIndex={state.tab === 'history' ? 0 : -1}
-                  onClick={() => { update({ tab: 'history' }) }}
+                  onClick={() => { update({ tab: 'history', tabChosen: true }) }}
                 >
                   {t('tabs.history')}
                 </button>
               </div>
               {notice === null ? null : <p className="vcs-notice" role="alert">{notice}</p>}
-              {repositories.truncated ? <p className="vcs-note">{t('repositories.truncated', { count: '50' })}</p> : null}
+              {repositories.truncated ? <p className="vcs-note">{t('repositories.truncated', { count: formatCount(repositories.list.length, locale) })}</p> : null}
               {status.status === 'error' ? <p className="vcs-notice" role="alert">{t('changes.error')} {errorMessage(t, status.error)}</p> : null}
               {state.tab === 'changes' ? (
                 <div
@@ -649,6 +655,7 @@ export function VcsView({ sessionId, t }) {
                   <ChangesList
                     groups={groups}
                     t={t}
+                    locale={locale}
                     empty={status.data !== null && changed === 0}
                     loading={status.status === 'loading'}
                     activeIndex={changesRows.length === 0 ? 0 : Math.min(Math.max(cursor, 0), changesRows.length - 1)}
@@ -665,6 +672,7 @@ export function VcsView({ sessionId, t }) {
                   selected={state.commit}
                   onSelect={selectCommit}
                   t={t}
+                  locale={locale}
                   refMode={state.ref}
                   onRefMode={refMode => { update({ ref: refMode, commit: null, commitFile: null }) }}
                   loading={log.status === 'loading'}
@@ -712,6 +720,7 @@ export function VcsView({ sessionId, t }) {
                   target={state.file === null ? null : { scope: state.file.group, path: state.file.path, oldPath: selectedEntry?.origPath }}
                   entry={selectedEntry}
                   t={t}
+                  locale={locale}
                   split={state.split}
                   wrap={state.wrap}
                   onToggleSplit={split => { update({ split }) }}
@@ -743,6 +752,7 @@ export function VcsView({ sessionId, t }) {
                   }}
                   narrow={narrow}
                   t={t}
+                  locale={locale}
                 />
               )}
             </section>

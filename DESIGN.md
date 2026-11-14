@@ -82,6 +82,7 @@ staging、commit、push、分支、stash、rebase 全部堆进一个面板，看
 ### 交互与状态
 
 - 键盘：`↑/↓` 或 `j/k` 移动，`Enter` 打开，`Esc` 返回；输入框内不拦截。
+- 工作区没有改动时默认打开 `History`，有改动时默认打开 `Changes`；用户点过页签后按用户选择，不再自动切换。
 - 选中项、页签、仓库、滚动位置按 `sessionId` 存在 `sessionStorage`；刷新页面可恢复。
 - 不提供设置页；只在 Host 配置层保留 `enabled: false` 的关闭开关，关闭时不注册路由与视图。
 - 明暗主题、焦点环、`prefers-reduced-motion` 全部走宿主 token/约定。
@@ -131,6 +132,7 @@ Git 通过注入的 `subprocess` 执行，固定 argv、`--no-pager`、`--no-ext
   `client.js` 是产物，不手改。
 - 注册：`ctx.slots.inject('conversation.view', ...)` 注册 `vcs` 页；inject `slots`、`uiSession`、`locale`。
 - 语言：`locale` NS 为 `vcs`，维护 zh、en、ja、es、fr、de、ru、pt 八种语言；没有字典时回退英文。
+  日期、相对时间与数字分组按当前语言格式化，语言切换后随视图重新渲染。
 - 状态：视图内 React state + `sessionStorage`（key 为 `vcs:<sessionId>`），不写 Host；
   仓库/页签/选中路径/滚动位置可恢复。
 - 数据层：`api.js` 统一 fetch，`AbortController` 取消过期请求；按 `repo + scope + path + rev` 缓存最近结果；

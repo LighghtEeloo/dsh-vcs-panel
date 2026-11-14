@@ -28,6 +28,7 @@ export function defaultState() {
   return {
     repo: null,
     tab: 'changes',
+    tabChosen: false,
     file: null,
     dirs: {},
     collapsed: {},
@@ -87,6 +88,7 @@ export function sanitizeState(raw) {
   const state = base
   state.repo = textOrNull(raw.repo)
   if (TABS.includes(raw.tab)) state.tab = raw.tab
+  state.tabChosen = raw.tabChosen === true
   state.file = fileOrNull(raw.file)
   state.dirs = trueKeys(raw.dirs)
   state.collapsed = trueKeys(raw.collapsed)
@@ -105,6 +107,23 @@ export function sanitizeState(raw) {
     }
   }
   return state
+}
+
+/**
+ * Pick the tab a panel without an explicit choice should show.
+ *
+ * An explicit choice always wins. Otherwise the working tree decides: History
+ * when it is clean (there is nothing to read in Changes), Changes when it is
+ * not. A tab restored from an earlier load is only a default until the status
+ * of the current Session answers.
+ *
+ * @param {{ tab: string, tabChosen: boolean }} state - panel state.
+ * @param {number} changed - number of working-tree entries.
+ * @returns {string} the tab to show.
+ */
+export function preferredTab(state, changed) {
+  if (state.tabChosen) return state.tab
+  return changed === 0 ? 'history' : 'changes'
 }
 
 /** The storage key for one Session. */

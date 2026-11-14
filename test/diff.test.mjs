@@ -379,10 +379,10 @@ test('FileDiff renders coarse and truncation notes with the count', () => {
     coarse: true,
     hunks: [makeHunk(3000), makeHunk(3000)],
   })
-  const tree = renderFileDiff({ state, split: false, wrap: false, retry() {}, t: tFor(calls) })
+  const tree = renderFileDiff({ state, split: false, wrap: false, retry() {}, t: tFor(calls), locale: 'en-US' })
   assert.equal(textOf(findByAttribute(tree, 'data-diff-coarse')), 'diff.coarse')
-  assert.equal(textOf(findByAttribute(tree, 'data-diff-truncated')), 'diff.truncated:5000')
-  assert.deepEqual(calls.find(call => call.key === 'diff.truncated').vars, { count: '5000' })
+  assert.equal(textOf(findByAttribute(tree, 'data-diff-truncated')), 'diff.truncated:5,000')
+  assert.deepEqual(calls.find(call => call.key === 'diff.truncated').vars, { count: '5,000' })
   assert.equal(elements(tree).filter(element => Object.hasOwn(element.props ?? {}, 'data-diff-line')).length, 5000)
 })
 

@@ -17,9 +17,9 @@ function targetKey(target) {
 
 /**
  * Render the selected file's comparison.
- * @param {{ api: object, repo: string | null, target: object | null, entry: object | null, t: Function, split: boolean, wrap: boolean, onToggleSplit: Function, onToggleWrap: Function, onBack: Function, narrow: boolean }} props - panel state.
+ * @param {{ api: object, repo: string | null, target: object | null, entry: object | null, t: Function, locale?: string, split: boolean, wrap: boolean, onToggleSplit: Function, onToggleWrap: Function, onBack: Function, narrow: boolean }} props - panel state.
  */
-export function DiffPane({ api, repo, target, entry, t, split, wrap, onToggleSplit, onToggleWrap, onBack, narrow, revision = 0 }) {
+export function DiffPane({ api, repo, target, entry, t, locale, split, wrap, onToggleSplit, onToggleWrap, onBack, narrow, revision = 0 }) {
   const [state, setState] = useState({ status: 'idle', diff: null, error: null })
   const [attempt, setAttempt] = useState(0)
 
@@ -81,8 +81,8 @@ export function DiffPane({ api, repo, target, entry, t, split, wrap, onToggleSpl
         </span>
         {counts.added === null || counts.deleted === null ? null : (
           <span className="vcs-detail-stat">
-            {counts.added > 0 ? <span className="vcs-add">+{formatCount(counts.added)}</span> : null}
-            {counts.deleted > 0 ? <span className="vcs-del">−{formatCount(counts.deleted)}</span> : null}
+            {counts.added > 0 ? <span className="vcs-add">+{formatCount(counts.added, locale)}</span> : null}
+            {counts.deleted > 0 ? <span className="vcs-del">−{formatCount(counts.deleted, locale)}</span> : null}
           </span>
         )}
         <span className="vcs-detail-spacer" />
@@ -114,6 +114,7 @@ export function DiffPane({ api, repo, target, entry, t, split, wrap, onToggleSpl
           wrap={wrap}
           retry={() => { setAttempt(value => value + 1) }}
           t={t}
+          locale={locale}
         />
       </div>
     </div>

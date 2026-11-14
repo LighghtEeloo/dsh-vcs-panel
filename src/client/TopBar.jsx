@@ -2,13 +2,14 @@
  * The panel header: repository choice, branch facts, change summary, refresh.
  */
 
+import { formatCount } from './format.js'
 import { Arrow, BranchIcon, IconButton, RefreshIcon, Spinner } from './ui.jsx'
 
 /**
  * Render the header bar.
- * @param {{ repositories: object[], repo: string | null, onRepoChange: Function, status: object | null, changed: number, onRefresh: Function, refreshing: boolean, t: Function }} props - panel header state.
+ * @param {{ repositories: object[], repo: string | null, onRepoChange: Function, status: object | null, changed: number, onRefresh: Function, refreshing: boolean, t: Function, locale?: string }} props - panel header state.
  */
-export function TopBar({ repositories, repo, onRepoChange, status, changed, onRefresh, refreshing, t }) {
+export function TopBar({ repositories, repo, onRepoChange, status, changed, onRefresh, refreshing, t, locale }) {
   const branch = status?.branch
   let branchText = ''
   if (branch !== undefined && branch !== null) {
@@ -42,7 +43,7 @@ export function TopBar({ repositories, repo, onRepoChange, status, changed, onRe
       )}
       <span className="vcs-changed">
         {changed > 0
-          ? <>{t('top.changed', { count: String(changed) })}</>
+          ? <>{t('top.changed', { count: formatCount(changed, locale) })}</>
           : status === null ? null : <span className="vcs-dim">{t('changes.clean')}</span>}
       </span>
       <span className="vcs-topbar-spacer" />

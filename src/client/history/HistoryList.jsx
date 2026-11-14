@@ -8,7 +8,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { graphWidth, Graph } from './Graph.jsx'
-import { errorMessage, formatCommitTime, shortSha } from '../format.js'
+import { errorMessage, formatCommitTime, formatCount, shortSha } from '../format.js'
 import { RefBadge, Segmented, Spinner } from '../ui.jsx'
 
 /** Fixed row height in CSS pixels. */
@@ -18,10 +18,10 @@ const OVERSCAN = 10
 
 /**
  * Render one page-deep commit list.
- * @param {{ commits: object[], layout: object, selected: string | null, onSelect: Function, t: Function, refMode: string, onRefMode: Function, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function }} props - history state.
+ * @param {{ commits: object[], layout: object, selected: string | null, onSelect: Function, t: Function, locale?: string, refMode: string, onRefMode: Function, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function }} props - history state.
  */
 export function HistoryList({
-  commits, layout, selected, onSelect, t, refMode, onRefMode,
+  commits, layout, selected, onSelect, t, locale, refMode, onRefMode,
   loading, loadingMore, error, hasMore, truncated, onLoadMore,
   initialScrollTop = 0, onScrollOffset, onRetry,
 }) {
@@ -86,7 +86,7 @@ export function HistoryList({
           ]}
           onChange={onRefMode}
         />
-        <span className="vcs-history-count">{loading ? <Spinner label={t('history.loading')} /> : commits.length > 0 ? String(commits.length) : null}</span>
+        <span className="vcs-history-count">{loading ? <Spinner label={t('history.loading')} /> : commits.length > 0 ? formatCount(commits.length, locale) : null}</span>
       </div>
       <div className="vcs-history-viewport">
         <div
@@ -120,7 +120,7 @@ export function HistoryList({
                     {commit.refs.slice(0, 3).map(reference => <RefBadge key={`${reference.kind}:${reference.name}`} reference={reference} />)}
                   </span>
                   <span className="vcs-commit-author">{commit.author}</span>
-                  <span className="vcs-commit-time">{formatCommitTime(commit.authorTime)}</span>
+                  <span className="vcs-commit-time">{formatCommitTime(commit.authorTime, Date.now(), locale)}</span>
                 </button>
               )
             })}
@@ -151,7 +151,7 @@ export function HistoryList({
       </div>
       {!truncated && !hasMore ? null : (
         <div className="vcs-history-footer">
-          {truncated ? <p className="vcs-note">{t('history.truncated', { count: String(commits.length) })}</p> : null}
+          {truncated ? <p className="vcs-note">{t('history.truncated', { count: formatCount(commits.length, locale) })}</p> : null}
           {hasMore ? (
             <button type="button" className="vcs-load-more" onClick={onLoadMore} disabled={loadingMore}>
               {loadingMore ? t('history.loadingMore') : t('history.loadMore')}

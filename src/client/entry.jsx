@@ -6,6 +6,8 @@
  * routes; nothing here writes to the repository.
  */
 
+import { useEffect, useState } from 'react'
+
 import shellStyles from './styles.css'
 import diffStyles from './diff/FileDiff.css'
 import graphStyles from './history/graph.css'
@@ -37,11 +39,27 @@ export function apply(ctx) {
   }, 'dsh-vcs-panel: styles')
 
   const t = ctx.locale.bind(NS)
+
+  /**
+   * Track the active UI locale so dates and counts follow the language switch.
+   * The translate function reads the locale at call time; this wrapper makes
+   * the view re-render when the switch happens.
+   * @param {object} props - standard Conversation view props.
+   * @returns {object} the Git view with the active locale.
+   */
+  function LocalizedVcsView(props) {
+    const [locale, setLocale] = useState(() => ctx.locale.getLocale().active)
+    useEffect(() => ctx.locale.subscribe(() => {
+      setLocale(ctx.locale.getLocale().active)
+    }), [])
+    return <VcsView {...props} locale={locale} />
+  }
+
   ctx.slots.inject('conversation.view', () => ctx.slots.register({
     name: 'conversation.view',
     id: VIEW_ID,
     order: VIEW_ORDER,
     locale: NS,
     label: () => t('view.label'),
-  }, VcsView))
+  }, LocalizedVcsView))
 }

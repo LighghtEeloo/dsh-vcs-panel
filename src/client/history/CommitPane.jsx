@@ -12,11 +12,11 @@ import { BackIcon, Button, CheckIcon, CopyIcon, IconButton, RefBadge, Spinner } 
 
 /**
  * Render a commit, or the selected file's comparison inside it.
- * @param {{ api: object, repo: string | null, sha: string | null, summary: object | null, selectedFile: string | null, onSelectFile: Function, split: boolean, wrap: boolean, onToggleSplit: Function, onToggleWrap: Function, onBack: Function, narrow: boolean, t: Function }} props - commit detail state.
+ * @param {{ api: object, repo: string | null, sha: string | null, summary: object | null, selectedFile: string | null, onSelectFile: Function, split: boolean, wrap: boolean, onToggleSplit: Function, onToggleWrap: Function, onBack: Function, narrow: boolean, t: Function, locale?: string }} props - commit detail state.
  */
 export function CommitPane({
   api, repo, sha, summary, selectedFile, onSelectFile, split, wrap,
-  onToggleSplit, onToggleWrap, onBack, narrow, t, revision = 0,
+  onToggleSplit, onToggleWrap, onBack, narrow, t, locale, revision = 0,
 }) {
   const [state, setState] = useState({ status: 'idle', commit: null, truncated: false, error: null })
   const [attempt, setAttempt] = useState(0)
@@ -65,6 +65,7 @@ export function CommitPane({
         target={{ scope: 'commit', path: file.path, oldPath: file.origPath, rev: sha }}
         entry={file}
         t={t}
+        locale={locale}
         split={split}
         wrap={wrap}
         onToggleSplit={onToggleSplit}
@@ -108,11 +109,11 @@ export function CommitPane({
         <div className="vcs-detail-body vcs-commit-body">
           <dl className="vcs-commit-meta">
             <dt>{t('commit.author')}</dt>
-            <dd>{detail.author} <span className="vcs-dim">{formatDateTime(detail.authorTime)}</span></dd>
+            <dd>{detail.author} <span className="vcs-dim">{formatDateTime(detail.authorTime, locale)}</span></dd>
             {detail.committer !== detail.author || detail.committerTime !== detail.authorTime ? (
               <>
                 <dt>{t('commit.committer')}</dt>
-                <dd>{detail.committer} <span className="vcs-dim">{formatDateTime(detail.committerTime)}</span></dd>
+                <dd>{detail.committer} <span className="vcs-dim">{formatDateTime(detail.committerTime, locale)}</span></dd>
               </>
             ) : null}
             <dt>{t('commit.parents')}</dt>
@@ -125,8 +126,8 @@ export function CommitPane({
           <pre className="vcs-commit-message">{detail.message}</pre>
           <div className="vcs-commit-files">
             <div className="vcs-group-header">
-              <span className="vcs-group-title">{t('commit.files', { count: String(detail.files.length) })}</span>
-              {state.truncated ? <span className="vcs-note">{t('commit.filesTruncated', { count: String(detail.files.length) })}</span> : null}
+              <span className="vcs-group-title">{t('commit.files', { count: formatCount(detail.files.length, locale) })}</span>
+              {state.truncated ? <span className="vcs-note">{t('commit.filesTruncated', { count: formatCount(detail.files.length, locale) })}</span> : null}
             </div>
             {detail.files.length === 0 ? <p className="vcs-note">{t('commit.noFiles')}</p> : detail.files.map(entry => {
               const counts = lineCounts(entry)
@@ -140,8 +141,8 @@ export function CommitPane({
                   </span>
                   {entry.binary ? <span className="vcs-row-stat vcs-dim">{t('changes.binary')}</span> : (
                     <span className="vcs-row-stat">
-                      {counts.added !== null && counts.added > 0 ? <span className="vcs-add">+{formatCount(counts.added)}</span> : null}
-                      {counts.deleted !== null && counts.deleted > 0 ? <span className="vcs-del">−{formatCount(counts.deleted)}</span> : null}
+                      {counts.added !== null && counts.added > 0 ? <span className="vcs-add">+{formatCount(counts.added, locale)}</span> : null}
+                      {counts.deleted !== null && counts.deleted > 0 ? <span className="vcs-del">−{formatCount(counts.deleted, locale)}</span> : null}
                     </span>
                   )}
                 </button>

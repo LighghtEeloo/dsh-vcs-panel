@@ -2,10 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  defaultState, loadState, saveState, sanitizeState, storageKey, SIDEBAR_MIN, SIDEBAR_MAX,
+  defaultState, loadState, preferredTab, saveState, sanitizeState, storageKey, SIDEBAR_MIN, SIDEBAR_MAX,
 } from '../src/client/state.js'
 import {
-  errorMessage, formatCommitTime, lineCounts, shortSha, splitPath, statusKey,
+  errorMessage, formatCommitTime, formatCount, lineCounts, shortSha, splitPath, statusKey,
 } from '../src/client/format.js'
 import { buildRows, rowIndexOfFile, dirKey } from '../src/client/changes/tree.js'
 import { ApiError, createApi, queryString } from '../src/client/api.js'
@@ -27,6 +27,7 @@ test('defaultState is fresh each time', () => {
   assert.notEqual(first, second)
   assert.deepEqual(first, second)
   assert.equal(first.tab, 'changes')
+  assert.equal(first.tabChosen, false)
   assert.equal(first.sidebarWidth, 320)
 })
 
@@ -34,6 +35,7 @@ test('sanitizeState keeps accepted values and drops unknown ones', () => {
   const state = sanitizeState({
     repo: '/repo',
     tab: 'history',
+    tabChosen: true,
     file: { group: 'staged', path: 'src/a.js' },
     dirs: { 'untracked|tmp/': true, bad: 'yes' },
     collapsed: { 'staged|src/': true },
@@ -47,6 +49,7 @@ test('sanitizeState keeps accepted values and drops unknown ones', () => {
   })
   assert.equal(state.repo, '/repo')
   assert.equal(state.tab, 'history')
+  assert.equal(state.tabChosen, true)
   assert.deepEqual(state.file, { group: 'staged', path: 'src/a.js' })
   assert.deepEqual(state.dirs, { 'untracked|tmp/': true })
   assert.deepEqual(state.collapsed, { 'staged|src/': true })
@@ -67,11 +70,27 @@ test('sanitizeState rejects malformed selections and ranges', () => {
     scroll: 'nope',
   })
   assert.equal(state.tab, 'changes')
+  assert.equal(state.tabChosen, false)
   assert.equal(state.file, null)
   assert.equal(state.commit, null)
   assert.equal(state.ref, 'HEAD')
   assert.equal(state.sidebarWidth, SIDEBAR_MIN)
   assert.deepEqual(state.scroll, { changes: 0, history: 0 })
+})
+
+test('preferredTab opens History for a clean tree unless the tab was chosen', () => {
+  assert.equal(preferredTab({ tab: 'changes', tabChosen: false }, 0), 'history')
+  assert.equal(preferredTab({ tab: 'changes', tabChosen: false }, 3), 'changes')
+  assert.equal(preferredTab({ tab: 'history', tabChosen: false }, 3), 'changes')
+  assert.equal(preferredTab({ tab: 'changes', tabChosen: true }, 0), 'changes')
+  assert.equal(preferredTab({ tab: 'history', tabChosen: true }, 0), 'history')
+  assert.equal(preferredTab({ tab: 'changes', tabChosen: false }, undefined), 'changes')
+})
+
+test('formatCount follows the supplied locale', () => {
+  assert.equal(formatCount(1234, 'en-US'), '1,234')
+  assert.equal(formatCount(1234, 'de-DE'), '1.234')
+  assert.equal(formatCount(1234), new Intl.NumberFormat().format(1234))
 })
 
 test('loadState and saveState round-trip through sessionStorage', () => {

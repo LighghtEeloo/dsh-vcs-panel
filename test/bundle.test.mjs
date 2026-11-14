@@ -77,6 +77,12 @@ test('apply registers the locale dictionaries, one stylesheet, and the Git view'
         bind(ns) {
           return key => `${ns}:${key}`
         },
+        getLocale() {
+          return { active: 'zh', locales: [], revision: 0 }
+        },
+        subscribe() {
+          return () => undefined
+        },
       },
       slots: {
         inject(key, callback) {
@@ -112,6 +118,11 @@ test('apply registers the locale dictionaries, one stylesheet, and the Git view'
     assert.equal(views[0].options.locale, 'vcs')
     assert.equal(views[0].options.label(), 'vcs:view.label')
     assert.equal(typeof views[0].component, 'function')
+
+    // The registered wrapper passes the active locale to the view so dates and
+    // numbers follow the DSH language rather than the browser's.
+    const tree = views[0].component({ sessionId: 'session-1', t: key => `vcs:${key}` })
+    assert.equal(tree.props.locale, 'zh')
 
     // Every registration is owned by an effect, so unload removes it.
     for (const effect of effects) assert.equal(typeof effect.label, 'string')
