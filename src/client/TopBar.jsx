@@ -1,15 +1,16 @@
 /**
- * The panel header: repository choice, branch facts, change summary, refresh.
+ * The panel header: repository choice, branch facts, history range, the
+ * read-only marker, and refresh. The working-tree summary lives on the
+ * timeline's first row, next to the history it precedes.
  */
 
-import { formatCount } from './format.js'
-import { Arrow, BranchIcon, IconButton, LockIcon, RefreshIcon, Spinner } from './ui.jsx'
+import { Arrow, BranchIcon, IconButton, LockIcon, RefreshIcon, Segmented, Spinner } from './ui.jsx'
 
 /**
  * Render the header bar.
- * @param {{ repositories: object[], repo: string | null, onRepoChange: Function, status: object | null, changed: number, onRefresh: Function, refreshing: boolean, t: Function, locale?: string }} props - panel header state.
+ * @param {{ repositories: object[], repo: string | null, onRepoChange: Function, status: object | null, refMode: string, onRefMode: (ref: string) => void, onRefresh: Function, refreshing: boolean, t: Function }} props - panel header state.
  */
-export function TopBar({ repositories, repo, onRepoChange, status, changed, onRefresh, refreshing, t, locale }) {
+export function TopBar({ repositories, repo, onRepoChange, status, refMode, onRefMode, onRefresh, refreshing, t }) {
   const branch = status?.branch
   let branchText = ''
   if (branch !== undefined && branch !== null) {
@@ -41,11 +42,15 @@ export function TopBar({ repositories, repo, onRepoChange, status, changed, onRe
           {behind > 0 ? <span className="vcs-behind"><Arrow />{behind}</span> : null}
         </span>
       )}
-      <span className="vcs-changed">
-        {changed > 0
-          ? <>{t('top.changed', { count: formatCount(changed, locale) })}</>
-          : status === null ? null : <span className="vcs-dim">{t('changes.clean')}</span>}
-      </span>
+      <Segmented
+        value={refMode}
+        label={t('history.refLabel')}
+        options={[
+          { value: 'HEAD', label: t('history.head'), title: t('history.headTitle') },
+          { value: 'all', label: t('history.all'), title: t('history.allTitle') },
+        ]}
+        onChange={onRefMode}
+      />
       <span className="vcs-topbar-spacer" />
       <span className="vcs-readonly" role="img" aria-label={t('top.readonly')} title={t('top.readonlyHint')}>
         <LockIcon />

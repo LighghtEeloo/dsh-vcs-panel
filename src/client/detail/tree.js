@@ -1,10 +1,11 @@
 /**
- * Working-tree rows for the Changes list.
+ * File rows for the detail pane's navigation and diff stream.
  *
- * Staged and unstaged entries are files under collapsible directories; the
- * untracked group also contains directory entries Git collapsed, whose direct
- * children arrive later from `vcs.untracked`. This module turns those three
- * shapes into one flat row list the list renders and the keyboard walks.
+ * Every file group (staged, unstaged, untracked, or one commit's files) is a
+ * set of paths under collapsible directories; the untracked group also
+ * contains directory entries Git collapsed, whose direct children arrive later
+ * from `vcs.untracked`. This module turns a group into one flat row list that
+ * the navigation renders, the keyboard walks, and the stream follows.
  */
 
 /** The key one directory's expansion state is stored under. */
@@ -72,7 +73,7 @@ function segmentsOf(path) {
 
 /**
  * Build the tree for one status group.
- * @param {string} group - 'staged', 'unstaged', or 'untracked'.
+ * @param {string} group - 'staged', 'unstaged', 'untracked', or 'commit'.
  * @param {object[]} entries - status entries for this group.
  * @param {object} state - expansion state.
  * @param {Record<string, object[]>} state.dirChildren - loaded untracked children by dirKey.
@@ -174,15 +175,3 @@ export function buildRows(group, entries, state = {}) {
   flatten(buildTree(group, entries, state), 0, group, state, rows)
   return rows
 }
-
-/**
- * Index of the row selecting one file, or -1.
- * @param {object[]} rows - visible rows.
- * @param {{ group: string, path: string } | null} file - the selection.
- * @returns {number} the row index.
- */
-export function rowIndexOfFile(rows, file) {
-  if (file === null) return -1
-  return rows.findIndex(row => row.kind === 'file' && row.group === file.group && row.path === file.path)
-}
-

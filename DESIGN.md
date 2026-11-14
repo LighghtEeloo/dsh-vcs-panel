@@ -111,6 +111,7 @@ staging、commit、push、分支、stash、rebase 全部堆进一个面板，看
 - 键盘（输入框内不拦截）：
   - 时间线：`↑/↓` 或 `j/k` 切换节点；`Enter` 或 `→` 进入文件导航。
   - 文件导航：`↑/↓` 或 `j/k` 切换文件，diff 流随之滚到该段；`Enter` 折叠/展开目录；`←` 或 `Esc` 回到时间线。
+  - diff 流：`Esc` 回到文件导航中正在阅读的文件。
   - 窄布局：`Esc` 从详情返回时间线。
 - 多个仓库：仓库选择器列出会话工作目录所属仓库，以及工作区内一层深的子仓库；切换仓库保留各自的选中节点与范围。
 - 刷新：手动按钮；重新可见时若数据超过一个短 TTL 才自动刷新。没有定时轮询。
@@ -172,12 +173,12 @@ Git 通过注入的 `subprocess` 执行，固定 argv、`--no-pager`、`--no-ext
 - 语言：`locale` NS 为 `vcs`，维护 zh、en、ja、es、fr、de、ru、pt 八种语言；没有字典时回退英文。
   日期、相对时间与数字分组按当前语言格式化，语言切换后随视图重新渲染。
 - 状态：视图内 React state + `sessionStorage`（key 为 `vcs:<sessionId>`），不写 Host。
-- 数据层：`api.js` 统一 fetch，`AbortController` 取消过期请求；按 `repo + scope + path + rev` 缓存最近结果；
-  不轮询，刷新由挂载、手动按钮、重新可见触发。
+- 数据层：`api.js` 统一 fetch，`AbortController` 取消过期请求；diff 结果按 `repo + scope + path + rev` 缓存最近 300 条，
+  刷新时清空。不轮询，刷新由挂载、手动按钮、重新可见触发。
 - 时间线：工作区节点作为虚拟节点放在第 0 行，与提交一起交给 lane 布局（见“图的布局”）。
   列表固定行高 44px（两行文本），只渲染可视区 ±10 行；图与列表共用滚动容器和行高，避免错位。
-- 详情：选中节点先归一成 `NodeDetail`（头部数据 + 文件分组），文件导航与 diff 流都只读这一结构；
-  工作区与提交的差别只在构造 `NodeDetail` 时出现。diff 流是文件分组展平后的 `DiffTarget` 序列。
+- 详情：选中节点先归一成 `FileGroup[]`，文件导航与 diff 流都只读这一结构；
+  工作区与提交的差别只在构造分组和头部时出现。diff 流是分组按导航顺序完全展开后的 `DiffTarget` 序列。
 - diff 流：每段由 `IntersectionObserver` 在接近视口时入队，队列限制并发并取消离开视口的请求；
   段高度在加载前按增删行数估算，加载后以实测高度为准；阅读位置按“文件 + 段内偏移”记录，不依赖绝对 `scrollTop`。
 - diff：`vcs.diff` 返回 hunk，转成 `FileDiff` 的 state；`FileDiff` 负责 split/unified、行号、hunk header 和状态；
@@ -213,8 +214,7 @@ type FileEntry = {
   binary?: boolean
   directory?: boolean // 未展开的未跟踪目录
 }
-type FileGroup = { id: 'staged' | 'unstaged' | 'untracked' | 'commit'; files: FileEntry[]; truncated: boolean }
-type NodeDetail = { node: TimelineNode; groups: FileGroup[] }
+type FileGroup = { id: 'staged' | 'unstaged' | 'untracked' | 'commit'; entries: FileEntry[] } // 截断由 status / commit 回答整体标记
 type DiffTarget = {
   scope: 'staged' | 'unstaged' | 'untracked' | 'commit'
   path: string

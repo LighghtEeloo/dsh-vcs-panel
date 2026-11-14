@@ -18,6 +18,7 @@ function loadBundle() {
     useEffect: () => undefined,
     useLayoutEffect: () => undefined,
     useMemo: fn => fn(),
+    memo: component => component,
     useRef: value => ({ current: value }),
     useState: initial => [typeof initial === 'function' ? initial() : initial, () => undefined],
   }
@@ -162,18 +163,17 @@ test('no component receives the reserved ref prop (React 18 drops it)', () => {
 
 test('selection styles target the classes and attributes the components set', () => {
   const read = path => readFileSync(new URL(`../src/client/${path}`, import.meta.url), 'utf8')
-  const count = (text, needle) => text.split(needle).length - 1
   const css = read('styles.css')
-  const view = read('VcsView.jsx')
-  const history = read('history/HistoryList.jsx')
+  const timeline = read('history/Timeline.jsx')
+  const nav = read('detail/FileNav.jsx')
 
-  // Every Changes/History tab carries the class its selected style targets.
-  assert.match(css, /\.vcs-tab\[aria-selected='true'\]/u)
-  assert.equal(count(view, 'role="tab"'), 2)
-  assert.equal(count(view, 'className="vcs-tab"'), 2)
+  // Timeline rows mark the selected node with aria-current, and so does the style.
+  assert.match(timeline, /'aria-current': index === selectedRow \? 'true'/u)
+  assert.match(css, /\.vcs-timeline-row\[aria-current='true'\]/u)
 
-  // History rows mark the selected commit with aria-current, and so does the style.
-  assert.match(history, /className="vcs-commit-row"[^]*?aria-current=/u)
-  assert.match(css, /\.vcs-commit-row\[aria-current='true'\]/u)
-  assert.doesNotMatch(css, /\.vcs-commit-row\[aria-selected/u)
+  // The navigation marks the file being read with aria-current="location";
+  // the style matches any aria-current value.
+  assert.match(nav, /aria-current=\{reading \? 'location' : undefined\}/u)
+  assert.match(css, /\.vcs-row\[aria-current\]/u)
+  assert.doesNotMatch(css, /aria-selected/u)
 })

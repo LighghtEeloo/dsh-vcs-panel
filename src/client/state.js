@@ -2,23 +2,26 @@
  * Session-scoped panel state.
  *
  * The Host owns Git; this module owns only what the panel remembers per
- * Session: repository, tab, selection, expansion, layout choices, and scroll
- * offsets. `sessionStorage` is the boundary — losing it drops the panel back
- * to defaults, never to an error.
+ * Session: repository, the selected timeline node, history range, expansion
+ * and fold choices, layout choices, and reading positions. `sessionStorage` is
+ * the boundary — losing it drops the panel back to defaults, never to an error.
  */
 
 /** Prefix that keeps this plugin's keys apart from any other tab state. */
 const KEY_PREFIX = 'vcs:'
 
-/** Tab ids the panel accepts. */
-export const TABS = ['changes', 'history']
+/** The timeline node standing for the working tree; commits use their full id. */
+export const WORKTREE = 'worktree'
 
-/** Ref modes the history tab accepts. */
+/** Ref modes the history range accepts. */
 export const REFS = ['HEAD', 'all']
 
 /** Sidebar width bounds, in CSS pixels. */
 export const SIDEBAR_MIN = 280
 export const SIDEBAR_MAX = 480
+
+/** Directory keys of the commit file group, which belong to one commit only. */
+const COMMIT_DIR_PREFIX = 'commit|'
 
 /**
  * The state a fresh Session starts with.
@@ -27,18 +30,17 @@ export const SIDEBAR_MAX = 480
 export function defaultState() {
   return {
     repo: null,
-    tab: 'changes',
-    tabChosen: false,
-    file: null,
+    node: null,
+    nodeChosen: false,
+    ref: 'HEAD',
     dirs: {},
     collapsed: {},
-    commit: null,
-    commitFile: null,
-    ref: 'HEAD',
+    folds: {},
+    anchor: null,
     split: false,
     wrap: false,
     sidebarWidth: 320,
-    scroll: { changes: 0, history: 0 },
+    timelineScroll: 0,
   }
 }
 
@@ -57,24 +59,40 @@ function trueKeys(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
   const result = {}
   for (const [key, on] of Object.entries(value)) {
-    if (on === true && typeof key === 'string') result[key] = true
+    if (on === true) result[key] = true
+  }
+  return result
+}
+
+/** Copy only boolean entries of a plain object. */
+function booleanKeys(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  const result = {}
+  for (const [key, on] of Object.entries(value)) {
+    if (typeof on === 'boolean') result[key] = on
   }
   return result
 }
 
 /**
- * Normalize one selected working-tree file.
- * @param {unknown} value - persisted value.
- * @returns {{ group: string, path: string } | null} the selection or null.
+ * Whether a value names a timeline node: the working tree or a commit id.
+ * @param {unknown} value - candidate node.
+ * @returns {boolean} true for {@link WORKTREE} or a hexadecimal commit id.
  */
-function fileOrNull(value) {
+export function isNode(value) {
+  return value === WORKTREE || (typeof value === 'string' && /^[0-9a-f]{7,64}$/iu.test(value))
+}
+
+/**
+ * Normalize a reading position inside the diff stream.
+ * @param {unknown} value - persisted value.
+ * @returns {{ key: string, offset: number } | null} the anchor or null.
+ */
+function anchorOrNull(value) {
   if (value === null || typeof value !== 'object') return null
-  const group = value.group
-  const path = value.path
-  if ((group !== 'staged' && group !== 'unstaged' && group !== 'untracked') || typeof path !== 'string' || path === '') {
-    return null
-  }
-  return { group, path }
+  if (typeof value.key !== 'string' || value.key === '') return null
+  if (typeof value.offset !== 'number' || !Number.isFinite(value.offset) || value.offset < 0) return null
+  return { key: value.key, offset: value.offset }
 }
 
 /**
@@ -83,47 +101,64 @@ function fileOrNull(value) {
  * @returns {object} a complete state.
  */
 export function sanitizeState(raw) {
-  const base = defaultState()
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return base
-  const state = base
+  const state = defaultState()
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return state
   state.repo = textOrNull(raw.repo)
-  if (TABS.includes(raw.tab)) state.tab = raw.tab
-  state.tabChosen = raw.tabChosen === true
-  state.file = fileOrNull(raw.file)
+  state.node = isNode(raw.node) ? raw.node : null
+  state.nodeChosen = state.node !== null && raw.nodeChosen === true
+  if (REFS.includes(raw.ref)) state.ref = raw.ref
   state.dirs = trueKeys(raw.dirs)
   state.collapsed = trueKeys(raw.collapsed)
-  state.commit = typeof raw.commit === 'string' && /^[0-9a-f]{7,64}$/i.test(raw.commit) ? raw.commit : null
-  state.commitFile = textOrNull(raw.commitFile)
-  if (REFS.includes(raw.ref)) state.ref = raw.ref
+  state.folds = booleanKeys(raw.folds)
+  state.anchor = anchorOrNull(raw.anchor)
   state.split = raw.split === true
   state.wrap = raw.wrap === true
   if (typeof raw.sidebarWidth === 'number' && Number.isFinite(raw.sidebarWidth)) {
     state.sidebarWidth = clamp(Math.round(raw.sidebarWidth), SIDEBAR_MIN, SIDEBAR_MAX)
   }
-  if (raw.scroll !== null && typeof raw.scroll === 'object') {
-    for (const key of ['changes', 'history']) {
-      const value = raw.scroll[key]
-      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) state.scroll[key] = value
-    }
+  if (typeof raw.timelineScroll === 'number' && Number.isFinite(raw.timelineScroll) && raw.timelineScroll >= 0) {
+    state.timelineScroll = raw.timelineScroll
   }
   return state
 }
 
 /**
- * Pick the tab a panel without an explicit choice should show.
+ * Pick the node a panel shows when the user has not chosen one.
  *
- * An explicit choice always wins. Otherwise the working tree decides: History
- * when it is clean (there is nothing to read in Changes), Changes when it is
- * not. A tab restored from an earlier load is only a default until the status
- * of the current Session answers.
+ * An explicit choice always wins. Otherwise the working tree decides: its own
+ * node when it has changes (that is what is being worked on), the HEAD commit
+ * when it is clean, and the working tree again when there is no commit yet.
  *
- * @param {{ tab: string, tabChosen: boolean }} state - panel state.
- * @param {number} changed - number of working-tree entries.
- * @returns {string} the tab to show.
+ * @param {{ node: string | null, nodeChosen: boolean }} state - panel state.
+ * @param {{ total?: number, branch?: { oid?: string | null } } | null} status - the working-tree answer.
+ * @returns {string | null} the node to show, or null before the status answers.
  */
-export function preferredTab(state, changed) {
-  if (state.tabChosen) return state.tab
-  return changed === 0 ? 'history' : 'changes'
+export function preferredNode(state, status) {
+  if (state.nodeChosen && state.node !== null) return state.node
+  if (status === null || status === undefined) return state.node
+  if ((status.total ?? 0) > 0) return WORKTREE
+  return textOrNull(status.branch?.oid) ?? WORKTREE
+}
+
+/**
+ * The state patch that moves the selection to another node.
+ *
+ * Reading position and fold choices describe one node's diff stream, and
+ * commit-group folders belong to one commit, so they reset with the node.
+ * Working-tree folders persist across nodes.
+ *
+ * @param {object} state - current panel state.
+ * @param {string} node - the node to select.
+ * @param {boolean} chosen - whether the user picked it.
+ * @returns {object} the patch to merge into the state.
+ */
+export function nodePatch(state, node, chosen) {
+  if (state.node === node) return chosen === state.nodeChosen ? {} : { nodeChosen: chosen }
+  const collapsed = {}
+  for (const key of Object.keys(state.collapsed ?? {})) {
+    if (!key.startsWith(COMMIT_DIR_PREFIX)) collapsed[key] = true
+  }
+  return { node, nodeChosen: chosen, anchor: null, folds: {}, collapsed }
 }
 
 /** The storage key for one Session. */

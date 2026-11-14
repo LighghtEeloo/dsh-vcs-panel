@@ -1,4 +1,4 @@
-/* Commit-history lane graph overlay.
+/* Timeline lane graph overlay.
  *
  * Colors are supplied per element from the layout palette in layout.js; this
  * sheet only carries geometry, stroke styling and the overlay positioning.
@@ -40,6 +40,17 @@
 
 .vcs-graph-dot-merge {
   stroke-width: 1.5;
+}
+
+/* The working tree is not a commit yet: a dashed ring on a dashed lane to HEAD. */
+.vcs-graph-path-dashed {
+  stroke-dasharray: 3 3;
+  stroke-linecap: butt;
+}
+
+.vcs-graph-dot-worktree {
+  stroke-width: 1.5;
+  stroke-dasharray: 2.2 1.8;
 }
 
 /* Subtle outer ring on the selected commit dot. */

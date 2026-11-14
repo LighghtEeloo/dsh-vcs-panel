@@ -2,12 +2,19 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  defaultState, loadState, preferredTab, saveState, sanitizeState, storageKey, SIDEBAR_MIN, SIDEBAR_MAX,
+  defaultState, isNode, loadState, nodePatch, preferredNode, saveState, sanitizeState, storageKey,
+  SIDEBAR_MIN, SIDEBAR_MAX, WORKTREE,
 } from '../src/client/state.js'
 import {
   errorMessage, formatCommitTime, formatCount, lineCounts, shortSha, splitPath, statusKey,
 } from '../src/client/format.js'
-import { buildRows, rowIndexOfFile, dirKey } from '../src/client/changes/tree.js'
+import { buildRows, dirKey } from '../src/client/detail/tree.js'
+import {
+  FOLD_LINES, STREAM_BUDGET, changedLines, commitGroups, defaultFolds, diffTarget, estimateHeight, isFolded,
+  sectionAt, streamSections, worktreeGroups,
+} from '../src/client/detail/detail.js'
+import { createQueue } from '../src/client/detail/queue.js'
+import { graphInput, headOf, nodeAt, rowOf, worktreeSummary } from '../src/client/history/timeline.js'
 import { ApiError, createApi, queryString } from '../src/client/api.js'
 import { hasSeveralAuthors, indexCommits, messageBody } from '../src/client/history/commits.js'
 
@@ -27,65 +34,97 @@ test('defaultState is fresh each time', () => {
   const second = defaultState()
   assert.notEqual(first, second)
   assert.deepEqual(first, second)
-  assert.equal(first.tab, 'changes')
-  assert.equal(first.tabChosen, false)
+  assert.equal(first.node, null)
+  assert.equal(first.nodeChosen, false)
+  assert.equal(first.anchor, null)
   assert.equal(first.sidebarWidth, 320)
 })
 
 test('sanitizeState keeps accepted values and drops unknown ones', () => {
   const state = sanitizeState({
     repo: '/repo',
-    tab: 'history',
-    tabChosen: true,
-    file: { group: 'staged', path: 'src/a.js' },
-    dirs: { 'untracked|tmp/': true, bad: 'yes' },
-    collapsed: { 'staged|src/': true },
-    commit: 'abcdef1234567890',
-    commitFile: 'src/a.js',
+    node: 'abcdef1234567890',
+    nodeChosen: true,
+    dirs: { 'untracked|tmp': true, bad: 'yes' },
+    collapsed: { 'staged|src': true },
+    folds: { 'commit|a.js': true, 'commit|b.js': false, bad: 'x' },
+    anchor: { key: 'commit|a.js', offset: 120 },
     ref: 'all',
     split: true,
     wrap: true,
     sidebarWidth: 9999,
-    scroll: { changes: 12, history: -4 },
+    timelineScroll: 88,
+    tab: 'history',
   })
   assert.equal(state.repo, '/repo')
-  assert.equal(state.tab, 'history')
-  assert.equal(state.tabChosen, true)
-  assert.deepEqual(state.file, { group: 'staged', path: 'src/a.js' })
-  assert.deepEqual(state.dirs, { 'untracked|tmp/': true })
-  assert.deepEqual(state.collapsed, { 'staged|src/': true })
+  assert.equal(state.node, 'abcdef1234567890')
+  assert.equal(state.nodeChosen, true)
+  assert.deepEqual(state.dirs, { 'untracked|tmp': true })
+  assert.deepEqual(state.collapsed, { 'staged|src': true })
+  assert.deepEqual(state.folds, { 'commit|a.js': true, 'commit|b.js': false })
+  assert.deepEqual(state.anchor, { key: 'commit|a.js', offset: 120 })
   assert.equal(state.ref, 'all')
   assert.equal(state.split, true)
   assert.equal(state.wrap, true)
   assert.equal(state.sidebarWidth, SIDEBAR_MAX)
-  assert.deepEqual(state.scroll, { changes: 12, history: 0 })
+  assert.equal(state.timelineScroll, 88)
+  assert.equal('tab' in state, false)
+  assert.equal(sanitizeState({ node: WORKTREE }).node, WORKTREE)
 })
 
-test('sanitizeState rejects malformed selections and ranges', () => {
+test('sanitizeState rejects malformed selections, anchors, and ranges', () => {
   const state = sanitizeState({
-    tab: 'nope',
-    file: { group: 'staged' },
-    commit: 'not-hex',
+    node: 'not-hex',
+    nodeChosen: true,
+    anchor: { key: '', offset: 5 },
     ref: 'origin/main',
     sidebarWidth: -1,
-    scroll: 'nope',
+    timelineScroll: -3,
   })
-  assert.equal(state.tab, 'changes')
-  assert.equal(state.tabChosen, false)
-  assert.equal(state.file, null)
-  assert.equal(state.commit, null)
+  assert.equal(state.node, null)
+  assert.equal(state.nodeChosen, false, 'a choice without a node is no choice')
+  assert.equal(state.anchor, null)
   assert.equal(state.ref, 'HEAD')
   assert.equal(state.sidebarWidth, SIDEBAR_MIN)
-  assert.deepEqual(state.scroll, { changes: 0, history: 0 })
+  assert.equal(state.timelineScroll, 0)
+  assert.equal(sanitizeState({ anchor: { key: 'a', offset: Number.NaN } }).anchor, null)
+  assert.equal(isNode('abc123'), false, 'shorter than an abbreviated id')
+  assert.equal(isNode('ABCDEF1'), true)
 })
 
-test('preferredTab opens History for a clean tree unless the tab was chosen', () => {
-  assert.equal(preferredTab({ tab: 'changes', tabChosen: false }, 0), 'history')
-  assert.equal(preferredTab({ tab: 'changes', tabChosen: false }, 3), 'changes')
-  assert.equal(preferredTab({ tab: 'history', tabChosen: false }, 3), 'changes')
-  assert.equal(preferredTab({ tab: 'changes', tabChosen: true }, 0), 'changes')
-  assert.equal(preferredTab({ tab: 'history', tabChosen: true }, 0), 'history')
-  assert.equal(preferredTab({ tab: 'changes', tabChosen: false }, undefined), 'changes')
+test('preferredNode follows the working tree until the user chooses', () => {
+  const dirty = { total: 3, branch: { oid: 'a'.repeat(40) } }
+  const clean = { total: 0, branch: { oid: 'b'.repeat(40) } }
+  const unborn = { total: 0, branch: { oid: null, unborn: true } }
+  const unchosen = { node: null, nodeChosen: false }
+  assert.equal(preferredNode(unchosen, dirty), WORKTREE)
+  assert.equal(preferredNode(unchosen, clean), 'b'.repeat(40))
+  assert.equal(preferredNode(unchosen, unborn), WORKTREE)
+  assert.equal(preferredNode({ node: WORKTREE, nodeChosen: false }, clean), 'b'.repeat(40), 'a default moves with the tree')
+  assert.equal(preferredNode({ node: WORKTREE, nodeChosen: true }, clean), WORKTREE, 'a choice stays')
+  assert.equal(preferredNode({ node: 'c'.repeat(40), nodeChosen: true }, dirty), 'c'.repeat(40))
+  assert.equal(preferredNode(unchosen, null), null, 'nothing to decide before the status answers')
+})
+
+test('nodePatch resets reading state and commit folders only when the node changes', () => {
+  const state = {
+    ...defaultState(),
+    node: WORKTREE,
+    nodeChosen: false,
+    folds: { 'staged|a.js': true },
+    anchor: { key: 'staged|a.js', offset: 10 },
+    collapsed: { 'staged|src': true, 'commit|lib': true },
+  }
+  const moved = nodePatch(state, 'd'.repeat(40), true)
+  assert.deepEqual(moved, {
+    node: 'd'.repeat(40),
+    nodeChosen: true,
+    anchor: null,
+    folds: {},
+    collapsed: { 'staged|src': true },
+  })
+  assert.deepEqual(nodePatch(state, WORKTREE, true), { nodeChosen: true }, 'choosing the shown node keeps its reading state')
+  assert.deepEqual(nodePatch(state, WORKTREE, false), {})
 })
 
 test('formatCount follows the supplied locale', () => {
@@ -96,7 +135,7 @@ test('formatCount follows the supplied locale', () => {
 
 test('loadState and saveState round-trip through sessionStorage', () => {
   const storage = fakeStorage()
-  const stored = { ...defaultState(), repo: '/r', tab: 'history', scroll: { changes: 5, history: 9 } }
+  const stored = { ...defaultState(), repo: '/r', node: WORKTREE, nodeChosen: true, timelineScroll: 9, anchor: { key: 'staged|a', offset: 4 } }
   saveState('session-1', stored, storage)
   assert.equal(storage.map.has(storageKey('session-1')), true)
   assert.deepEqual(loadState('session-1', storage), stored)
@@ -194,13 +233,6 @@ test('buildRows expands untracked directories only after their children load', (
   assert.deepEqual(deeper.map(row => `${row.kind}:${row.name}`), ['dir:notes', 'dir:inner', 'file:b.txt', 'file:scratch.txt'])
 })
 
-test('rowIndexOfFile finds the row for a selection', () => {
-  const rows = buildRows('staged', [{ path: 'a.txt', status: 'M', added: 1, deleted: 0 }])
-  assert.equal(rowIndexOfFile(rows, { group: 'staged', path: 'a.txt' }), 0)
-  assert.equal(rowIndexOfFile(rows, { group: 'unstaged', path: 'a.txt' }), -1)
-  assert.equal(rowIndexOfFile(rows, null), -1)
-})
-
 test('queryString skips absent values and escapes the rest', () => {
   assert.equal(queryString({ a: 'x y', b: undefined, c: null, d: 2 }), '?a=x+y&d=2')
   assert.equal(queryString({}), '')
@@ -287,4 +319,147 @@ test('indexCommits answers which commits are loaded and where', () => {
   // A parent beyond the loaded pages is not selectable.
   assert.equal(index.has('c'.repeat(40)), false)
   assert.equal(indexCommits([]).size, 0)
+})
+
+test('timeline rows put the working tree first and map back to nodes', () => {
+  const commits = [{ sha: 'c1', parents: ['c2'], refs: [] }, { sha: 'c2', parents: [], refs: [] }]
+  const index = indexCommits(commits)
+  assert.equal(nodeAt(commits, 0), WORKTREE)
+  assert.equal(nodeAt(commits, 1), 'c1')
+  assert.equal(nodeAt(commits, 3), null)
+  assert.equal(rowOf(index, WORKTREE), 0)
+  assert.equal(rowOf(index, 'c2'), 2)
+  assert.equal(rowOf(index, 'missing'), -1)
+  assert.equal(rowOf(index, null), -1)
+
+  const input = graphInput(commits, 'c1')
+  assert.deepEqual(input[0], { sha: WORKTREE, parents: ['c1'], refs: [], worktree: true })
+  assert.equal(input.length, 3)
+  assert.deepEqual(graphInput([], null)[0].parents, [], 'no commit yet: the working tree has no parent')
+})
+
+test('headOf prefers the status answer and falls back to the HEAD range', () => {
+  const commits = [{ sha: 'c1' }]
+  assert.equal(headOf({ branch: { oid: 'o1' } }, commits, 'all'), 'o1')
+  assert.equal(headOf({ branch: { oid: null, unborn: true } }, commits, 'HEAD'), null)
+  assert.equal(headOf(null, commits, 'HEAD'), 'c1')
+  assert.equal(headOf(null, commits, 'all'), null, 'an all-branch range does not start at HEAD')
+})
+
+test('worktreeSummary counts tracked lines and every changed entry', () => {
+  const status = {
+    total: 3,
+    groups: {
+      staged: [{ path: 'a', added: 2, deleted: 1 }],
+      unstaged: [{ path: 'b', added: 5, deleted: 0 }],
+      untracked: [{ path: 'c', added: 0, deleted: 0 }],
+    },
+  }
+  assert.deepEqual(worktreeSummary(status), { changed: 3, added: 7, deleted: 1 })
+  assert.deepEqual(worktreeSummary(null), { changed: 0, added: 0, deleted: 0 })
+})
+
+test('file groups come from the status or the commit, without empty groups', () => {
+  const status = { groups: { staged: [], unstaged: [{ path: 'a.js' }], untracked: [{ path: 'n.txt' }] } }
+  assert.deepEqual(worktreeGroups(status).map(group => group.id), ['unstaged', 'untracked'])
+  assert.deepEqual(worktreeGroups(null), [])
+  assert.deepEqual(commitGroups({ files: [{ path: 'x' }] }).map(group => group.id), ['commit'])
+  assert.deepEqual(commitGroups({ files: [] }), [])
+  assert.deepEqual(commitGroups(null), [])
+})
+
+test('streamSections follow the navigation tree order with every folder open', () => {
+  const groups = [
+    { id: 'staged', entries: [{ path: 'src/b.js', status: 'M', added: 1, deleted: 0 }, { path: 'README.md', status: 'M' }] },
+    { id: 'untracked', entries: [{ path: 'notes/', status: '?', directory: true }, { path: 'z.txt', status: '?' }] },
+  ]
+  const closed = streamSections(groups, {}, null)
+  assert.deepEqual(closed.map(section => section.key), ['staged|src/b.js', 'staged|README.md', 'untracked|z.txt'])
+
+  const opened = streamSections(groups, { [dirKey('untracked', 'notes/')]: [{ name: 'a.txt', path: 'notes/a.txt', type: 'file' }] }, null)
+  assert.deepEqual(opened.map(section => section.key), ['staged|src/b.js', 'staged|README.md', 'untracked|notes/a.txt', 'untracked|z.txt'])
+  assert.deepEqual(opened[0].target, { scope: 'staged', path: 'src/b.js' })
+})
+
+test('diffTarget carries the rename source and the commit', () => {
+  assert.deepEqual(diffTarget('commit', { path: 'new.js', origPath: 'old.js' }, 'c1'), {
+    scope: 'commit', path: 'new.js', oldPath: 'old.js', rev: 'c1',
+  })
+  assert.deepEqual(diffTarget('unstaged', { path: 'a.js' }, 'ignored'), { scope: 'unstaged', path: 'a.js' })
+})
+
+test('defaultFolds folds large sections and everything past the stream budget', () => {
+  const section = (key, added) => ({ key, entry: { added, deleted: 0 } })
+  // Sections at the per-file limit fill the budget after this many.
+  const fill = STREAM_BUDGET / FOLD_LINES
+  const sections = [
+    section('a', 10),
+    section('huge', FOLD_LINES + 1),
+    ...Array.from({ length: fill }, (_, index) => section(`full${index}`, FOLD_LINES)),
+    section('c', 1),
+    section('d', 1),
+  ]
+  const folds = defaultFolds(sections)
+  assert.equal(folds.get('huge'), 'large')
+  assert.equal(folds.has('a'), false)
+  assert.equal(folds.has(`full${fill - 1}`), false, 'the section that crosses the budget still renders')
+  assert.equal(folds.get('c'), 'budget')
+  assert.equal(folds.get('d'), 'budget')
+  assert.equal(defaultFolds([section('edge', FOLD_LINES)]).size, 0, 'exactly the limit stays open')
+
+  assert.equal(isFolded('c', folds, {}), true)
+  assert.equal(isFolded('c', folds, { c: false }), false, 'the user can unfold a default fold')
+  assert.equal(isFolded('a', folds, { a: true }), true, 'and fold an open section')
+})
+
+test('changedLines and estimateHeight treat binaries and unknown counts as small', () => {
+  assert.equal(changedLines({ added: 3, deleted: 2 }), 5)
+  assert.equal(changedLines({ added: 3, deleted: 2, binary: true }), 0)
+  assert.equal(changedLines({}), 0)
+  assert.equal(estimateHeight({ binary: true }), 56)
+  assert.equal(estimateHeight({ added: 0, deleted: 0 }), 120)
+  assert.ok(estimateHeight({ added: 40, deleted: 0 }) > 40 * 22)
+  assert.equal(estimateHeight({ added: 1e6, deleted: 0 }), 5000 * 22 + 24, 'capped at the rendered line limit')
+})
+
+test('sectionAt finds the section a scroll offset is reading', () => {
+  const tops = [0, 100, 250, 900]
+  assert.equal(sectionAt(tops, 0), 0)
+  assert.equal(sectionAt(tops, 99), 0)
+  assert.equal(sectionAt(tops, 100), 1)
+  assert.equal(sectionAt(tops, 5000), 3)
+  assert.equal(sectionAt([], 10), -1)
+})
+
+test('createQueue limits concurrency and drops cancelled waiting tasks', async () => {
+  const queue = createQueue(2)
+  const started = []
+  const releases = []
+  const task = name => () => {
+    started.push(name)
+    return new Promise(resolve => { releases.push(resolve) })
+  }
+  queue.enqueue(task('a'))
+  queue.enqueue(task('b'))
+  const cancelC = queue.enqueue(task('c'))
+  queue.enqueue(task('d'))
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual(started, ['a', 'b'])
+  assert.equal(queue.running, 2)
+  assert.equal(queue.waiting, 2)
+
+  cancelC()
+  assert.equal(queue.waiting, 1)
+  releases[0]()
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  assert.deepEqual(started, ['a', 'b', 'd'], 'the cancelled task never starts')
+
+  // A failing task frees its slot too.
+  const failing = createQueue(1)
+  const order = []
+  failing.enqueue(() => Promise.reject(new Error('boom')))
+  failing.enqueue(async () => { order.push('next') })
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  assert.deepEqual(order, ['next'])
 })

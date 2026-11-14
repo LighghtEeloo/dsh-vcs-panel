@@ -50,8 +50,8 @@ export const ROW_UNIT = 1
 /** Half of {@link ROW_UNIT}: the vertical dot radius in row units. */
 export const HALF_ROW_UNIT = 0.5
 
-/** Row height used by the history list, in pixels. */
-export const DEFAULT_ROW_HEIGHT = 30
+/** Row height used by the timeline (two lines of text), in pixels. */
+export const DEFAULT_ROW_HEIGHT = 44
 
 /**
  * Map a lane-space color index onto the palette, recycling when the index is
@@ -169,12 +169,17 @@ class PathHelper {
 /**
  * Build the lane graph for commits already sorted by `git log --topo-order`.
  *
- * @param {Array<{ sha: string, parents: string[], refs: Array<{ name: string, kind: string }> }>} commits
- *   Ordered commit nodes from `vcs.log`.
+ * The timeline puts the working tree first as a virtual node (`worktree:
+ * true`) whose only parent is HEAD. Its lane is marked `dashed` and ends on
+ * HEAD's dot; HEAD's history continues as a new solid lane in the same slot
+ * and color, so a lane is either wholly dashed or wholly solid.
+ *
+ * @param {Array<{ sha: string, parents: string[], refs: Array<{ name: string, kind: string }>, worktree?: boolean }>} commits
+ *   Ordered nodes: the optional working-tree node, then commits from `vcs.log`.
  * @returns {{
- *   paths: Array<{ points: Array<{ x: number, y: number }>, color: number }>,
+ *   paths: Array<{ points: Array<{ x: number, y: number }>, color: number, dashed?: boolean }>,
  *   links: Array<{ start: { x: number, y: number }, control: { x: number, y: number }, end: { x: number, y: number }, color: number }>,
- *   dots: Array<{ center: { x: number, y: number }, color: number, type: 'default'|'head'|'merge' }>,
+ *   dots: Array<{ center: { x: number, y: number }, color: number, type: 'default'|'head'|'merge'|'worktree' }>,
  *   commitLeftMargin: number[],
  * }} Layout with one dot per commit (in commit order) and the content offset for
  *   each row in x pixel space (directly usable as a padding-left).
@@ -207,6 +212,9 @@ export function buildGraph(commits) {
     if (nextMap.get(line.next) === line) nextMap.delete(line.next)
   }
 
+  // The lane from the working-tree node to HEAD, while it waits for HEAD.
+  let worktreeLine = null
+
   for (const commit of list) {
     const sha = commit && commit.sha
     const parents = Array.isArray(commit?.parents) ? commit.parents : []
@@ -218,9 +226,26 @@ export function buildGraph(commits) {
     const maxOffsetOld = unsolved.length > 0 ? unsolved[unsolved.length - 1].lastX : offsetX + LANE_UNIT
 
     // Pass / Goto / End every active lane for this row.
-    for (const line of unsolved) {
+    for (let index = 0; index < unsolved.length; index++) {
+      const line = unsolved[index]
       if (line.next === sha) {
-        if (major === null) {
+        if (major === null && line === worktreeLine) {
+          // The dashed working-tree lane ends on HEAD; HEAD's own history
+          // continues as a solid lane in the same slot and color.
+          offsetX += LANE_UNIT
+          worktreeLine = null
+          line.end(offsetX, offsetY, HALF_ROW_UNIT)
+          untrackNext(line)
+          if (parents.length > 0) {
+            major = new PathHelper(parents[0], line.path.color, { x: offsetX, y: offsetY })
+            unsolved[index] = major
+            trackNext(major)
+            result.paths.push(major.path)
+          } else {
+            major = line
+            ended.push(line)
+          }
+        } else if (major === null) {
           offsetX += LANE_UNIT
           major = line
           if (parents.length > 0) {
@@ -265,13 +290,18 @@ export function buildGraph(commits) {
         unsolved.push(major)
         trackNext(major)
         result.paths.push(major.path)
+        if (commit.worktree === true) {
+          major.path.dashed = true
+          worktreeLine = major
+        }
       }
     }
 
     const center = { x: major ? major.lastX : offsetX, y: offsetY }
     const color = major ? major.path.color : 0
     let type = 'default'
-    if (refs.some((ref) => ref && (ref.kind === 'head' || ref.current === true))) type = 'head'
+    if (commit?.worktree === true) type = 'worktree'
+    else if (refs.some((ref) => ref && (ref.kind === 'head' || ref.current === true))) type = 'head'
     else if (parents.length > 1) type = 'merge'
     result.dots.push({ center, color, type })
 

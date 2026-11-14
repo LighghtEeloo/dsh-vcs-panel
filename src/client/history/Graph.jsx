@@ -1,5 +1,5 @@
 /**
- * SVG lane-graph overlay for the commit history list.
+ * SVG lane-graph overlay for the timeline (working tree + commit history).
  *
  * The overlay is pinned to the history viewport (a sibling of the scrolling
  * list, not part of the scrolled content): it receives `scrollTop` and draws in
@@ -40,30 +40,22 @@ export const SELECTED_RING_RADIUS = 6.5
 
 /**
  * @typedef {{ x: number, y: number }} GraphPoint
- * @typedef {{ points: GraphPoint[], color: number }} GraphPath
+ * @typedef {{ points: GraphPoint[], color: number, dashed?: boolean }} GraphPath
  * @typedef {{ start: GraphPoint, control: GraphPoint, end: GraphPoint, color: number }} GraphLink
- * @typedef {{ center: GraphPoint, color: number, type: 'default'|'head'|'merge' }} GraphDot
+ * @typedef {{ center: GraphPoint, color: number, type: 'default'|'head'|'merge'|'worktree' }} GraphDot
  * @typedef {{
  *   paths: GraphPath[],
  *   links: GraphLink[],
  *   dots: GraphDot[],
  *   commitLeftMargin: number[],
  * }} GraphLayout
- * @typedef {{
- *   sha: string,
- *   parents: string[],
- *   refs: Array<{ name: string, kind: 'head'|'branch'|'remote'|'tag' }>,
- *   author: string,
- *   authorTime: number,
- *   subject: string,
- * }} CommitNode
  */
 
 /**
- * Commit history lane graph.
+ * Timeline lane graph.
  *
  * @param {{
- *   commits: CommitNode[],
+ *   rowCount: number,
  *   layout: GraphLayout,
  *   rowHeight?: number,
  *   scrollTop?: number,
@@ -74,7 +66,7 @@ export const SELECTED_RING_RADIUS = 6.5
  * @returns {import('react').ReactElement | null} Overlay SVG, or null when hidden.
  */
 export function Graph({
-  commits,
+  rowCount,
   layout,
   rowHeight = DEFAULT_ROW_HEIGHT,
   scrollTop = 0,
@@ -82,7 +74,7 @@ export function Graph({
   width = 120,
   selectedIndex = -1,
 }) {
-  const totalRows = Array.isArray(commits) ? commits.length : 0
+  const totalRows = Number.isFinite(rowCount) ? rowCount : 0
   const paths = layout?.paths ?? []
   const links = layout?.links ?? []
   const dots = layout?.dots ?? []
@@ -121,7 +113,7 @@ export function Graph({
       if (!pathDs[i]) continue
       const bounds = pathBounds[i]
       if (bounds.maxY < visibleStartRow - 1 || bounds.minY > visibleEndRow + 1) continue
-      visible.push({ key: i, d: pathDs[i], color: resolveColor(paths[i].color) })
+      visible.push({ key: i, d: pathDs[i], color: resolveColor(paths[i].color), dashed: paths[i].dashed === true })
     }
     return visible
   }, [pathDs, pathBounds, paths, visibleStartRow, visibleEndRow])
@@ -169,12 +161,14 @@ export function Graph({
       height={Math.max(0, viewportHeight)}
     >
       <g transform={`translate(0 ${translateY})`}>
-        {visiblePaths.map((path) => (
+        {visiblePaths.map((path) => (path.dashed ? (
+          <path key={`path-${path.key}`} className="vcs-graph-path vcs-graph-path-dashed" d={path.d} stroke={path.color} />
+        ) : (
           <g key={`path-${path.key}`}>
             <path className="vcs-graph-path-halo" d={path.d} stroke={path.color} />
             <path className="vcs-graph-path" d={path.d} stroke={path.color} />
           </g>
-        ))}
+        )))}
 
         {visibleLinks.map((link) => {
           const d = linkPathD(link, rowHeight)
@@ -189,6 +183,29 @@ export function Graph({
         {visibleDots.map((dot) => {
           const cx = dot.center.x
           const cy = dot.center.y * rowHeight
+          if (dot.type === 'worktree') {
+            return (
+              <g key={`dot-${dot.index}`}>
+                {dot.selected ? (
+                  <circle
+                    className="vcs-graph-dot-selected"
+                    cx={cx}
+                    cy={cy}
+                    r={SELECTED_RING_RADIUS}
+                    stroke={dot.color}
+                  />
+                ) : null}
+                <circle
+                  className="vcs-graph-dot vcs-graph-dot-worktree"
+                  cx={cx}
+                  cy={cy}
+                  r={HEAD_DOT_RADIUS}
+                  fill="var(--dsw-alias-bg-base)"
+                  stroke={dot.color}
+                />
+              </g>
+            )
+          }
           if (dot.type === 'head') {
             return (
               <g key={`dot-${dot.index}`}>

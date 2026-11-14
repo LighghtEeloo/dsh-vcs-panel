@@ -251,11 +251,12 @@ test('colors recycle only after the palette is exhausted', () => {
 })
 
 test('buildPathD renders straight and bent polylines', () => {
+  // Expected strings use SourceGit's 30px rows.
   assert.equal(
     buildPathD([
       { x: 10, y: 0.5 },
       { x: 10, y: 2 },
-    ]),
+    ], 30),
     'M 10 15 L 10 60',
   )
 
@@ -264,7 +265,7 @@ test('buildPathD renders straight and bent polylines', () => {
     buildPathD([
       { x: 10, y: 0.5 },
       { x: 22, y: 1.5 },
-    ]),
+    ], 30),
     'M 10 15 Q 22 15, 22 45',
   )
 
@@ -274,7 +275,7 @@ test('buildPathD renders straight and bent polylines', () => {
     buildPathD([
       { x: 22, y: 1.5 },
       { x: 10, y: 2.5 },
-    ]),
+    ], 30),
     'M 22 45 Q 22 75, 10 75',
   )
 
@@ -283,7 +284,7 @@ test('buildPathD renders straight and bent polylines', () => {
     { x: 22, y: 1.5 },
     { x: 10, y: 2.5 },
     { x: 10, y: 3 },
-  ])
+  ], 30)
   assert.match(bent, /^M 22 45 C /)
   assert.ok(bent.includes(' L 10 90'))
 
@@ -319,4 +320,59 @@ test('empty commit list yields an empty layout', () => {
   assert.deepEqual(layout, { paths: [], links: [], dots: [], commitLeftMargin: [] })
   assert.equal(graphWidth(layout), 24)
   assert.doesNotThrow(() => buildGraph(undefined))
+})
+
+/** The working-tree node the timeline prepends, waiting for HEAD. */
+function worktree(head) {
+  return { sha: 'worktree', parents: head === null ? [] : [head], refs: [], worktree: true }
+}
+
+test('the working-tree lane is dashed and ends on HEAD, which continues solid in its color', () => {
+  const layout = buildGraph([worktree('c0'), ...LINEAR])
+  assertAllFinite(layout)
+  assertPathsDrawable(layout)
+  assert.equal(layout.dots.length, LINEAR.length + 1)
+  assert.equal(layout.dots[0].type, 'worktree')
+  assert.equal(layout.dots[1].type, 'head')
+  assert.equal(layout.dots[0].center.x, layout.dots[1].center.x, 'the working tree sits on HEAD’s lane')
+
+  const dashed = layout.paths.filter(path => path.dashed === true)
+  assert.equal(dashed.length, 1)
+  assert.deepEqual(dashed[0].points.at(0), layout.dots[0].center)
+  assert.deepEqual(dashed[0].points.at(-1), layout.dots[1].center)
+
+  const solid = layout.paths.find(path => path.dashed !== true && path.points[0].y === layout.dots[1].center.y)
+  assert.ok(solid, 'HEAD starts a solid lane')
+  assert.equal(solid.color, dashed[0].color)
+  assert.deepEqual(solid.points[0], layout.dots[1].center)
+})
+
+test('with every branch loaded the dashed lane reaches a HEAD further down', () => {
+  // `feature` sorts above HEAD (`main`); both come from M.
+  const commits = [
+    node('F', ['M'], [{ name: 'feature', kind: 'branch' }]),
+    node('H', ['M'], [{ name: 'main', kind: 'branch', current: true }]),
+    node('M'),
+  ]
+  const layout = buildGraph([worktree('H'), ...commits])
+  assertAllFinite(layout)
+  assertPathsDrawable(layout)
+  const dashed = layout.paths.filter(path => path.dashed === true)
+  assert.equal(dashed.length, 1)
+  assert.deepEqual(dashed[0].points.at(-1), layout.dots[2].center, 'the lane ends on H, two rows down')
+  assert.equal(layout.dots[2].type, 'head')
+  assert.notEqual(layout.dots[1].center.x, layout.dots[0].center.x, 'the feature tip takes another lane')
+})
+
+test('a working tree on a root HEAD ends there, and one without commits has no lane', () => {
+  const root = buildGraph([worktree('R'), node('R', [], [{ name: 'main', kind: 'branch', current: true }])])
+  assertAllFinite(root)
+  assert.equal(root.paths.length, 1)
+  assert.equal(root.paths[0].dashed, true)
+  assert.deepEqual(root.paths[0].points.at(-1), root.dots[1].center)
+
+  const unborn = buildGraph([worktree(null)])
+  assert.equal(unborn.paths.length, 0)
+  assert.equal(unborn.dots.length, 1)
+  assert.equal(unborn.dots[0].type, 'worktree')
 })

@@ -19,22 +19,27 @@ Restart DSH after installing the Host half.
 
 ## What you get
 
-A `VCS` (version control) view appears in the conversation view tabs, after Chat and Trajectory. It answers two questions without opening a terminal:
+A `VCS` (version control) view appears in the conversation view tabs, after Chat and Trajectory. It answers two questions without opening a terminal — what is changing now, and how the repository got here — on one timeline:
 
-- **Changes** — what is modified right now. Staged, unstaged, and untracked groups, a collapsible directory tree, per-file added/deleted counts, and the selected file's diff in unified or split layout with optional line wrapping. Renames show both names and compare against the source path.
-- **History** — how the repository got here. Commits reachable from `HEAD` or from all branches, a colored lane graph, ref badges (the branch `HEAD` points to is one highlighted badge, as in `HEAD -> main`), and the selected commit's full id, parents, author/committer, message body, and changed files. Parents that are in the loaded history open with a click. Rows show the author only when the loaded history has more than one, and leave it out in a narrow list. Selecting a file inside a commit shows its diff against the first parent (root commits compare against the empty tree).
+- **Timeline** (left). The first row is the working tree: how many files changed and the added/deleted lines, or "Nothing changed". Below it are the commits reachable from `HEAD` or from all branches, with a colored lane graph; the working tree hangs off `HEAD` with a dashed lane. Commit rows are two lines: the subject on its own line, then ref badges (the branch `HEAD` points to is one highlighted badge, as in `HEAD -> main`), short id, author (only when the loaded history has more than one), and time.
+- **Detail** (right). Selecting the working tree or a commit shows the same layout: a header, the changed files, and every file's diff one after another. The working tree groups its files as staged, unstaged, and untracked and compares staged files with `HEAD`, unstaged files with the index, and untracked files as new. A commit shows its subject, author/committer, parents (loaded parents open with a click), message body, and its files compared with the first parent (root commits compare against the empty tree). Renames show both names and compare against the source path. Diffs are unified or split, with optional line wrapping.
 
-The top bar picks the repository: the one containing the session's working directory plus repositories nested one level below it. Branch, ahead/behind counts, and the change summary stay visible. The lock marker (tooltip: read-only) is part of the contract: every Host route reads; there is no staging, committing, discarding, checkout, merge, rebase, stash, fetch, pull, or push.
+Clicking a file in the file list scrolls the diff stream to it, and the list marks the file being read. Diffs load as they come into view, a few at a time. A file with more than 1,000 changed lines starts collapsed, as does everything after the first 20,000 changed lines of one node; expanding is one click.
 
-Data refreshes on opening, on the refresh button, and once when the panel becomes visible after being hidden for more than 30 seconds. There is no polling.
+The top bar picks the repository (the one containing the session's working directory plus repositories nested one level below it), shows the branch with ahead/behind counts, and switches the history range. The lock marker (tooltip: read-only) is part of the contract: every Host route reads; there is no staging, committing, discarding, checkout, merge, rebase, stash, fetch, pull, or push.
+
+Data refreshes on opening, on the refresh button, and once when the panel becomes visible after being hidden for more than 30 seconds. There is no polling. A refresh keeps the selected node and the reading position.
 
 ## Interaction
 
-- Click a file or directory to select or fold it; click a commit to inspect it.
-- The panel opens History by default when the working tree is clean, and Changes when it is not. Once you pick a tab, that choice is kept for the session.
-- Keyboard: `↑`/`↓` or `j`/`k` move, `Enter` opens, `Esc` returns in the narrow layout. Keys are ignored in text inputs and selects.
-- The sidebar is resizable (280–480 px) by dragging the divider; arrow keys adjust it when it has focus.
-- Repository, tab, selection, expanded folders, layout choices, and scroll position are stored per session in `sessionStorage` and restored after a page refresh.
+- Click a timeline row to show its detail; click a file to jump to its diff; click a folder or a diff header to fold it.
+- Until you pick a row, the panel shows the working tree when it has changes and the `HEAD` commit when it is clean. Once you pick one, the choice is kept for the session; a picked commit that disappears (amend, rebase) falls back to that default.
+- Keyboard, ignored in text inputs and selects:
+  - Timeline: `↑`/`↓` or `j`/`k` select the previous/next row; `Enter` or `→` moves into the file list.
+  - File list: `↑`/`↓` or `j`/`k` move between files and scroll the diffs along; `Enter` folds a folder; `←` or `Esc` returns to the timeline.
+  - Diff stream: `Esc` returns to the file list.
+- The timeline is resizable (280–480 px) by dragging the divider; arrow keys adjust it when it has focus. When the detail is narrower than 720 px the file list moves above the diffs as a collapsible list; below 760 px the panel shows the timeline and the detail one at a time, with a back button.
+- Repository, selected row, history range, folded folders and diffs, layout choices, and reading positions are stored per session in `sessionStorage` and restored after a page refresh.
 - Light and dark themes, system font sizing, focus rings, and `prefers-reduced-motion` follow DSH.
 
 ## Limits
@@ -44,7 +49,9 @@ Data refreshes on opening, on the refresh button, and once when the panel become
 | Repositories listed per session | 50 (session repository plus one level of children) |
 | Files per status group | 500 |
 | Entries when opening one untracked directory | 500 |
-| Rendered diff lines | 5,000; larger comparisons report `oversized` |
+| Rendered diff lines per file | 5,000; larger comparisons report `oversized` |
+| Diffs unfolded by default | files up to 1,000 changed lines, until 20,000 changed lines per node |
+| Diff requests in flight | 4 |
 | Diff output | 2 MB |
 | Commits per page | 300 |
 | Commits loaded at most | 10,000; older history is reported as truncated |
@@ -61,11 +68,11 @@ index.js              Host: authenticated read-only /api/vcs.* routes
 lib/                  Host internals: git runner, path containment, parsers, route handlers
 src/client/           Client sources (React, no Harness Client package imports)
   entry.jsx           Registers the version control view, locale dictionaries, and stylesheet
-  VcsView.jsx         Panel shell: data loading, selection, keyboard, resizing, persistence
+  VcsView.jsx         Panel shell: data loading, selection, layout, resizing, persistence
   api.js              Fetch layer for the Host routes
-  changes/            Changes list, directory tree, diff pane
+  history/            Timeline: lane layout port, SVG graph, virtual list
+  detail/             Detail pane: file groups, directory tree, file list, diff stream, request queue
   diff/               Vendored DSH FileDiff + local syntax tokenizer
-  history/            Lane layout port, SVG graph, virtual list, commit pane
 client.js             Built from src/client/ by scripts/build.mjs; do not edit by hand
 cordis.patch.yml      Plugin row (Host config `enabled: false` registers nothing)
 locale/               Plugin metadata per language
@@ -83,7 +90,7 @@ The only Host option is the on/off switch, set in the profile patch row:
     enabled: false
 ```
 
-With `enabled: false` the Host registers no routes. The Client half still loads with the bundle, so its `Git` tab can remain visible and reports that repositories cannot be listed; turn the bundle off in **Plugins** to remove the tab. Turning the feature off at the bundle level removes both halves.
+With `enabled: false` the Host registers no routes. The Client half still loads with the bundle, so its `VCS` tab can remain visible and reports that repositories cannot be listed; turn the bundle off in **Plugins** to remove the tab. Turning the feature off at the bundle level removes both halves.
 
 ## Development
 
@@ -104,7 +111,8 @@ Install, upgrade, and uninstall checks use a fake `DSH_HOME`; do not point `dsh 
 - **Graph layout** is a trimmed port of `git-graph-plus`'s SourceGit port (Apache-2.0; SourceGit is MIT). Remote-only/local-only coloring is omitted because the log route does not expose upstream tracking; lane allocation, merges, first-parent continuation, and color recycling remain.
 - **Syntax highlighting** is a local tokenizer, not the host's Shiki component, which is not exposed to external plugins. It emits spans colored with the host theme's Shiki CSS variables (`--shiki-token-*`), so colors follow the active theme. It supports common source languages and falls back to plain text for the rest; highlighting can be approximate.
 - **No hunk gap expansion**, no blame, no image diff, no submodule browsing, and no commit search beyond `HEAD`/all branches in this version.
-- **Repository switching** remembers the selection, expanded folders, and history range of each repository for the current view instance; the persisted state restores only the repository that was open when the page reloaded.
+- **Repository switching** remembers the selected node, folders, and history range of each repository for the current view instance; the persisted state restores only the repository that was open when the page reloaded.
+- **Fold limits** count the changed lines a file reports, not rendered lines, which also include a few lines of context.
 
 ## Security
 
