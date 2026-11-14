@@ -271,7 +271,7 @@ export function buildGraph(commits) {
     const center = { x: major ? major.lastX : offsetX, y: offsetY }
     const color = major ? major.path.color : 0
     let type = 'default'
-    if (refs.some((ref) => ref && ref.kind === 'head')) type = 'head'
+    if (refs.some((ref) => ref && (ref.kind === 'head' || ref.current === true))) type = 'head'
     else if (parents.length > 1) type = 'merge'
     result.dots.push({ center, color, type })
 

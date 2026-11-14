@@ -22,9 +22,9 @@ Restart DSH after installing the Host half.
 A `VCS` (version control) view appears in the conversation view tabs, after Chat and Trajectory. It answers two questions without opening a terminal:
 
 - **Changes** — what is modified right now. Staged, unstaged, and untracked groups, a collapsible directory tree, per-file added/deleted counts, and the selected file's diff in unified or split layout with optional line wrapping. Renames show both names and compare against the source path.
-- **History** — how the repository got here. Commits reachable from `HEAD` or from all branches, a colored lane graph, ref badges, and the selected commit's full id, parents, author/committer, message, and changed files. Selecting a file inside a commit shows its diff against the first parent (root commits compare against the empty tree).
+- **History** — how the repository got here. Commits reachable from `HEAD` or from all branches, a colored lane graph, ref badges (the branch `HEAD` points to is one highlighted badge, as in `HEAD -> main`), and the selected commit's full id, parents, author/committer, message body, and changed files. Parents that are in the loaded history open with a click. Rows show the author only when the loaded history has more than one, and leave it out in a narrow list. Selecting a file inside a commit shows its diff against the first parent (root commits compare against the empty tree).
 
-The top bar picks the repository: the one containing the session's working directory plus repositories nested one level below it. Branch, ahead/behind counts, and the change summary stay visible. The `Read-only` badge is part of the contract: every Host route reads; there is no staging, committing, discarding, checkout, merge, rebase, stash, fetch, pull, or push.
+The top bar picks the repository: the one containing the session's working directory plus repositories nested one level below it. Branch, ahead/behind counts, and the change summary stay visible. The lock marker (tooltip: read-only) is part of the contract: every Host route reads; there is no staging, committing, discarding, checkout, merge, rebase, stash, fetch, pull, or push.
 
 Data refreshes on opening, on the refresh button, and once when the panel becomes visible after being hidden for more than 30 seconds. There is no polling.
 

@@ -181,6 +181,15 @@ test('a head ref keeps the head dot type on a merge commit', () => {
   assert.equal(layout.dots[0].type, 'head')
 })
 
+test('the current branch takes the head dot type, a plain branch does not', () => {
+  const layout = buildGraph([
+    node('X', ['A'], [{ name: 'main', kind: 'branch', current: true }]),
+    node('A', [], [{ name: 'side', kind: 'branch' }]),
+  ])
+  assert.equal(layout.dots[0].type, 'head')
+  assert.equal(layout.dots[1].type, 'default')
+})
+
 test('root commit and parents missing from the page do not throw', () => {
   const rootOnly = buildGraph([node('R')])
   assert.equal(rootOnly.dots.length, 1)

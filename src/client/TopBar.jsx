@@ -3,7 +3,7 @@
  */
 
 import { formatCount } from './format.js'
-import { Arrow, BranchIcon, IconButton, RefreshIcon, Spinner } from './ui.jsx'
+import { Arrow, BranchIcon, IconButton, LockIcon, RefreshIcon, Spinner } from './ui.jsx'
 
 /**
  * Render the header bar.
@@ -47,7 +47,9 @@ export function TopBar({ repositories, repo, onRepoChange, status, changed, onRe
           : status === null ? null : <span className="vcs-dim">{t('changes.clean')}</span>}
       </span>
       <span className="vcs-topbar-spacer" />
-      <span className="vcs-readonly-badge">{t('top.readonly')}</span>
+      <span className="vcs-readonly" role="img" aria-label={t('top.readonly')} title={t('top.readonlyHint')}>
+        <LockIcon />
+      </span>
       <IconButton label={t('top.refresh')} onClick={onRefresh} disabled={refreshing} className={refreshing ? 'vcs-refreshing' : ''}>
         {refreshing ? <Spinner label={t('top.refreshing')} /> : <RefreshIcon />}
       </IconButton>

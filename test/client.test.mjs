@@ -9,6 +9,7 @@ import {
 } from '../src/client/format.js'
 import { buildRows, rowIndexOfFile, dirKey } from '../src/client/changes/tree.js'
 import { ApiError, createApi, queryString } from '../src/client/api.js'
+import { hasSeveralAuthors, indexCommits, messageBody } from '../src/client/history/commits.js'
 
 /** A Map-backed Storage stand-in. */
 function fakeStorage() {
@@ -133,7 +134,8 @@ test('errorMessage localizes known codes and falls back to the Host message', ()
 test('formatCommitTime is relative within a week and absolute beyond', () => {
   const now = Date.UTC(2026, 10, 14, 12, 0, 0)
   const fiveMinutes = formatCommitTime(now - 5 * 60_000, now, 'en-US')
-  assert.match(fiveMinutes, /minute/)
+  assert.match(fiveMinutes, /^5 min/)
+  assert.doesNotMatch(fiveMinutes, /minutes/)
   const old = formatCommitTime(now - 30 * 86400_000, now, 'en-US')
   assert.match(old, /2026/)
 })
@@ -256,4 +258,33 @@ test('createApi maps failure bodies and transport failures', async () => {
     assert.equal(error.code, 'network')
     return true
   })
+})
+
+test('messageBody drops the subject paragraph and keeps the body verbatim', () => {
+  assert.equal(messageBody('incr: one line'), '')
+  assert.equal(messageBody('incr: subject\n'), '')
+  assert.equal(messageBody('feat: subject\n\nWhy it changed.\n\n- detail'), 'Why it changed.\n\n- detail')
+  // Git's %s joins a multi-line first paragraph; the body still starts after it.
+  assert.equal(messageBody('first line\nsecond line\n\nbody'), 'body')
+  // Whitespace-only separator lines, extra blank lines, and CRLF still split.
+  assert.equal(messageBody('subject\n  \n\n\n  indented body\n\n'), '  indented body')
+  assert.equal(messageBody('subject\r\n\r\nbody\r\n'), 'body')
+  assert.equal(messageBody('subject\n\n   \n'), '')
+  assert.equal(messageBody(''), '')
+  assert.equal(messageBody(undefined), '')
+})
+
+test('hasSeveralAuthors is false for one author or none', () => {
+  assert.equal(hasSeveralAuthors([]), false)
+  assert.equal(hasSeveralAuthors([{ author: 'Ada' }, { author: 'Ada' }]), false)
+  assert.equal(hasSeveralAuthors([{ author: 'Ada' }, { author: 'Ada' }, { author: 'Bob' }]), true)
+})
+
+test('indexCommits answers which commits are loaded and where', () => {
+  const index = indexCommits([{ sha: 'a'.repeat(40) }, { sha: 'b'.repeat(40) }])
+  assert.equal(index.get('b'.repeat(40)), 1)
+  assert.equal(index.has('a'.repeat(40)), true)
+  // A parent beyond the loaded pages is not selectable.
+  assert.equal(index.has('c'.repeat(40)), false)
+  assert.equal(indexCommits([]).size, 0)
 })

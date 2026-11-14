@@ -6,8 +6,9 @@
  * graph receives the same window bounds.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { graphWidth, Graph } from './Graph.jsx'
+import { hasSeveralAuthors } from './commits.js'
 import { errorMessage, formatCommitTime, formatCount, shortSha } from '../format.js'
 import { RefBadge, Segmented, Spinner } from '../ui.jsx'
 
@@ -73,6 +74,8 @@ export function HistoryList({
   const last = Math.min(commits.length, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN)
   const visible = commits.slice(first, last)
   const selectedIndex = selected === null ? -1 : commits.findIndex(commit => commit.sha === selected)
+  const showAuthor = useMemo(() => hasSeveralAuthors(commits), [commits])
+  const loadedCount = `${formatCount(commits.length, locale)}${hasMore ? '+' : ''}`
 
   return (
     <div className="vcs-history">
@@ -86,7 +89,7 @@ export function HistoryList({
           ]}
           onChange={onRefMode}
         />
-        <span className="vcs-history-count">{loading ? <Spinner label={t('history.loading')} /> : commits.length > 0 ? formatCount(commits.length, locale) : null}</span>
+        <span className="vcs-history-count">{loading ? <Spinner label={t('history.loading')} /> : commits.length > 0 ? t('history.count', { count: loadedCount }) : null}</span>
       </div>
       <div className="vcs-history-viewport">
         <div
@@ -119,7 +122,7 @@ export function HistoryList({
                   <span className="vcs-commit-refs">
                     {commit.refs.slice(0, 3).map(reference => <RefBadge key={`${reference.kind}:${reference.name}`} reference={reference} />)}
                   </span>
-                  <span className="vcs-commit-author">{commit.author}</span>
+                  {showAuthor ? <span className="vcs-commit-author">{commit.author}</span> : null}
                   <span className="vcs-commit-time">{formatCommitTime(commit.authorTime, Date.now(), locale)}</span>
                 </button>
               )

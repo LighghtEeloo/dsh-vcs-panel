@@ -892,8 +892,7 @@ test('log pages HEAD and all history with parsed refs and times', async () => {
   assert.equal(head.body.commits[0].sha, fixture.headSha)
   assert.deepEqual(head.body.commits[0].parents, [fixture.rootSha])
   assert.deepEqual(head.body.commits[0].refs, [
-    { name: 'HEAD', kind: 'head' },
-    { name: 'main', kind: 'branch' },
+    { name: 'main', kind: 'branch', current: true },
   ])
   assert.equal(head.body.commits[0].author, 'Test User')
   assert.equal(typeof head.body.commits[0].authorTime, 'number')

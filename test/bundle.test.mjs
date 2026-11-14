@@ -159,3 +159,21 @@ test('no component receives the reserved ref prop (React 18 drops it)', () => {
   }
   assert.deepEqual(offenders, [])
 })
+
+test('selection styles target the classes and attributes the components set', () => {
+  const read = path => readFileSync(new URL(`../src/client/${path}`, import.meta.url), 'utf8')
+  const count = (text, needle) => text.split(needle).length - 1
+  const css = read('styles.css')
+  const view = read('VcsView.jsx')
+  const history = read('history/HistoryList.jsx')
+
+  // Every Changes/History tab carries the class its selected style targets.
+  assert.match(css, /\.vcs-tab\[aria-selected='true'\]/u)
+  assert.equal(count(view, 'role="tab"'), 2)
+  assert.equal(count(view, 'className="vcs-tab"'), 2)
+
+  // History rows mark the selected commit with aria-current, and so does the style.
+  assert.match(history, /className="vcs-commit-row"[^]*?aria-current=/u)
+  assert.match(css, /\.vcs-commit-row\[aria-current='true'\]/u)
+  assert.doesNotMatch(css, /\.vcs-commit-row\[aria-selected/u)
+})

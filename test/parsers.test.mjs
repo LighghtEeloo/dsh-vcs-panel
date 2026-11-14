@@ -267,13 +267,19 @@ test('parseDecoration reads full HEAD, branch, remote, and annotated tag refs', 
   assert.deepEqual(
     parseDecoration('HEAD -> refs/heads/main, tag: refs/tags/v3, refs/remotes/origin/main'),
     [
-      { name: 'HEAD', kind: 'head' },
-      { name: 'main', kind: 'branch' },
+      { name: 'main', kind: 'branch', current: true },
       { name: 'v3', kind: 'tag' },
       { name: 'origin/main', kind: 'remote' },
     ],
   )
   assert.deepEqual(parseDecoration('HEAD'), [{ name: 'HEAD', kind: 'head' }])
+  // Detached at a branch tip: HEAD is not on the branch, so neither is marked current.
+  assert.deepEqual(parseDecoration('HEAD, refs/heads/main'), [
+    { name: 'HEAD', kind: 'head' },
+    { name: 'main', kind: 'branch' },
+  ])
+  // A symbolic HEAD that names no branch keeps the plain HEAD ref.
+  assert.deepEqual(parseDecoration('HEAD -> refs/stash'), [{ name: 'HEAD', kind: 'head' }])
   assert.deepEqual(parseDecoration('refs/heads/side'), [{ name: 'side', kind: 'branch' }])
   assert.deepEqual(parseDecoration(''), [])
 })
@@ -307,8 +313,7 @@ test('parseLog reads merges, parents, decorations, and millisecond times', () =>
     sha: shaA,
     parents: [shaB, shaC],
     refs: [
-      { name: 'HEAD', kind: 'head' },
-      { name: 'main', kind: 'branch' },
+      { name: 'main', kind: 'branch', current: true },
       { name: 'origin/main', kind: 'remote' },
     ],
     author: 'Ada',

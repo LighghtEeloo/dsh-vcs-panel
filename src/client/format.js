@@ -97,7 +97,7 @@ export function formatCommitTime(ms, now = Date.now(), locale) {
   if (seconds < 7 * 86400) {
     const [unit, value] = relativeUnit(seconds)
     try {
-      return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(-value, unit)
+      return new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' }).format(-value, unit)
     } catch {
       // Fall through to an absolute format when RelativeTimeFormat is unavailable.
     }

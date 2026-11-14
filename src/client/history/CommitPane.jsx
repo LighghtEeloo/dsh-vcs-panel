@@ -8,14 +8,15 @@
 import { useEffect, useState } from 'react'
 import { DiffPane } from '../changes/DiffPane.jsx'
 import { errorMessage, formatCount, formatDateTime, lineCounts, shortSha, splitPath, statusKey } from '../format.js'
+import { messageBody } from './commits.js'
 import { BackIcon, Button, CheckIcon, CopyIcon, IconButton, RefBadge, Spinner } from '../ui.jsx'
 
 /**
  * Render a commit, or the selected file's comparison inside it.
- * @param {{ api: object, repo: string | null, sha: string | null, summary: object | null, selectedFile: string | null, onSelectFile: Function, split: boolean, wrap: boolean, onToggleSplit: Function, onToggleWrap: Function, onBack: Function, narrow: boolean, t: Function, locale?: string }} props - commit detail state.
+ * @param {{ api: object, repo: string | null, sha: string | null, summary: object | null, selectedFile: string | null, onSelectFile: Function, isLoaded: (sha: string) => boolean, onSelectCommit: (sha: string) => void, split: boolean, wrap: boolean, onToggleSplit: Function, onToggleWrap: Function, onBack: Function, narrow: boolean, t: Function, locale?: string }} props - commit detail state.
  */
 export function CommitPane({
-  api, repo, sha, summary, selectedFile, onSelectFile, split, wrap,
+  api, repo, sha, summary, selectedFile, onSelectFile, isLoaded, onSelectCommit, split, wrap,
   onToggleSplit, onToggleWrap, onBack, narrow, t, locale, revision = 0,
 }) {
   const [state, setState] = useState({ status: 'idle', commit: null, truncated: false, error: null })
@@ -54,7 +55,9 @@ export function CommitPane({
   }
 
   const detail = state.commit
-  const refs = detail?.refs ?? summary?.refs ?? []
+  const body = messageBody(detail?.message)
+  // Log rows mark the branch HEAD points to; the detail's for-each-ref list cannot.
+  const refs = summary?.refs ?? detail?.refs ?? []
   const file = selectedFile === null ? null : detail?.files.find(entry => entry.path === selectedFile) ?? null
 
   if (file !== null) {
@@ -120,10 +123,20 @@ export function CommitPane({
             <dd>
               {detail.parents.length === 0
                 ? <span className="vcs-dim">{t('commit.root')}</span>
-                : detail.parents.map(parent => <code key={parent} className="vcs-parent" title={parent}>{shortSha(parent)}</code>)}
+                : detail.parents.map(parent => (isLoaded(parent) ? (
+                  <button
+                    key={parent}
+                    type="button"
+                    className="vcs-parent vcs-parent-link"
+                    title={t('commit.showParent', { sha: shortSha(parent) })}
+                    onClick={() => { onSelectCommit(parent) }}
+                  >
+                    <code>{shortSha(parent)}</code>
+                  </button>
+                ) : <code key={parent} className="vcs-parent" title={parent}>{shortSha(parent)}</code>))}
             </dd>
           </dl>
-          <pre className="vcs-commit-message">{detail.message}</pre>
+          {body === '' ? null : <pre className="vcs-commit-message">{body}</pre>}
           <div className="vcs-commit-files">
             <div className="vcs-group-header">
               <span className="vcs-group-title">{t('commit.files', { count: formatCount(detail.files.length, locale) })}</span>

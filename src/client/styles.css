@@ -114,13 +114,15 @@
   flex: 1;
 }
 
-.vcs-readonly-badge {
+.vcs-readonly {
+  display: inline-flex;
   flex: none;
-  padding: 1px 7px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: 999px;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
   color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
+  cursor: help;
 }
 
 /* Main two-column body ---------------------------------------------------- */
@@ -366,6 +368,7 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
+  container-type: inline-size;
 }
 
 .vcs-history-controls {
@@ -424,7 +427,7 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.vcs-commit-row[aria-selected='true'] {
+.vcs-commit-row[aria-current='true'] {
   background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent);
 }
 
@@ -457,6 +460,13 @@
   color: var(--dsw-alias-label-secondary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+/* A narrow list keeps the subject; the author stays in the commit pane. */
+@container (max-width: 400px) {
+  .vcs-commit-author {
+    display: none;
+  }
 }
 
 .vcs-history-footer {
@@ -624,6 +634,22 @@
   font-size: 11px;
 }
 
+.vcs-parent-link {
+  padding: 0 4px;
+  border: none;
+  border-radius: 4px;
+  color: var(--dsw-alias-brand-primary);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.vcs-parent-link:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  text-decoration: underline;
+}
+
 .vcs-commit-message {
   margin: 0 0 16px;
   padding: 10px 12px;
@@ -634,6 +660,14 @@
   font: var(--dsw-font-markdown-code-block, 12px/1.5 var(--dsw-font-markdown-code-font-family, ui-monospace, monospace));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Commit details read at a text measure; a wide pane would push the
+   per-file counts far from their names. */
+.vcs-commit-meta,
+.vcs-commit-message,
+.vcs-commit-files {
+  max-width: 760px;
 }
 
 .vcs-commit-files {

@@ -12,6 +12,7 @@ import { loadState, saveState, preferredTab, SIDEBAR_MAX, SIDEBAR_MIN } from './
 import { errorMessage, formatCount } from './format.js'
 import { buildRows, rowIndexOfFile } from './changes/tree.js'
 import { buildGraph } from './history/layout.js'
+import { indexCommits } from './history/commits.js'
 import { ChangesList } from './changes/ChangesList.jsx'
 import { DiffPane } from './changes/DiffPane.jsx'
 import { HistoryList } from './history/HistoryList.jsx'
@@ -333,10 +334,8 @@ export function VcsView({ sessionId, t, locale }) {
   }, [state.file, status.data, dirChildren])
 
   const layout = useMemo(() => buildGraph(log.commits), [log.commits])
-  const selectedCommit = useMemo(
-    () => (state.commit === null ? null : log.commits.find(commit => commit.sha === state.commit) ?? null),
-    [state.commit, log.commits],
-  )
+  const commitIndex = useMemo(() => indexCommits(log.commits), [log.commits])
+  const selectedCommit = state.commit === null ? null : log.commits[commitIndex.get(state.commit)] ?? null
 
   const changed = status.data?.total ?? 0
 
@@ -491,12 +490,19 @@ export function VcsView({ sessionId, t, locale }) {
 
   const moveHistory = useCallback(delta => {
     if (log.commits.length === 0) return
-    let index = state.commit === null ? -1 : log.commits.findIndex(commit => commit.sha === state.commit)
+    let index = state.commit === null ? -1 : commitIndex.get(state.commit) ?? -1
     index = index < 0 ? 0 : index + delta
     if (index < 0 || index >= log.commits.length) return
     update({ commit: log.commits[index].sha, commitFile: null })
     focusCommitRow(index)
-  }, [focusCommitRow, log.commits, state.commit, update])
+  }, [commitIndex, focusCommitRow, log.commits, state.commit, update])
+
+  /** Jump to a loaded commit named in the detail pane, such as a parent. */
+  const selectCommitId = useCallback(sha => {
+    update({ commit: sha, commitFile: null })
+    // The pane reloads under the pointer; keep keys working from the panel root.
+    focusRoot()
+  }, [focusRoot, update])
 
   /** Keyboard navigation for both lists; inputs keep their keys. */
   const onKeyDown = event => {
@@ -618,6 +624,7 @@ export function VcsView({ sessionId, t, locale }) {
               >
                 <button
                   type="button"
+                  className="vcs-tab"
                   role="tab"
                   id="vcs-tab-changes"
                   aria-controls="vcs-panel"
@@ -630,6 +637,7 @@ export function VcsView({ sessionId, t, locale }) {
                 </button>
                 <button
                   type="button"
+                  className="vcs-tab"
                   role="tab"
                   id="vcs-tab-history"
                   aria-controls="vcs-panel"
@@ -740,6 +748,8 @@ export function VcsView({ sessionId, t, locale }) {
                   summary={selectedCommit}
                   selectedFile={state.commitFile}
                   onSelectFile={file => { update({ commitFile: file }) }}
+                  isLoaded={sha => commitIndex.has(sha)}
+                  onSelectCommit={selectCommitId}
                   split={state.split}
                   wrap={state.wrap}
                   onToggleSplit={split => { update({ split }) }}

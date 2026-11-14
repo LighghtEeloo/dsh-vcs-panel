@@ -22,9 +22,9 @@ dsh plugin --profile desktop add link:/path/to/dsh-vcs-panel
 会话视图页签里会多出一个“版本管理”（英文及其他语言显示 `VCS`，避免名称过长被截断；位于 Chat、Trajectory 之后），不打开终端就能回答两个问题：
 
 - **Changes（改动）** — 现在改了什么。已暂存、未暂存、未跟踪三组，可折叠目录树，文件级增删行数，以及选中文件的 unified / split diff（可自动换行）。重命名会同时显示旧、新路径，并按源路径比较。
-- **History（历史）** — 仓库怎么走到这里。从 `HEAD` 或所有分支可达的提交、彩色 lane 图、ref 徽标，以及选中提交的完整 ID、父提交、作者/提交者、消息和变更文件。提交内选中文件后，显示相对第一父提交的 diff（根提交与空树比较）。
+- **History（历史）** — 仓库怎么走到这里。从 `HEAD` 或所有分支可达的提交、彩色 lane 图、ref 徽标（`HEAD` 所指分支合成一个高亮徽标，对应 `HEAD -> main`），以及选中提交的完整 ID、父提交、作者/提交者、消息正文和变更文件。已加载历史中的父提交可点击跳转。已加载的提交只有一位作者时，行内不显示作者；列表较窄时也不显示。提交内选中文件后，显示相对第一父提交的 diff（根提交与空树比较）。
 
-顶部栏选择仓库：会话工作目录所属仓库，以及其下一层的子仓库。分支、ahead/behind、改动摘要始终可见。`Read-only` 标识是产品边界：所有 Host 路由只读，不做 stage、commit、discard、checkout、merge、rebase、stash、fetch、pull、push。
+顶部栏选择仓库：会话工作目录所属仓库，以及其下一层的子仓库。分支、ahead/behind、改动摘要始终可见。顶部栏的锁形标识（悬停提示“只读”）是产品边界：所有 Host 路由只读，不做 stage、commit、discard、checkout、merge、rebase、stash、fetch、pull、push。
 
 数据在打开面板、点击刷新、以及面板隐藏超过 30 秒后重新可见时刷新一次；没有定时轮询。
 
