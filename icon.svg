@@ -1,19 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none">
+<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M10 10V26" stroke="url(#vcs-panel-lane)" stroke-width="2.4"/>
+  <circle cx="10" cy="9.5" r="2.5" fill="#86B8F5"/>
+  <circle cx="10" cy="26.5" r="2.5" fill="#5269E1"/>
+  <circle cx="10" cy="18" r="3.2" fill="url(#vcs-panel-head)"/>
+  <rect x="15" y="7" width="14" height="22" rx="3" fill="url(#vcs-panel-diff)" fill-opacity="0.8"/>
+  <path d="M22 11.2V16.8M19.2 14H24.8M19.2 22.5H24.8" stroke="#FFFFFF" stroke-width="2"/>
   <defs>
-    <linearGradient id="vcs-panel-bg" x1="4" y1="4" x2="32" y2="32" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#3A5BC7"/>
-      <stop offset="1" stop-color="#1E2A5A"/>
+    <linearGradient id="vcs-panel-lane" x1="10" y1="7" x2="10" y2="29" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#86B8F5"/>
+      <stop offset="1" stop-color="#5269E1"/>
     </linearGradient>
-    <linearGradient id="vcs-panel-lane" x1="10" y1="9" x2="27" y2="28" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#8FD3FF"/>
-      <stop offset="1" stop-color="#5B8CFF"/>
+    <linearGradient id="vcs-panel-head" x1="10" y1="14.8" x2="10" y2="21.2" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#45E7A4"/>
+      <stop offset="1" stop-color="#05909D"/>
+    </linearGradient>
+    <linearGradient id="vcs-panel-diff" x1="22" y1="7" x2="22" y2="29" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#69B9FF"/>
+      <stop offset="1" stop-color="#324DE2"/>
     </linearGradient>
   </defs>
-  <rect x="2" y="2" width="32" height="32" rx="9" fill="url(#vcs-panel-bg)"/>
-  <path d="M12.5 11.5V25" stroke="url(#vcs-panel-lane)" stroke-width="2" stroke-linecap="round"/>
-  <path d="M12.5 15.5C18 15.5 22 18 22 22.5V25" stroke="#6FE3C0" stroke-width="2" stroke-linecap="round" fill="none"/>
-  <circle cx="12.5" cy="9.5" r="2.6" fill="#E8F4FF"/>
-  <circle cx="12.5" cy="26.5" r="2.6" fill="url(#vcs-panel-lane)"/>
-  <circle cx="22" cy="26.5" r="2.6" fill="#6FE3C0"/>
-  <path d="M25.5 10.5h4M25.5 14.5h3M25.5 18.5h4" stroke="#9DB4FF" stroke-width="1.8" stroke-linecap="round"/>
 </svg>
