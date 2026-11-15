@@ -21,6 +21,7 @@ import {
 import { createTurnChangesDefinition } from './turn.js'
 import { TurnTailChanges } from './TurnTail.jsx'
 import { VcsView } from './VcsView.jsx'
+import { ViewErrorBoundary } from './ViewErrorBoundary.jsx'
 
 /** Locale namespace owned by this plugin. */
 const NS = 'vcs'
@@ -201,6 +202,9 @@ function registerViewShortcut(ctx, scope, t) {
           try {
             binding.activate(view)
             target.actions.setView(view)
+            // The view being left may never have mounted (for example after a
+            // render failure), so its focus request can still be pending.
+            target.actions.completeViewRequest?.()
           } catch (error) {
             console.warn('dsh-vcs-panel: shortcut could not restore the view', error)
           }
@@ -253,7 +257,11 @@ export function apply(ctx) {
     useEffect(() => ctx.locale.subscribe(() => {
       setLocale(ctx.locale.getLocale().active)
     }), [])
-    return <VcsView {...props} locale={locale} />
+    return (
+      <ViewErrorBoundary t={t}>
+        <VcsView {...props} locale={locale} />
+      </ViewErrorBoundary>
+    )
   }
 
   ctx.slots.inject('conversation.view', () => ctx.slots.register({

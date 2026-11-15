@@ -11,6 +11,9 @@
 /** English. */
 const en = {
   'view.label': 'VCS',
+  'view.crashed': 'The VCS panel ran into an error.',
+  'view.crashedHint': 'The failure was recorded. Try again, or reload the page if it comes back.',
+  'view.crashDetails': 'Error details',
   'turn.openHint': 'Open VCS',
   'shortcut.toggle': 'Toggle VCS view',
   'top.repositories': 'Repository',
@@ -105,6 +108,9 @@ const en = {
 /** Simplified Chinese. */
 const zh = {
   'view.label': '版本管理',
+  'view.crashed': '版本管理面板遇到了错误。',
+  'view.crashedHint': '错误详情已记录。可以重试；若再次出现，请刷新页面。',
+  'view.crashDetails': '错误详情',
   'turn.openHint': '打开版本管理',
   'shortcut.toggle': '切换版本管理视图',
   'top.repositories': '仓库',
@@ -199,6 +205,9 @@ const zh = {
 /** Japanese. */
 const ja = {
   'view.label': 'VCS',
+  'view.crashed': 'バージョン管理パネルでエラーが発生しました。',
+  'view.crashedHint': 'エラーの詳細を記録しました。再試行できます。再発する場合はページを再読み込みしてください。',
+  'view.crashDetails': 'エラーの詳細',
   'turn.openHint': 'VCS を開く',
   'shortcut.toggle': 'VCS ビューを切り替え',
   'top.repositories': 'リポジトリ',
@@ -293,6 +302,9 @@ const ja = {
 /** Spanish. */
 const es = {
   'view.label': 'VCS',
+  'view.crashed': 'El panel de control de versiones encontró un error.',
+  'view.crashedHint': 'Se registraron los detalles. Reintenta o recarga la página si vuelve a ocurrir.',
+  'view.crashDetails': 'Detalles del error',
   'turn.openHint': 'Abrir VCS',
   'shortcut.toggle': 'Alternar vista de VCS',
   'top.repositories': 'Repositorio',
@@ -387,6 +399,9 @@ const es = {
 /** French. */
 const fr = {
   'view.label': 'VCS',
+  'view.crashed': 'Le panneau de gestion de versions a rencontré une erreur.',
+  'view.crashedHint': 'Les détails ont été enregistrés. Réessayez ou rechargez la page si cela se reproduit.',
+  'view.crashDetails': 'Détails de l’erreur',
   'turn.openHint': 'Ouvrir VCS',
   'shortcut.toggle': 'Basculer la vue VCS',
   'top.repositories': 'Dépôt',
@@ -481,6 +496,9 @@ const fr = {
 /** German. */
 const de = {
   'view.label': 'VCS',
+  'view.crashed': 'Im Versionsverwaltungsfenster ist ein Fehler aufgetreten.',
+  'view.crashedHint': 'Die Details wurden aufgezeichnet. Versuchen Sie es erneut oder laden Sie die Seite neu, falls es wieder passiert.',
+  'view.crashDetails': 'Fehlerdetails',
   'turn.openHint': 'VCS öffnen',
   'shortcut.toggle': 'VCS-Ansicht umschalten',
   'top.repositories': 'Repository',
@@ -575,6 +593,9 @@ const de = {
 /** Russian. */
 const ru = {
   'view.label': 'VCS',
+  'view.crashed': 'В панели управления версиями произошла ошибка.',
+  'view.crashedHint': 'Данные записаны. Повторите попытку или перезагрузите страницу, если ошибка повторится.',
+  'view.crashDetails': 'Подробности ошибки',
   'turn.openHint': 'Открыть VCS',
   'shortcut.toggle': 'Переключить вид VCS',
   'top.repositories': 'Репозиторий',
@@ -669,6 +690,9 @@ const ru = {
 /** Portuguese. */
 const pt = {
   'view.label': 'VCS',
+  'view.crashed': 'O painel de controle de versão encontrou um erro.',
+  'view.crashedHint': 'Os detalhes foram registrados. Tente novamente ou recarregue a página se isso ocorrer de novo.',
+  'view.crashDetails': 'Detalhes do erro',
   'turn.openHint': 'Abrir VCS',
   'shortcut.toggle': 'Alternar visão de VCS',
   'top.repositories': 'Repositório',

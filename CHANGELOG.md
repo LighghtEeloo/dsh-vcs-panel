@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 修复：VCS 视图渲染或生命周期抛错时，DSH 的槽位边界会永久移除该视图条目，表现为白屏且没有恢复入口。视图条目内部新增错误边界：捕获后显示本地化的重试页，把错误记录到 `sessionStorage` 的 `vcs:last-error`（时间、消息、栈与组件栈），重试会重新挂载视图并保留原持久化状态；快捷键返回时也会清掉可能未被消费的聚焦请求，避免留下指向 VCS 的陈旧 `viewRequest`。
 - 新增应用内全局快捷键 `Mod+Shift+G`（macOS 为 `⌘⇧G`，Windows/Linux 为 `Ctrl+Shift+G`）：当前会话不在 VCS 时打开并聚焦 VCS；已在 VCS 时返回该会话上一个非 VCS 视图，首次或未知时为 Chat。返回目标按会话记录，切换会话不会串；没有会话或主面板遮住对话时不做动作。Desktop 三平台与 Web macOS/Windows 有默认键位，Web Linux 留给用户绑定；Web 的 Cmd/Ctrl+Shift+G 与浏览器“查找上一个”冲突时可在 Settings → Shortcuts 重绑定。视图记忆通过一个不渲染内容的会话级桥接条目复用 Conversation store，与 turn-tail 同源；注册失败时回退为无默认命令，面板其余部分不受影响。
 - 对话结束时不再展示宿主的“本轮改动”文件卡片，改为一个版本管理图标：点击图标切到 `VCS` 页。图标在该轮的 `workspace/changes` 记录出现时显示，或该轮有成功的文件写入工具调用（`write`、`edit`、`apply_patch`、改写型 `str_replace_editor`）时显示，两者覆盖的改动不同。
 - 修复：把 `workspace-changes` 的 `maxFiles` 设为 0 会被它的 `apply` 拒绝（要求正整数），启用插件时 profile 应用失败并影响对话渲染。改为完全不覆盖宿主配置，用插件样式表按 `[data-turn-tail] [data-changed-files]` 隐藏改动卡片；记录器、摘要、`present` 交付卡片、内联文件链接与本机打开保持工作。卸载插件即恢复卡片。

@@ -12,6 +12,7 @@ function loadBundle() {
     },
   })
   const react = {
+    Component: class {},
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
     Fragment: Symbol('Fragment'),
     useCallback: fn => fn,
@@ -157,7 +158,8 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     // The registered wrapper passes the active locale to the view so dates and
     // numbers follow the DSH language rather than the browser's.
     const tree = view.component({ sessionId: 'session-1', t: key => `vcs:${key}` })
-    assert.equal(tree.props.locale, 'zh')
+    const viewTree = tree.props?.children ?? tree.children?.[0]
+    assert.equal(viewTree.props.locale, 'zh')
 
     // The Turn-tail entry reuses the Conversation shell's store handle, which
     // is what exposes `setView` to a non-header entry.
@@ -415,9 +417,11 @@ test('the view shortcut registers and toggles through the invisible Session brid
     const bridge = registrations.find(entry => entry.options.name === 'conversation.session.header.utilities')
     assert.notEqual(bridge, undefined)
     assert.equal(bridge.options.store, store)
+    const requestsCompleted = []
     const actions = {
       openView(view, focus) { opened.push([view, focus]) },
       setView(view) { views.push(view) },
+      completeViewRequest() { requestsCompleted.push(true) },
     }
     const show = view => ({ sessionId: 's1', useStore: selector => selector({ view }), actions })
 
@@ -436,6 +440,7 @@ test('the view shortcut registers and toggles through the invisible Session brid
     back.run()
     assert.deepEqual(activations.at(-1), { sessionId: 's1', view: 'chat' })
     assert.deepEqual(views, ['chat'])
+    assert.deepEqual(requestsCompleted, [true], 'leaving clears a request the view never consumed')
 
     // No current Session and a modal both decline without consuming the key.
     sessionSnapshot = { byId: {} }

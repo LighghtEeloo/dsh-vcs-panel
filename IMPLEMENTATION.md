@@ -325,9 +325,15 @@ type CommitAnswer = {
 - `regions` 为 page/editable/terminal，`modals` 为空。Desktop 原生输入优先于模态，所以 `resolve` 在模态打开时返回 pass，不切换被遮住的视图；Web 由宿主在 `resolve` 之前拦截。
 - 视图记忆由 `createViewRegistry()` 提供：按会话记录 `view` 与最近一个非 VCS 视图；返回目标不在当前 `conversation.view` 注册表时回退 `chat`。同一会话第一次挂载在 VCS（例如刷新后）时，上一个视图按 `chat` 处理。
 - 桥接条目注册到 `conversation.session.header.utilities`，id 为 `dsh-vcs-panel:view-bridge`，不渲染内容。它声明 Conversation store handle，所以拿到与 Conversation 壳相同的 store 实例与绑定 actions；`useStore(state => state.view)` 跟踪选择，`useLayoutEffect` 在绘制前发布，卸载时只在 actions 仍是当前实例时释放。
-- 切换方向：进入 VCS 用 `binding.activate('vcs')` + `actions.openView('vcs', 'shortcut')`，复用 `VcsView` 的焦点请求；返回用 `binding.activate(view)` + `actions.setView(view)`，避免留下未消费的 `viewRequest`。
+- 切换方向：进入 VCS 用 `binding.activate('vcs')` + `actions.openView('vcs', 'shortcut')`，复用 `VcsView` 的焦点请求；返回用 `binding.activate(view)` + `actions.setView(view)` + `completeViewRequest()`。最后一步清掉视图可能未消费的聚焦请求，避免返回后留下指向 VCS 的陈旧 `viewRequest`。
 - 当前会话按 `retainedBy.mainView > 0` 识别，与 Workspace 快捷键一致。没有会话、桥接尚未挂载或主面板遮住对话时 `resolve` 返回 pass，不消耗按键；`blocked` 的原因不会显示给用户，所以不使用它。
 - 不新增 Host 路由，也不触碰仓库。Web 的 Cmd/Ctrl+Shift+G 会被浏览器“查找上一个”占用时，重绑定即可；Web Linux 默认无绑定。
+
+### 视图错误边界
+
+- Conversation View 在 DSH 的 slot 条目里渲染。条目在渲染或生命周期中抛错时，DSH 的 `SlotErrorBoundary` 会把该条目记为 abdicated 并永久跳过，页面只剩空白，且没有面板内的恢复入口。
+- `ViewErrorBoundary` 位于视图条目内部，捕获 `VcsView` 的错误并渲染 `view.crashed` 重试面。失败记录写入 `sessionStorage` 的 `vcs:last-error`：`time`、`message`、截断到 12,000 字符的 `stack` 与 `componentStack`。存储不可用或已满时只损失诊断。
+- 重试只重置边界状态并重新挂载 `VcsView`，不改动持久化状态，因此仍从原选中节点与阅读位置恢复。错误捕获在面板内完成，DSH 的槽位条目保持注册。
 
 ### 状态与持久化
 
