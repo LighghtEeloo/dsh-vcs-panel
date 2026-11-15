@@ -325,13 +325,13 @@ type CommitAnswer = {
 ### 全局视图快捷键
 
 - 命令在 `ctx.inject(['shortcuts', 'sessions'])` 的范围内注册，id 为 `vcs.view.toggle`，出现在 DSH 的 Settings → Shortcuts 并可按设备重绑定。`package.json` 的 `dsh.client.inject` 增加 `@deepseek-ai/dsh-client-shortcuts`；顶层的 `inject` 不增加快捷键服务，缺少该服务时面板其余部分照常注册。
-- 默认键位在 `src/client/shortcuts.js`：`desktop:macos`、`desktop:windows`、`desktop:linux`、`web:macos`、`web:windows` 都是 `{ code: 'KeyG', modifiers: ['primary', 'shift'] }`；`web:linux` 不设默认，因为 DSH 的 Web 键位策略不接受这个组合。注册失败（未来宿主的默认键位冲突）时回退为无默认命令，用户仍可在设置里绑定。
+- 默认键位在 `src/client/shortcuts.js`：`desktop:macos`、`desktop:windows`、`desktop:linux`、`web:macos`、`web:windows` 都是 `{ code: 'KeyG', modifiers: ['primary', 'shift'] }`；`web:linux` 不设默认。注册失败（未来宿主的默认键位冲突）时回退为无默认命令，用户仍可在设置里绑定。
 - `regions` 为 page/editable/terminal，`modals` 为空。Desktop 原生输入优先于模态，所以 `resolve` 在模态打开时返回 pass，不切换被遮住的视图；Web 由宿主在 `resolve` 之前拦截。
 - 视图记忆由 `createViewRegistry()` 提供：按会话记录 `view` 与最近一个非 VCS 视图；返回目标不在当前 `conversation.view` 注册表时回退 `chat`。同一会话第一次挂载在 VCS（例如刷新后）时，上一个视图按 `chat` 处理。
 - 桥接条目注册到 `conversation.session.header.utilities`，id 为 `dsh-vcs-panel:view-bridge`，不渲染内容。它声明 Conversation store handle，所以拿到与 Conversation 壳相同的 store 实例与绑定 actions；`useStore(state => state.view)` 跟踪选择，`useLayoutEffect` 在绘制前发布，卸载时只在 actions 仍是当前实例时释放。
 - 切换方向：进入 VCS 用 `binding.activate('vcs')` + `actions.openView('vcs', 'shortcut')`，复用 `VcsView` 的焦点请求；返回用 `binding.activate(view)` + `actions.setView(view)` + `completeViewRequest()`。最后一步清掉视图可能未消费的聚焦请求，避免返回后留下指向 VCS 的陈旧 `viewRequest`。
 - 当前会话按 `retainedBy.mainView > 0` 识别，与 Workspace 快捷键一致。没有会话、桥接尚未挂载或主面板遮住对话时 `resolve` 返回 pass，不消耗按键；`blocked` 的原因不会显示给用户，所以不使用它。
-- 不新增 Host 路由，也不触碰仓库。Web 的 Cmd/Ctrl+Shift+G 会被浏览器“查找上一个”占用时，重绑定即可；Web Linux 默认无绑定。
+- 不新增 Host 路由，也不触碰仓库。
 
 ### 视图错误边界
 
@@ -379,48 +379,45 @@ type CommitAnswer = {
   提交与 Jujutsu 节点一组。Host 的 status 仍按三组返回，合并只发生在客户端。
 - `detail/tree.js` 把分组与展开状态变成一份可见行列表，行有 `group`、`dir`、`file`、`loading` 四种：
   - 行键统一为 `group|path`；分组行的 path 为空，目录键去掉结尾斜杠，文件行键同时是它的 diff section key。
-  - 单子目录链压成一行（`src/client/detail`）；Git 整体报告的未跟踪目录可加载、带 `?`、默认收起，
+  - 单子目录链压成一行（`src/client/detail`）；Git 整体报告的未跟踪目录按可加载行处理，
     不参与压缩，展开时按需读取直接子项。
   - 文件行携带 `group`、`depth`、`entry` 与行键；分组行携带文件数与增删行数（文件数含未跟踪项，
     行数只累加 Host 给出数值的条目）。
-- 渲染、键盘和阅读锚点都读同一份行列表。`detail.js` 的 `sectionsFromRows` 从可见行派生 diff 段，
-  但默认折叠预算按“完全展开”的行序计算（`streamSections`），收起目录不改变其他文件的默认折叠。
+- 渲染、键盘和阅读锚点都读同一份行列表。`sectionsFromRows` 从可见行派生 diff 段；
+  `streamSections` 按完全展开的行序计算默认折叠预算。
 - `diffTarget` 的 scope 取自文件本身：`?` 请求 `untracked`，其余用所在分组，提交用 `commit` 并带 `rev`；
   重命名带 `oldPath`。
 
 #### 渲染、吸顶与工具栏
 
 - 行高统一 28px（`--vcs-row-height`）。分组行 `position: sticky; top: 0`；展开的文件行在分组行下吸顶
-  （`top: 28px`），提交树没有分组行时 `top: 0`。目录行不吸顶，所以吸顶最多两层。
+  （`top: 28px`），提交树没有分组行时 `top: 0`；目录行不吸顶。
   只有展开的文件行用 `box-shadow` 画下分隔线，不占布局，所以收起与展开不改变行高。
 - 字体：根节点用 `--dsw-font-family`，正文 13px、次要文字 12px、计数与元信息 11px，强调为 500 字重。
   diff 用 `--dsw-font-markdown-code`（12px）与 `--vcs-diff-line-height`（20px），两者都随
   `--dsh-code-font-delta` 变化；`detail.js` 的 `estimateHeight` 按默认 20px 估算未加载的 diff。
-- 文件行就是 diff 的文件头：展开时补父目录路径并换文件头底色；行带 `aria-expanded` 与
-  `aria-controls`（内容容器有稳定 id），不套 ARIA tree；行间 roving tabindex，整棵树一个 Tab 停靠点。
-- 工具栏按节点给出身份、文件数与增删行数、比较基准；提交节点的基准分普通（对父提交）、merge
-  （对第一父提交）、root（对空树）与 Jujutsu（对父提交的自动合并）四种文案。
-  右侧三个图标按钮：全部收起/展开文件、左右对比、自动换行。
-- 变更树窄于 `SPLIT_MIN_WIDTH`（640px）时，左右对比按单栏渲染；按钮保留用户偏好，悬停提示说明宽度不足。
+- 文件行就是 diff 的文件头：展开时补父目录路径并换文件头底色。行是原生 button，`aria-expanded`
+  与 `aria-controls` 指向内容容器的稳定 id（`rowBodyId`）；行间 roving tabindex，整棵树一个 Tab 停靠点。
+- 工具栏内容与四个比较基准的文案见 `DESIGN.md` 的“详情”表；`comparisonBase` 按 parents 与
+  changeId 能力返回 `parent`、`merge`、`root` 或 `autoMerge`，Client 据此选择本地化文案。
+- 变更树窄于 `SPLIT_MIN_WIDTH`（640px）时，左右对比按单栏渲染（传给 `FileDiff` 的 split 为 false）；
+  按钮保留用户偏好，悬停提示说明宽度不足。
 
 #### 折叠、加载与键盘
 
-- 折叠在整棵树只有一个含义：收起一行，它的子行与 diff 都不渲染、不请求。分组与目录默认展开；
-  文件默认展开，单文件超过 1,000 行改动或整条预算超过 20,000 行时默认收起，并在行下说明原因；
-  用户的显式选择优先。
-- 工具栏按钮在“全部收起”和“全部展开”之间切换：全部收起把当前节点所有文件写成折叠，全部展开清空
-  手动折叠回到默认规则。两种操作都保持光标行的屏幕位置（折叠后列表不足以滚到该位置时贴到可滚动边界）。
-- 收起一个已经吸顶的文件行时，它留在吸顶位置，下一行接上，不把读者弹回上方。
+- 默认折叠：分组与目录默认展开；单文件超过 1,000 行改动或整条预算超过 20,000 行时文件默认收起，
+  并在行下说明原因。用户的显式选择（`folds`）优先；折叠与展开的语义见 `DESIGN.md` 的“变更树”。
+- 工具栏按钮在“全部收起”和“全部展开”之间切换：前者把当前节点所有文件写成显式折叠，
+  后者清空显式折叠。两种操作都保持光标行的屏幕位置。
+- 收起已吸顶的文件行时，先把滚动位置对到它当前的吸顶槽位再折叠（`pendingAlign`），
+  因此下一行接上而不是把读者弹回上方。
 - 展开的文件在接近视口时才请求 diff（`IntersectionObserver`，800px 预载），最多 4 个并发，
   离开视口取消；加载前按增删行数估高。diff 缓存按 `repo|scope|path|oldPath|rev|revision` 记最近 300 条。
-- 键盘（输入框与编辑区不拦截）：`↑/↓`、`j/k` 在可见行间移动并越过展开的 diff；目标行不在视口内时
-  对齐到吸顶区下方；`Enter`/`Space` 折叠或展开；`→`/`l` 展开收起的行，在已展开的分组或目录上进入
-  第一个子项；`]`/`[` 跳下一个/上一个 hunk，跨文件连续并跳过收起的文件，目标文件尚未加载时停在
-  它的文件行；`←`/`h`/`Esc` 回到时间线。
-- `]`/`[` 用 hunk 头的 `data-diff-hunk-header` 标记定位；按 `event.key` 匹配，`getModifierState('AltGraph')`
-  为真时不把 Alt 当作修饰键，德语、法语等需要 AltGr 的布局照常可用。
-- 光标与滚动互相跟随：键盘移动先记录来源为键盘，程序滚动不会反向移动光标；滚轮、触控板与翻页键
-  把来源标成滚动，滚动结束后光标跟随正在阅读的行。
+- 键盘键位见 `DESIGN.md` 的“交互与状态”。实现上只有一个光标：可见行是原生 button，移动时只滚动
+  目标行；`]`/`[` 用 hunk 头的 `data-diff-hunk-header` 标记定位；按 `event.key` 匹配，
+  `getModifierState('AltGraph')` 为真时不把 Alt 当作修饰键，德语、法语等需要 AltGr 的布局照常可用。
+- 键盘滚动把输入来源记为键盘，程序滚动不会反向移动光标；滚轮、触控板与翻页键把来源标成滚动，
+  滚动结束后光标跟随正在阅读的行。
 
 #### 阅读位置
 
