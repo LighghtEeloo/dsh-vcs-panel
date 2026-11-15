@@ -16,7 +16,7 @@ function loadBundle() {
     Fragment: Symbol('Fragment'),
     useCallback: fn => fn,
     useEffect: () => undefined,
-    useLayoutEffect: () => undefined,
+    useLayoutEffect: fn => fn(),
     useMemo: fn => fn(),
     memo: component => component,
     useRef: value => ({ current: value }),
@@ -73,6 +73,7 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
   globalThis.document = document
   try {
     const ctx = {
+      inject() { return () => undefined },
       effect(fn, label) {
         const disposer = fn()
         effects.push({ label, disposer })
@@ -236,6 +237,7 @@ test('the Turn-tail entry waits for the Conversation store when the Chat view de
   globalThis.document = document
   try {
     plugin.apply({
+      inject() { return () => undefined },
       effect(fn) { return fn() },
       locale: {
         register() { return () => undefined },
@@ -299,6 +301,7 @@ test('the Turn-tail entry stays absent when no Conversation store ever appears',
   globalThis.document = document
   try {
     plugin.apply({
+      inject() { return () => undefined },
       effect(fn) { return fn() },
       locale: {
         register() { return () => undefined },
@@ -319,6 +322,130 @@ test('the Turn-tail entry stays absent when no Conversation store ever appears',
     })
     watcher()
     assert.deepEqual(registrations.map(entry => entry.name), ['conversation.view'])
+  } finally {
+    globalThis.document = previousDocument
+  }
+})
+
+test('the view shortcut registers and toggles through the invisible Session bridge', () => {
+  const { plugin } = loadBundle()
+  const registrations = []
+  const commands = []
+  const activations = []
+  const opened = []
+  const views = []
+  let bridgeDisposer
+  let sessionSnapshot = { byId: { s1: { id: 's1', retainedBy: { mainView: 1 } } } }
+  const store = {
+    create() { throw new Error('the test never mounts the store') },
+    spec: { actions: { setView() {} } },
+  }
+  const scope = {
+    effect(fn) {
+      const disposer = fn()
+      assert.equal(typeof disposer, 'function')
+      return disposer
+    },
+    shortcuts: {
+      register(command) {
+        commands.push(command)
+        return () => undefined
+      },
+    },
+    sessions: { list: { getSnapshot: () => sessionSnapshot } },
+  }
+  const document = {
+    head: { appendChild() {} },
+    createElement() { return { dataset: {}, textContent: '', remove() {} } },
+  }
+  const previousDocument = globalThis.document
+  globalThis.document = document
+  try {
+    plugin.apply({
+      inject(deps, callback) {
+        assert.deepEqual(deps, ['shortcuts', 'sessions'])
+        callback(scope)
+        return () => undefined
+      },
+      effect(fn) { return fn() },
+      locale: {
+        register() { return () => undefined },
+        bind(ns) { return key => `${ns}:${key}` },
+        getLocale() { return { active: 'en', locales: [], revision: 0 } },
+        subscribe() { return () => undefined },
+      },
+      uiConversation: {
+        events: { register() { return () => undefined } },
+        binding(sessionId) {
+          return { activate(view) { activations.push({ sessionId, view }) } }
+        },
+      },
+      slots: {
+        entries(key) {
+          if (key === 'conversation.session') return [{ options: { id: 'session' }, store }]
+          if (key === 'conversation.view') {
+            return [{ options: { id: 'vcs' } }, { options: { id: 'chat' } }, { options: { id: 'trajectory' } }]
+          }
+          return []
+        },
+        subscribe() { return () => undefined },
+        inject(key, callback) {
+          const disposer = callback()
+          if (key === 'conversation.session.header.utilities') bridgeDisposer = disposer
+          return disposer
+        },
+        register(options, component) {
+          registrations.push({ options, component })
+          return () => undefined
+        },
+      },
+    })
+
+    assert.equal(commands.length, 1)
+    const command = commands[0]
+    assert.equal(command.id, 'vcs.view.toggle')
+    assert.equal(command.label(), 'vcs:shortcut.toggle')
+    assert.deepEqual(command.regions, ['page', 'editable', 'terminal'])
+    assert.deepEqual(command.modals, [])
+    assert.deepEqual(command.defaults['desktop:macos'], { code: 'KeyG', modifiers: ['primary', 'shift'] })
+    assert.deepEqual(command.defaults['desktop:windows'], { code: 'KeyG', modifiers: ['primary', 'shift'] })
+    assert.deepEqual(command.defaults['web:windows'], { code: 'KeyG', modifiers: ['primary', 'shift'] })
+    assert.equal(command.defaults['web:linux'], undefined)
+
+    const bridge = registrations.find(entry => entry.options.name === 'conversation.session.header.utilities')
+    assert.notEqual(bridge, undefined)
+    assert.equal(bridge.options.store, store)
+    const actions = {
+      openView(view, focus) { opened.push([view, focus]) },
+      setView(view) { views.push(view) },
+    }
+    const show = view => ({ sessionId: 's1', useStore: selector => selector({ view }), actions })
+
+    // Chat -> VCS: the command activates the target and leaves a focus request.
+    assert.equal(bridge.component(show('chat')), null)
+    const enter = command.resolve({ modal: null, region: 'page', target: null })
+    assert.equal(enter.status, 'handled')
+    enter.run()
+    assert.deepEqual(activations, [{ sessionId: 's1', view: 'vcs' }])
+    assert.deepEqual(opened, [['vcs', 'shortcut']])
+
+    // VCS -> the last non-VCS view: setView avoids a second focus request.
+    bridge.component(show('vcs'))
+    const back = command.resolve({ modal: null, region: 'page', target: null })
+    assert.equal(back.status, 'handled')
+    back.run()
+    assert.deepEqual(activations.at(-1), { sessionId: 's1', view: 'chat' })
+    assert.deepEqual(views, ['chat'])
+
+    // No current Session and a modal both decline without consuming the key.
+    sessionSnapshot = { byId: {} }
+    assert.equal(command.resolve({ modal: null, region: 'page', target: null }).status, 'pass')
+    sessionSnapshot = { byId: { s1: { id: 's1', retainedBy: { mainView: 1 } } } }
+    assert.equal(command.resolve({ modal: 'settings', region: 'page', target: null }).status, 'pass')
+
+    // The bridge injection owns the registration and can be disposed.
+    assert.equal(typeof bridgeDisposer, 'function')
+    bridgeDisposer()
   } finally {
     globalThis.document = previousDocument
   }

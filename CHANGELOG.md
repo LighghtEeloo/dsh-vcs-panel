@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 新增应用内全局快捷键 `Mod+Shift+G`（macOS 为 `⌘⇧G`，Windows/Linux 为 `Ctrl+Shift+G`）：当前会话不在 VCS 时打开并聚焦 VCS；已在 VCS 时返回该会话上一个非 VCS 视图，首次或未知时为 Chat。返回目标按会话记录，切换会话不会串；没有会话或主面板遮住对话时不做动作。Desktop 三平台与 Web macOS/Windows 有默认键位，Web Linux 留给用户绑定；Web 的 Cmd/Ctrl+Shift+G 与浏览器“查找上一个”冲突时可在 Settings → Shortcuts 重绑定。视图记忆通过一个不渲染内容的会话级桥接条目复用 Conversation store，与 turn-tail 同源；注册失败时回退为无默认命令，面板其余部分不受影响。
 - 对话结束时不再展示宿主的“本轮改动”文件卡片，改为一个版本管理图标：点击图标切到 `VCS` 页。图标在该轮的 `workspace/changes` 记录出现时显示，或该轮有成功的文件写入工具调用（`write`、`edit`、`apply_patch`、改写型 `str_replace_editor`）时显示，两者覆盖的改动不同。
 - 修复：把 `workspace-changes` 的 `maxFiles` 设为 0 会被它的 `apply` 拒绝（要求正整数），启用插件时 profile 应用失败并影响对话渲染。改为完全不覆盖宿主配置，用插件样式表按 `[data-turn-tail] [data-changed-files]` 隐藏改动卡片；记录器、摘要、`present` 交付卡片、内联文件链接与本机打开保持工作。卸载插件即恢复卡片。
 - 修复：Turn 改动定义的 Location 数据键写成 `vcs`，而引擎要求数据键等于定义 kind（`vcs-changes`）；只要某个会话有一轮改动，该会话的对话装配就会抛错并整段无法显示。键现在与 kind 共用同一常量，测试断言两者一致。

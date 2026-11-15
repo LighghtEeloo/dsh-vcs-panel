@@ -318,6 +318,17 @@ type CommitAnswer = {
   `workspace-changes` 的 `maxFiles` 必须在 1 以上（`apply` 拒绝 0），所以不能通过清空摘要来隐藏卡片；
   该规则依赖宿主卡片上的 `data-changed-files` 与 turn-tail 根上的 `data-turn-tail`，标记变化时卡片重新出现，删除规则即恢复。
 
+### 全局视图快捷键
+
+- 命令在 `ctx.inject(['shortcuts', 'sessions'])` 的范围内注册，id 为 `vcs.view.toggle`，出现在 DSH 的 Settings → Shortcuts 并可按设备重绑定。`package.json` 的 `dsh.client.inject` 增加 `@deepseek-ai/dsh-client-shortcuts`；顶层的 `inject` 不增加快捷键服务，缺少该服务时面板其余部分照常注册。
+- 默认键位在 `src/client/shortcuts.js`：`desktop:macos`、`desktop:windows`、`desktop:linux`、`web:macos`、`web:windows` 都是 `{ code: 'KeyG', modifiers: ['primary', 'shift'] }`；`web:linux` 不设默认，因为 DSH 的 Web 键位策略不接受这个组合。注册失败（未来宿主的默认键位冲突）时回退为无默认命令，用户仍可在设置里绑定。
+- `regions` 为 page/editable/terminal，`modals` 为空。Desktop 原生输入优先于模态，所以 `resolve` 在模态打开时返回 pass，不切换被遮住的视图；Web 由宿主在 `resolve` 之前拦截。
+- 视图记忆由 `createViewRegistry()` 提供：按会话记录 `view` 与最近一个非 VCS 视图；返回目标不在当前 `conversation.view` 注册表时回退 `chat`。同一会话第一次挂载在 VCS（例如刷新后）时，上一个视图按 `chat` 处理。
+- 桥接条目注册到 `conversation.session.header.utilities`，id 为 `dsh-vcs-panel:view-bridge`，不渲染内容。它声明 Conversation store handle，所以拿到与 Conversation 壳相同的 store 实例与绑定 actions；`useStore(state => state.view)` 跟踪选择，`useLayoutEffect` 在绘制前发布，卸载时只在 actions 仍是当前实例时释放。
+- 切换方向：进入 VCS 用 `binding.activate('vcs')` + `actions.openView('vcs', 'shortcut')`，复用 `VcsView` 的焦点请求；返回用 `binding.activate(view)` + `actions.setView(view)`，避免留下未消费的 `viewRequest`。
+- 当前会话按 `retainedBy.mainView > 0` 识别，与 Workspace 快捷键一致。没有会话、桥接尚未挂载或主面板遮住对话时 `resolve` 返回 pass，不消耗按键；`blocked` 的原因不会显示给用户，所以不使用它。
+- 不新增 Host 路由，也不触碰仓库。Web 的 Cmd/Ctrl+Shift+G 会被浏览器“查找上一个”占用时，重绑定即可；Web Linux 默认无绑定。
+
 ### 状态与持久化
 
 - `sessionStorage` key 为 `vcs:<sessionId>`；状态字段：`repo`、`node`、`nodeChosen`、`ref`、

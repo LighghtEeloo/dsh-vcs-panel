@@ -15,6 +15,7 @@ A `VCS` tab in the conversation view puts the working tree and the commit histor
 - **Git and Jujutsu, in their own terms.** A repository's marker picks the backend. Git shows a working tree, staged/unstaged/untracked groups, branches, and ahead/behind; Jujutsu shows `@`, change ids, bookmarks, and one changes list per commit.
 - **Built for large repositories.** Virtualized history, per-file requests, explicit caps, and clear truncation keep the panel responsive.
 - **One entry at the end of a turn.** A turn that changed files ends with a single VCS icon instead of DSH's changed-files card; the icon opens this tab. The per-turn file list is gone on purpose, and the tab still shows the complete working tree. The icon follows DSH's per-turn change record (shell commands count, and subagent edits in the same working tree) or a successful file-tool edit in the turn.
+- **One key to the changes.** `⌘⇧G` on macOS or `Ctrl+Shift+G` elsewhere toggles the VCS view from anywhere in a conversation; press it again to return to the view you left. Rebind it in **Settings → Shortcuts**; on the Web the default may compete with the browser's own shortcut.
 - **Native to DSH.** Theme tokens, focus rings, reduced motion, and keyboard navigation follow the host; the panel remembers the repository, selection, and reading position for the session.
 - **Read-only.** No staging, commit, checkout, merge, rebase, stash, fetch, pull, or push. Jujutsu's read-time snapshot is the only write the panel triggers, and the lock tooltip says so.
 - **Eight UI languages.** Chinese, English, Japanese, Spanish, French, German, Russian, and Portuguese; dates, relative times, and counts follow DSH.
@@ -33,7 +34,7 @@ Installing also hides DSH's per-turn changed-files card in Chat; the turn ends w
 
 Jujutsu repositories need `jj` on the Host's `PATH`; without it the repository is still listed and reads report `vcs-missing`.
 
-There is no settings panel. To remove the panel, disable or uninstall the plugin bundle in **Plugins**.
+There is no plugin settings panel; the shortcut is configurable in **Settings → Shortcuts**. To remove the panel, disable or uninstall the plugin bundle in **Plugins**.
 
 ## Development
 

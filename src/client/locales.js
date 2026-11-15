@@ -12,6 +12,7 @@
 const en = {
   'view.label': 'VCS',
   'turn.openHint': 'Open VCS',
+  'shortcut.toggle': 'Toggle VCS view',
   'top.repositories': 'Repository',
   'top.noRepository': 'No repository',
   'top.unborn': 'No commits yet',
@@ -105,6 +106,7 @@ const en = {
 const zh = {
   'view.label': '版本管理',
   'turn.openHint': '打开版本管理',
+  'shortcut.toggle': '切换版本管理视图',
   'top.repositories': '仓库',
   'top.noRepository': '没有仓库',
   'top.unborn': '尚无提交',
@@ -198,6 +200,7 @@ const zh = {
 const ja = {
   'view.label': 'VCS',
   'turn.openHint': 'VCS を開く',
+  'shortcut.toggle': 'VCS ビューを切り替え',
   'top.repositories': 'リポジトリ',
   'top.noRepository': 'リポジトリなし',
   'top.unborn': 'コミットなし',
@@ -291,6 +294,7 @@ const ja = {
 const es = {
   'view.label': 'VCS',
   'turn.openHint': 'Abrir VCS',
+  'shortcut.toggle': 'Alternar vista de VCS',
   'top.repositories': 'Repositorio',
   'top.noRepository': 'Sin repositorio',
   'top.unborn': 'Todavía sin commits',
@@ -384,6 +388,7 @@ const es = {
 const fr = {
   'view.label': 'VCS',
   'turn.openHint': 'Ouvrir VCS',
+  'shortcut.toggle': 'Basculer la vue VCS',
   'top.repositories': 'Dépôt',
   'top.noRepository': 'Aucun dépôt',
   'top.unborn': 'Aucun commit',
@@ -477,6 +482,7 @@ const fr = {
 const de = {
   'view.label': 'VCS',
   'turn.openHint': 'VCS öffnen',
+  'shortcut.toggle': 'VCS-Ansicht umschalten',
   'top.repositories': 'Repository',
   'top.noRepository': 'Kein Repository',
   'top.unborn': 'Noch keine Commits',
@@ -570,6 +576,7 @@ const de = {
 const ru = {
   'view.label': 'VCS',
   'turn.openHint': 'Открыть VCS',
+  'shortcut.toggle': 'Переключить вид VCS',
   'top.repositories': 'Репозиторий',
   'top.noRepository': 'Нет репозитория',
   'top.unborn': 'Коммитов пока нет',
@@ -663,6 +670,7 @@ const ru = {
 const pt = {
   'view.label': 'VCS',
   'turn.openHint': 'Abrir VCS',
+  'shortcut.toggle': 'Alternar visão de VCS',
   'top.repositories': 'Repositório',
   'top.noRepository': 'Sem repositório',
   'top.unborn': 'Ainda sem commits',

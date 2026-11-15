@@ -117,10 +117,15 @@ staging、commit、push、分支、stash、rebase 全部堆进一个面板，看
   - diff 流：`←`、`h` 或 `Esc` 回到文件导航中正在阅读的文件。
   - 窄布局：`Esc` 从详情返回时间线。
 - 多个仓库：仓库选择器列出会话工作目录所属仓库，以及工作区内一层深的子仓库；切换仓库保留各自的选中节点与范围。
+- 全局快捷键：`Mod+Shift+G`（macOS 为 `⌘⇧G`，Windows/Linux 为 `Ctrl+Shift+G`）在当前会话的 VCS 视图与上一个非 VCS 视图之间切换。
+  不在 VCS 时打开并聚焦 VCS；已在 VCS 时返回上一个非 VCS 视图，首次或未知时为 Chat。
+  返回目标按会话记录，切换会话不会串；没有会话或主面板遮住对话时不做动作。
+  Desktop 三平台与 Web macOS/Windows 给默认键位；Web Linux 的组合被 DSH 的 Web 键位策略拒绝，留给用户在 Settings → Shortcuts 绑定。
+  Web 的 Cmd/Ctrl+Shift+G 与浏览器“查找上一个”冲突，实际送达以浏览器为准；命令始终可在 Settings → Shortcuts 重绑定。
 - 刷新：手动按钮；重新可见时若数据超过一个短 TTL 才自动刷新。没有定时轮询。
   刷新后保留选中节点，diff 流按“当前文件 + 段内偏移”恢复阅读位置。
 - 仓库、选中节点、范围、阅读位置、目录与段的折叠状态、布局开关、栏宽按会话保存；刷新页面可恢复。
-- 不提供设置页；整体开关在 Host 配置层。
+- 不提供自己的设置页；快捷键在 DSH 的 Settings → Shortcuts 中重绑定，整体开关在 Host 配置层。
   视图随 bundle 加载，要移除视图需在 Plugins 里关闭整个 bundle。
 - 明暗主题、焦点环、`prefers-reduced-motion` 全部走宿主 token/约定。
 
@@ -170,6 +175,15 @@ slot 是追加与遮蔽模型，插件无法只移除另一条注册里的半段
 turn-tail 的图标由本插件自己的 Conversation 定义发布，依据记录器的 `workspace/changes` 公告与写入工具调用；
 不新增每轮 git 基线，也不触碰只读边界。
 
+### 视图快捷键依赖会话 store
+
+DSH 的 `ConversationBinding` 只暴露事件装配（快照、当前轮、激活目标），不提供“当前视图”或“选择视图”。
+视图选择保存在 `conversation.session` 声明的 Conversation store 里，只有声明同一个 store handle 的槽位条目能读写它。
+快捷键需要从任意位置完成这个读写，因此插件注册一个不渲染内容的会话级条目（`conversation.session.header.utilities`），
+带上同一个 store handle，读取 `view` 并取得 `openView` / `setView`。这是本插件第二处依赖宿主内部槽位 store 的地方；
+与 turn-tail 一样，store 尚未注册时条目等待，DSH 移除该 store 时快捷键不出现而面板其余部分正常。
+长期方案是 DSH 给 `ConversationBinding` 增加 `activeView` / `selectView`，届时移除桥接。
+
 ### 复用边界
 
 diff 只有内嵌 `FileDiff` 一套实现；图的 lane 算法移植自 `git-graph-plus` 对 SourceGit 的移植。
@@ -193,6 +207,7 @@ Host 半是普通 Node 插件，只读路由注册在 DSH 的认证栅栏内。
 - 数千条提交的时间线、数百个文件的 diff 流、数千行的单文件 diff 下仍可滚动/选中，不冻结页面；超出上限有明确提示。
 - 切换仓库、选中节点、阅读位置后，重新可见能恢复；刷新不会把用户弹回顶部。
 - 一轮结束时，有改动的会话只出现版本管理图标；点击后 `VCS` 页签被选中，且不出现宿主的改动文件卡片。
+- 按下应用内快捷键能从任意视图进入 VCS，再按一次回到上一个非 VCS 视图；没有会话或主面板打开时不打断当前操作。
 - 明暗主题、窄窗口、键盘操作、八种语言都能用；焦点顺序合理。
 - 路由表里没有用户可见的写操作；Jujutsu 的快照写入被限制为每次刷新一次并有明确提示；
   路径逃逸、选项注入、符号链接逃逸测试全部通过。
