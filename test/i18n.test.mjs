@@ -79,7 +79,6 @@ test('every literal t(key) and every dynamic key resolves in every dictionary', 
   // Keys assembled at render time and through shared helpers.
   used.add('changes.staged')
   used.add('changes.unstaged')
-  used.add('changes.untracked')
   for (const key of ['diff.created', 'diff.deleted', 'diff.unchanged']) used.add(key)
   for (const letter of ['M', 'A', 'D', 'R', 'C', 'U', '?']) used.add(statusKey(letter))
   for (const code of Object.keys(ERROR_STATUS)) {

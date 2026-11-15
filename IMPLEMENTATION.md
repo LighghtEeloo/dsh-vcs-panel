@@ -126,13 +126,17 @@ Jujutsu：
 | 每个提交详情的文件数 | 500 | commit |
 | 展开未跟踪目录的条目（Git） | 500 | untracked |
 | 单文件渲染的 diff 行数 | 5,000 | Host diff；`FileDiff` 的 `MAX_RENDERED_LINES` |
-| 默认展开的 diff | 单段不超过 1,000 行改动；每个节点累计到 20,000 行 | Client `defaultFolds` |
+| 默认展开的 diff | 单文件不超过 1,000 行改动；每个节点累计到 20,000 行 | Client `defaultFolds` |
+| 变更树行高 | 28px（分组、目录、文件统一） | `.vcs-tree` |
+| 左右对比的单栏回退宽度 | 640px | Client `SPLIT_MIN_WIDTH` |
 | 同时进行的 diff 请求 | 4 | Client 请求队列 |
 | diff 输出 | 2 MB | Host diff |
 | 每页提交 | 300 | log |
 | 最多加载提交 | 10,000 | log |
 | 单次后端命令 | 30 秒，stdout 8 MB | `CommandRunner` |
 | Jujutsu 快照 | 每次刷新一次 | Jujutsu 后端 |
+
+变更树目前不虚拟化行：所有可见行一次渲染，diff 本体按需加载。数百个文件全部收起时的滚动表现见 `TODO.md`。
 
 ## 数据形状
 
@@ -339,9 +343,13 @@ type CommitAnswer = {
 
 - `sessionStorage` key 为 `vcs:<sessionId>`；状态字段：`repo`、`node`、`nodeChosen`、`ref`、
   `dirs`、`collapsed`、`folds`、`anchor`、`split`、`wrap`、`sidebarWidth`、`timelineScroll`。
+- `dirs` 记可加载未跟踪目录的展开；`collapsed` 记分组与目录的收起；`folds` 记文件的显式折叠；
+  `anchor` 是 `{ key, offset }`：key 可以是分组、目录或文件行键，offset 是从行顶算起的像素。
+- 行键前缀白名单是 `staged|`、`unstaged|`、`commit|`；旧版本的 `untracked|...` 键在读取时丢弃，
+  旧锚点回到默认位置，不报错也不残留。
 - 读取时 `sanitizeState` 丢弃不认识的值；存储失败只损失恢复，不影响面板。
 - 仓库切换在内存里按仓库记住选中节点、目录折叠与范围；页面刷新只恢复当前仓库。
-- 选中节点重置 per-node 的阅读位置与折叠；工作区目录折叠跨节点保留。
+- 选中节点重置 per-node 的阅读位置与折叠；工作区目录与分组折叠跨节点保留。
 
 ### 数据层与请求
 
@@ -365,19 +373,57 @@ type CommitAnswer = {
 - `buildPathD` 把点序列转成带二次/三次贝塞尔平滑的 SVG path；`graphWidth` 按最宽 margin 计算图列宽度。
 - refs/Selection 作为行数据渲染，不参与 lane 计算。
 
-### 详情与 diff
+### 变更树
 
-- 选中节点先归一成 `FileGroup[]`：工作区用 status 的三组，提交用单组；
-  文件导航与 diff 流都只读这一结构。
-- diff 流是分组按导航顺序完全展开后的 section 序列（`group|path` key）；
-  每段由 `IntersectionObserver` 在视口外 800 px 接近时入队，最多 4 个并发，离开视口的未完成请求取消。
-- 加载前按增删行数估算高度，加载后以实测高度为准；阅读位置按 `{ key, offset }` 记录，
-  不依赖绝对 `scrollTop`。
-- 折叠默认值：单段改动超过 1,000 行折叠；整条流累计超过 20,000 行后其余折叠；用户显式选择优先。
-- `vcs.diff` 返回 hunk，转成 `FileDiff` 的 state；`FileDiff` 负责 split/unified、行号、
-  hunk header、创建/删除/无变化/二进制/超大/读取失败状态。内容走 React 文本，不塞 `dangerouslySetInnerHTML`。
-- `FileDiff` 源码内嵌在 `src/client/diff/`；语法高亮用本地 tokenizer，
-  以宿主 `--shiki-token-*` 变量着色，不支持的语言回退纯文本。
+- 选中节点先归一成 `FileGroup[]`：工作区两组（`staged`、`unstaged`，未跟踪文件与目录并入 `unstaged`），
+  提交与 Jujutsu 节点一组。Host 的 status 仍按三组返回，合并只发生在客户端。
+- `detail/tree.js` 把分组与展开状态变成一份可见行列表，行有 `group`、`dir`、`file`、`loading` 四种：
+  - 行键统一为 `group|path`；分组行的 path 为空，目录键去掉结尾斜杠，文件行键同时是它的 diff section key。
+  - 单子目录链压成一行（`src/client/detail`）；Git 整体报告的未跟踪目录可加载、带 `?`、默认收起，
+    不参与压缩，展开时按需读取直接子项。
+  - 文件行携带 `group`、`depth`、`entry` 与行键；分组行携带文件数与增删行数（文件数含未跟踪项，
+    行数只累加 Host 给出数值的条目）。
+- 渲染、键盘和阅读锚点都读同一份行列表。`detail.js` 的 `sectionsFromRows` 从可见行派生 diff 段，
+  但默认折叠预算按“完全展开”的行序计算（`streamSections`），收起目录不改变其他文件的默认折叠。
+- `diffTarget` 的 scope 取自文件本身：`?` 请求 `untracked`，其余用所在分组，提交用 `commit` 并带 `rev`；
+  重命名带 `oldPath`。
+
+#### 渲染、吸顶与工具栏
+
+- 行高统一 28px（`--vcs-row-height`）。分组行 `position: sticky; top: 0`；展开的文件行在分组行下吸顶
+  （`top: 28px`），提交树没有分组行时 `top: 0`。目录行不吸顶，所以吸顶最多两层。
+- 文件行就是 diff 的文件头：展开时补父目录路径并换文件头底色；行带 `aria-expanded` 与
+  `aria-controls`（内容容器有稳定 id），不套 ARIA tree；行间 roving tabindex，整棵树一个 Tab 停靠点。
+- 工具栏按节点给出身份、文件数与增删行数、比较基准；提交节点的基准分普通（对父提交）、merge
+  （对第一父提交）、root（对空树）与 Jujutsu（对父提交的自动合并）四种文案。
+  右侧三个图标按钮：全部收起/展开文件、左右对比、自动换行。
+- 变更树窄于 `SPLIT_MIN_WIDTH`（640px）时，左右对比按单栏渲染；按钮保留用户偏好，悬停提示说明宽度不足。
+
+#### 折叠、加载与键盘
+
+- 折叠在整棵树只有一个含义：收起一行，它的子行与 diff 都不渲染、不请求。分组与目录默认展开；
+  文件默认展开，单文件超过 1,000 行改动或整条预算超过 20,000 行时默认收起，并在行下说明原因；
+  用户的显式选择优先。
+- 工具栏按钮在“全部收起”和“全部展开”之间切换：全部收起把当前节点所有文件写成折叠，全部展开清空
+  手动折叠回到默认规则。两种操作都保持光标行的屏幕位置（折叠后列表不足以滚到该位置时贴到可滚动边界）。
+- 收起一个已经吸顶的文件行时，它留在吸顶位置，下一行接上，不把读者弹回上方。
+- 展开的文件在接近视口时才请求 diff（`IntersectionObserver`，800px 预载），最多 4 个并发，
+  离开视口取消；加载前按增删行数估高。diff 缓存按 `repo|scope|path|oldPath|rev|revision` 记最近 300 条。
+- 键盘（输入框与编辑区不拦截）：`↑/↓`、`j/k` 在可见行间移动并越过展开的 diff；目标行不在视口内时
+  对齐到吸顶区下方；`Enter`/`Space` 折叠或展开；`→`/`l` 展开收起的行，在已展开的分组或目录上进入
+  第一个子项；`]`/`[` 跳下一个/上一个 hunk，跨文件连续并跳过收起的文件，目标文件尚未加载时停在
+  它的文件行；`←`/`h`/`Esc` 回到时间线。
+- `]`/`[` 用 hunk 头的 `data-diff-hunk-header` 标记定位；按 `event.key` 匹配，`getModifierState('AltGraph')`
+  为真时不把 Alt 当作修饰键，德语、法语等需要 AltGr 的布局照常可用。
+- 光标与滚动互相跟随：键盘移动先记录来源为键盘，程序滚动不会反向移动光标；滚轮、触控板与翻页键
+  把来源标成滚动，滚动结束后光标跟随正在阅读的行。
+
+#### 阅读位置
+
+- 阅读位置按 `{ key, offset }` 记录，不依赖绝对 `scrollTop`；key 可以是分组、目录或文件行。
+- 页面刷新按锚点恢复；锚点行没有渲染时沿祖先降级（文件行 → 目录链 → 分组行）。
+- 刷新数据（手动刷新、重新可见超过 30 s）先用刷新前的锚点记下位置，新行到达后恢复一次。
+- 全部收起/展开、收起已吸顶的文件行时，用同一套“先记屏幕位置、重排后恢复”的处理。
 
 ## 复用与来源
 

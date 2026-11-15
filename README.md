@@ -8,11 +8,11 @@ English | [中文](README.zh.md)
 
 ## What you get
 
-A `VCS` tab in the conversation view puts the working tree and the commit history on one timeline, and shows every changed file's diff in one reading flow. It answers “what changed?” and “how did we get here?” without opening a terminal or a full Git client.
+A `VCS` tab in the conversation view puts the working tree and the commit history on one timeline, and answers “what changed?” with one change tree: every changed file is a row, and a file's diff opens under its own row. It does this without opening a terminal or a full Git client.
 
 - **One timeline.** The working tree (Git) or working-copy commit `@` (Jujutsu) is the first row; commits follow in topological order with a colored lane graph, refs, short ids, authors, and time.
-- **One detail view.** Select a row and read every changed file's diff in order. The file list tracks the diff stream, and diffs load as they come into view.
-- **Git and Jujutsu, in their own terms.** A repository's marker picks the backend. Git shows a working tree, staged/unstaged/untracked groups, branches, and ahead/behind; Jujutsu shows `@`, change ids, bookmarks, and one changes list per commit.
+- **One change tree.** Select a row and the node becomes a tree of files. Collapsed, the tree is the file list; expand a file and its diff reads under that row. A single-child directory chain is one row, a group's header and the file header stay pinned while you read, and a diff loads as its file comes near the viewport. `[` / `]` step across hunks and files, and one toolbar button switches between the file list and the full reading flow.
+- **Git and Jujutsu, in their own terms.** A repository's marker picks the backend. Git shows a working tree, staged and unstaged groups (untracked files join unstaged with a `?`), branches, and ahead/behind; Jujutsu shows `@`, change ids, bookmarks, and one changes list per commit.
 - **Built for large repositories.** Virtualized history, per-file requests, explicit caps, and clear truncation keep the panel responsive.
 - **One entry at the end of a turn.** A turn that changed files ends with a single VCS icon instead of DSH's changed-files card; the icon opens this tab. The per-turn file list is gone on purpose, and the tab still shows the complete working tree. The icon follows DSH's per-turn change record (shell commands count, and subagent edits in the same working tree) or a successful file-tool edit in the turn.
 - **One key to the changes.** `⌘⇧G` on macOS or `Ctrl+Shift+G` elsewhere toggles the VCS view from anywhere in a conversation; press it again to return to the view you left. Rebind it in **Settings → Shortcuts**; on the Web the default may compete with the browser's own shortcut.

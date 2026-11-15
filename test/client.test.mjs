@@ -8,10 +8,13 @@ import {
 import {
   errorMessage, formatCommitTime, formatCount, lineCounts, shortChangeId, shortSha, splitPath, statusKey,
 } from '../src/client/format.js'
-import { buildRows, dirKey } from '../src/client/detail/tree.js'
 import {
-  FOLD_LINES, STREAM_BUDGET, changedLines, commitGroups, defaultFolds, diffTarget, estimateHeight, isFolded,
-  sectionAt, streamSections, worktreeGroups,
+  buildNodeRows, buildRows, dirKey, isRowKey, rowBodyId, sectionKey, summarizeEntries,
+} from '../src/client/detail/tree.js'
+import {
+  FOLD_LINES, SPLIT_MIN_WIDTH, STREAM_BUDGET, allFileFolds, changedLines, commitGroups, commitSummary,
+  comparisonBase, defaultFolds, diffTarget, estimateHeight, hasUnfoldedFile, isFolded, nextFileRow, rowAt,
+  streamSections, worktreeGroups,
 } from '../src/client/detail/detail.js'
 import { createQueue } from '../src/client/detail/queue.js'
 import { graphInput, headOf, nodeAt, rowOf, worktreeSummary } from '../src/client/history/timeline.js'
@@ -45,8 +48,8 @@ test('sanitizeState keeps accepted values and drops unknown ones', () => {
     repo: '/repo',
     node: 'abcdef1234567890',
     nodeChosen: true,
-    dirs: { 'untracked|tmp': true, bad: 'yes' },
-    collapsed: { 'staged|src': true },
+    dirs: { 'unstaged|tmp': true, 'untracked|old': true, bad: 'yes' },
+    collapsed: { 'staged|src': true, 'untracked|old': true },
     folds: { 'commit|a.js': true, 'commit|b.js': false, bad: 'x' },
     anchor: { key: 'commit|a.js', offset: 120 },
     ref: 'all',
@@ -59,7 +62,7 @@ test('sanitizeState keeps accepted values and drops unknown ones', () => {
   assert.equal(state.repo, '/repo')
   assert.equal(state.node, 'abcdef1234567890')
   assert.equal(state.nodeChosen, true)
-  assert.deepEqual(state.dirs, { 'untracked|tmp': true })
+  assert.deepEqual(state.dirs, { 'unstaged|tmp': true })
   assert.deepEqual(state.collapsed, { 'staged|src': true })
   assert.deepEqual(state.folds, { 'commit|a.js': true, 'commit|b.js': false })
   assert.deepEqual(state.anchor, { key: 'commit|a.js', offset: 120 })
@@ -72,6 +75,29 @@ test('sanitizeState keeps accepted values and drops unknown ones', () => {
   assert.equal(sanitizeState({ node: WORKTREE }).node, WORKTREE)
   assert.equal(sanitizeState({ node: WORKING_COPY }).node, WORKING_COPY)
   assert.equal(sanitizeState({ ref: '@' }).ref, '@')
+})
+
+test('sanitizeState drops the old untracked row keys and keeps current ones', () => {
+  const dropped = sanitizeState({
+    dirs: { 'untracked|tmp': true },
+    collapsed: { 'untracked|tmp': true },
+    folds: { 'untracked|tmp/a.js': true },
+    anchor: { key: 'untracked|tmp/a.js', offset: 10 },
+  })
+  assert.deepEqual(dropped.dirs, {})
+  assert.deepEqual(dropped.collapsed, {})
+  assert.deepEqual(dropped.folds, {})
+  assert.equal(dropped.anchor, null, 'an old anchor returns to the default position')
+
+  // Group rows, directories, and files of the current model all restore.
+  for (const key of ['staged|', 'unstaged|src/client', 'commit|src/a.js']) {
+    assert.deepEqual(
+      sanitizeState({ anchor: { key, offset: 4 } }).anchor,
+      { key, offset: 4 },
+      key,
+    )
+  }
+  assert.equal(sanitizeState({ anchor: { key: 'unknown|a', offset: 1 } }).anchor, null)
 })
 
 test('sanitizeState rejects malformed selections, anchors, and ranges', () => {
@@ -208,12 +234,85 @@ test('buildRows nests staged files and respects collapsed directories', () => {
   assert.equal(rows[0].name, 'src')
   assert.equal(rows[0].expanded, true)
   assert.deepEqual(rows.filter(row => row.kind === 'file').map(row => row.name), ['a.js', 'b.js', 'README.md'])
+  assert.equal(rows[0].key, dirKey('staged', 'src'))
+  assert.equal(rows[1].key, sectionKey('staged', 'src/a.js'))
   assert.equal(rows[0].depth, 0)
   assert.equal(rows[1].depth, 1)
 
   const collapsed = buildRows('staged', entries, { collapsed: { [dirKey('staged', 'src')]: true } })
   assert.deepEqual(collapsed.filter(row => row.kind === 'file').map(row => row.name), ['README.md'])
   assert.equal(collapsed[0].expanded, false)
+})
+
+test('buildRows starts a working-tree group with a group row that counts its files', () => {
+  const entries = [
+    { path: 'src/a.js', status: 'M', added: 3, deleted: 1 },
+    { path: 'b.txt', status: '?', added: 0, deleted: 0 },
+    { path: 'docs/', status: '?', directory: true, added: 0, deleted: 0 },
+  ]
+  const rows = buildRows('unstaged', entries, {}, { header: true })
+  assert.equal(rows[0].kind, 'group')
+  assert.equal(rows[0].key, dirKey('unstaged', ''))
+  assert.equal(rows[0].expanded, true)
+  assert.equal(rows[0].count, 3, 'untracked files and directories count')
+  assert.equal(rows[0].added, 3)
+  assert.equal(rows[0].deleted, 1)
+
+  const closed = buildRows('unstaged', entries, { collapsed: { [dirKey('unstaged', '')]: true } }, { header: true })
+  assert.deepEqual(closed.map(row => row.kind), ['group'])
+  assert.equal(closed[0].expanded, false)
+})
+
+test('buildRows compresses a chain of single-child directories into one row', () => {
+  const entries = [
+    { path: 'src/client/detail/a.js', status: 'M', added: 1, deleted: 0 },
+    { path: 'src/client/detail/b.js', status: 'M', added: 1, deleted: 0 },
+    { path: 'top.txt', status: 'M', added: 1, deleted: 0 },
+  ]
+  const rows = buildRows('commit', entries)
+  assert.deepEqual(rows.map(row => `${row.kind}:${row.name}`), [
+    'dir:src/client/detail', 'file:a.js', 'file:b.js', 'file:top.txt',
+  ])
+  assert.equal(rows[0].path, 'src/client/detail/')
+  assert.equal(rows[0].key, dirKey('commit', 'src/client/detail'))
+  assert.equal(rows[1].depth, 1)
+  assert.equal(rows[3].depth, 0)
+})
+
+test('buildRows expands untracked directories only after their children load', () => {
+  const entries = [
+    { path: 'notes/', status: '?', directory: true, added: 0, deleted: 0 },
+    { path: 'scratch.txt', status: '?', added: 0, deleted: 0 },
+  ]
+  const key = dirKey('unstaged', 'notes/')
+  const closed = buildRows('unstaged', entries)
+  assert.deepEqual(closed.map(row => `${row.kind}:${row.name}`), ['dir:notes', 'file:scratch.txt'])
+  assert.equal(closed[0].expanded, false)
+  assert.equal(closed[0].loadable, true, 'a directory Git reported whole loads on demand')
+
+  const loading = buildRows('unstaged', entries, { dirs: { [key]: true }, loadingDirs: { [key]: true } })
+  assert.deepEqual(loading.map(row => row.kind), ['dir', 'loading', 'file'])
+
+  const opened = buildRows('unstaged', entries, {
+    dirs: { [key]: true },
+    dirChildren: {
+      [key]: [
+        { name: 'inner/', path: 'notes/inner/', type: 'directory' },
+        { name: 'a.txt', path: 'notes/a.txt', type: 'file' },
+      ],
+    },
+  })
+  assert.deepEqual(opened.map(row => `${row.kind}:${row.name}`), ['dir:notes', 'dir:inner', 'file:a.txt', 'file:scratch.txt'])
+  const innerKey = dirKey('unstaged', 'notes/inner/')
+  assert.equal(opened[1].expanded, false)
+  const deeper = buildRows('unstaged', entries, {
+    dirs: { [key]: true, [innerKey]: true },
+    dirChildren: {
+      [key]: [{ name: 'inner/', path: 'notes/inner/', type: 'directory' }],
+      [innerKey]: [{ name: 'b.txt', path: 'notes/inner/b.txt', type: 'file' }],
+    },
+  })
+  assert.deepEqual(deeper.map(row => `${row.kind}:${row.name}`), ['dir:notes', 'dir:inner', 'file:b.txt', 'file:scratch.txt'])
 })
 
 test('buildRows expands untracked directories only after their children load', () => {
@@ -392,33 +491,67 @@ test('worktreeSummary counts tracked lines and every changed entry', () => {
   assert.deepEqual(worktreeSummary(null), { changed: 0, added: 0, deleted: 0 })
 })
 
-test('file groups come from the status or the commit, without empty groups', () => {
-  const status = { groups: { staged: [], unstaged: [{ path: 'a.js' }], untracked: [{ path: 'n.txt' }] } }
-  assert.deepEqual(worktreeGroups(status).map(group => group.id), ['unstaged', 'untracked'])
+test('the working tree has staged and unstaged groups, with untracked files merged', () => {
+  const status = {
+    groups: {
+      staged: [{ path: 's.js', status: 'M', added: 1, deleted: 0 }],
+      unstaged: [{ path: 'u.js', status: 'M', added: 2, deleted: 1 }],
+      untracked: [{ path: 'n.txt', status: '?', added: 0, deleted: 0 }],
+    },
+  }
+  const groups = worktreeGroups(status)
+  assert.deepEqual(groups.map(group => group.id), ['staged', 'unstaged'])
+  assert.deepEqual(groups.map(group => group.header), [true, true])
+  assert.deepEqual(groups[1].entries.map(entry => entry.path), ['u.js', 'n.txt'])
   assert.deepEqual(worktreeGroups(null), [])
+  assert.deepEqual(worktreeGroups({ groups: {} }), [])
+
+  // A working tree with only untracked files still has one group.
+  assert.deepEqual(
+    worktreeGroups({ groups: { untracked: [{ path: 'n.txt', status: '?' }] } }).map(group => group.id),
+    ['unstaged'],
+  )
+
   assert.deepEqual(commitGroups({ files: [{ path: 'x' }] }).map(group => group.id), ['commit'])
+  assert.equal(commitGroups({ files: [{ path: 'x' }] })[0].header, false, 'commits draw no group row')
   assert.deepEqual(commitGroups({ files: [] }), [])
   assert.deepEqual(commitGroups(null), [])
 })
 
-test('streamSections follow the navigation tree order with every folder open', () => {
+test('streamSections follow the fully expanded row order, not the current folds', () => {
   const groups = [
-    { id: 'staged', entries: [{ path: 'src/b.js', status: 'M', added: 1, deleted: 0 }, { path: 'README.md', status: 'M' }] },
-    { id: 'untracked', entries: [{ path: 'notes/', status: '?', directory: true }, { path: 'z.txt', status: '?' }] },
+    { id: 'staged', entries: [{ path: 'src/b.js', status: 'M', added: 1, deleted: 0 }, { path: 'README.md', status: 'M' }], header: true },
+    { id: 'unstaged', entries: [{ path: 'notes/', status: '?', directory: true }, { path: 'z.txt', status: '?' }], header: true },
   ]
   const closed = streamSections(groups, {}, null)
-  assert.deepEqual(closed.map(section => section.key), ['staged|src/b.js', 'staged|README.md', 'untracked|z.txt'])
+  assert.deepEqual(closed.map(section => section.key), ['staged|src/b.js', 'staged|README.md', 'unstaged|z.txt'])
 
-  const opened = streamSections(groups, { [dirKey('untracked', 'notes/')]: [{ name: 'a.txt', path: 'notes/a.txt', type: 'file' }] }, null)
-  assert.deepEqual(opened.map(section => section.key), ['staged|src/b.js', 'staged|README.md', 'untracked|notes/a.txt', 'untracked|z.txt'])
+  const opened = streamSections(groups, { [dirKey('unstaged', 'notes/')]: [{ name: 'a.txt', path: 'notes/a.txt', type: 'file' }] }, null)
+  assert.deepEqual(opened.map(section => section.key), ['staged|src/b.js', 'staged|README.md', 'unstaged|notes/a.txt', 'unstaged|z.txt'])
   assert.deepEqual(opened[0].target, { scope: 'staged', path: 'src/b.js' })
+  assert.deepEqual(opened[2].target, { scope: 'untracked', path: 'notes/a.txt' })
 })
 
-test('diffTarget carries the rename source and the commit', () => {
+test('buildNodeRows lists every group in order, group rows included', () => {
+  const groups = [
+    { id: 'staged', entries: [{ path: 'a.js', status: 'M', added: 1, deleted: 0 }], header: true },
+    { id: 'unstaged', entries: [{ path: 'b.js', status: 'M', added: 1, deleted: 0 }], header: true },
+  ]
+  assert.deepEqual(buildNodeRows(groups).map(row => `${row.kind}:${row.key}`), [
+    'group:staged|', 'file:staged|a.js', 'group:unstaged|', 'file:unstaged|b.js',
+  ])
+})
+
+test('diffTarget takes its scope from the file, not from its group', () => {
   assert.deepEqual(diffTarget('commit', { path: 'new.js', origPath: 'old.js' }, 'c1'), {
     scope: 'commit', path: 'new.js', oldPath: 'old.js', rev: 'c1',
   })
-  assert.deepEqual(diffTarget('unstaged', { path: 'a.js' }, 'ignored'), { scope: 'unstaged', path: 'a.js' })
+  assert.deepEqual(diffTarget('unstaged', { path: 'a.js', status: 'M' }, 'ignored'), { scope: 'unstaged', path: 'a.js' })
+  assert.deepEqual(
+    diffTarget('unstaged', { path: 'n.txt', status: '?' }, null),
+    { scope: 'untracked', path: 'n.txt' },
+    'an untracked file compares its whole content against the index',
+  )
 })
 
 test('defaultFolds folds large sections and everything past the stream budget', () => {
@@ -455,13 +588,13 @@ test('changedLines and estimateHeight treat binaries and unknown counts as small
   assert.equal(estimateHeight({ added: 1e6, deleted: 0 }), 5000 * 22 + 24, 'capped at the rendered line limit')
 })
 
-test('sectionAt finds the section a scroll offset is reading', () => {
+test('rowAt finds the row a scroll offset is reading', () => {
   const tops = [0, 100, 250, 900]
-  assert.equal(sectionAt(tops, 0), 0)
-  assert.equal(sectionAt(tops, 99), 0)
-  assert.equal(sectionAt(tops, 100), 1)
-  assert.equal(sectionAt(tops, 5000), 3)
-  assert.equal(sectionAt([], 10), -1)
+  assert.equal(rowAt(tops, 0), 0)
+  assert.equal(rowAt(tops, 99), 0)
+  assert.equal(rowAt(tops, 100), 1)
+  assert.equal(rowAt(tops, 5000), 3)
+  assert.equal(rowAt([], 10), -1)
 })
 
 test('createQueue limits concurrency and drops cancelled waiting tasks', async () => {
@@ -495,4 +628,121 @@ test('createQueue limits concurrency and drops cancelled waiting tasks', async (
   failing.enqueue(async () => { order.push('next') })
   await new Promise(resolve => { setTimeout(resolve, 0) })
   assert.deepEqual(order, ['next'])
+})
+
+test('summarizeEntries counts untracked entries but only sums measured lines', () => {
+  assert.deepEqual(summarizeEntries([]), { count: 0, added: 0, deleted: 0 })
+  assert.deepEqual(summarizeEntries([
+    { path: 'a', added: 3, deleted: 1 },
+    { path: 'dir/', status: '?', added: 0, deleted: 0, directory: true },
+    { path: 'b', added: null, deleted: null },
+  ]), { count: 3, added: 3, deleted: 1 })
+})
+
+test('row keys, body ids, and the row key predicate agree', () => {
+  assert.equal(isRowKey('staged|'), true)
+  assert.equal(isRowKey('unstaged|src/a.js'), true)
+  assert.equal(isRowKey('commit|src'), true)
+  assert.equal(isRowKey('untracked|a'), false)
+  assert.equal(isRowKey('bad'), false)
+  assert.equal(isRowKey(null), false)
+  assert.equal(rowBodyId('staged|src/a b.js'), rowBodyId('staged|src/a b.js'))
+  assert.notEqual(rowBodyId('staged|a'), rowBodyId('staged|b'))
+  assert.doesNotMatch(rowBodyId('staged|src/a b.js'), /\s/u, 'a DOM id cannot contain spaces')
+})
+
+test('comparisonBase names the comparison each commit kind uses', () => {
+  const sha = 'a'.repeat(40)
+  assert.deepEqual(comparisonBase({ parents: [sha] }, {}), { kind: 'parent', parent: sha })
+  assert.deepEqual(comparisonBase({ parents: [sha, 'b'.repeat(40)] }, {}), { kind: 'merge', parent: sha })
+  assert.deepEqual(comparisonBase({ parents: [] }, {}), { kind: 'root' })
+  assert.deepEqual(comparisonBase(null, null), { kind: 'root' })
+  // A backend with change ids compares against the parents' automatic merge.
+  assert.deepEqual(comparisonBase({ parents: [sha] }, { changeId: true }), { kind: 'autoMerge', parent: sha })
+  assert.deepEqual(comparisonBase({ parents: [] }, { changeId: true }), { kind: 'root' })
+})
+
+test('commitSummary counts the files and lines of a commit toolbar', () => {
+  assert.deepEqual(commitSummary([{ added: 2, deleted: 1 }, { added: 5, deleted: 0 }, { binary: true, added: 0, deleted: 0 }]), {
+    count: 3, added: 7, deleted: 1,
+  })
+  assert.deepEqual(commitSummary(null), { count: 0, added: 0, deleted: 0 })
+})
+
+test('the bulk fold button collapses every file and expansion returns to the defaults', () => {
+  const large = { key: 'commit|large.js', entry: { added: FOLD_LINES + 1, deleted: 0 } }
+  const small = { key: 'commit|small.js', entry: { added: 4, deleted: 0 } }
+  const sections = [small, large]
+  const defaults = defaultFolds(sections)
+  assert.equal(hasUnfoldedFile(sections, defaults, {}), true)
+  assert.equal(isFolded(large.key, defaults, {}), true, 'the large file is folded by default')
+
+  // "Collapse all files" folds the ones that were open, including hidden ones.
+  const collapsed = allFileFolds(sections)
+  assert.deepEqual(collapsed, { 'commit|small.js': true, 'commit|large.js': true })
+  assert.equal(hasUnfoldedFile(sections, defaults, collapsed), false)
+  assert.equal(isFolded(small.key, defaults, collapsed), true)
+
+  // "Expand all files" clears the manual choices, so defaults apply again.
+  assert.equal(hasUnfoldedFile(sections, defaults, {}), true)
+  assert.equal(isFolded(large.key, defaults, {}), true)
+  assert.equal(isFolded(small.key, defaults, {}), false)
+})
+
+test('the folding budget does not depend on which directories are collapsed', () => {
+  const entries = [
+    { path: 'src/a.js', status: 'M', added: 10, deleted: 0 },
+    { path: 'src/b.js', status: 'M', added: 10, deleted: 0 },
+    { path: 'other/c.js', status: 'M', added: 10, deleted: 0 },
+  ]
+  const groups = [{ id: 'commit', entries, header: false }]
+  const defaults = defaultFolds(streamSections(groups, {}, 'rev'))
+  const rowsClosed = buildNodeRows([groups[0]], { collapsed: { [dirKey('commit', 'src')]: true } })
+  assert.deepEqual(rowsClosed.filter(row => row.kind === 'file').map(row => row.name), ['c.js'])
+  assert.deepEqual([...defaults.keys()], [], 'no file folds, so collapsing nothing else changes')
+  const allFolds = allFileFolds(streamSections(groups, {}, 'rev'))
+  assert.deepEqual(allFolds, { 'commit|other/c.js': true, 'commit|src/a.js': true, 'commit|src/b.js': true })
+})
+
+test('untracked files sort next to tracked files in the same directory', () => {
+  const entries = [
+    { path: 'src/a.js', status: 'M', added: 2, deleted: 0 },
+    { path: 'src/b.txt', status: '?', added: 0, deleted: 0 },
+    { path: 'notes/', status: '?', directory: true, added: 0, deleted: 0 },
+  ]
+  const rows = buildRows('unstaged', entries)
+  assert.deepEqual(rows.map(row => `${row.kind}:${row.name}`), ['dir:notes', 'dir:src', 'file:a.js', 'file:b.txt'])
+  assert.equal(rows[1].depth, 0)
+  assert.equal(rows[2].depth, 1)
+  assert.equal(rows[3].depth, 1)
+  assert.equal(rows[3].entry.status, '?')
+  assert.equal(rows[0].loadable, true, 'the untracked directory stays a load-on-demand row')
+})
+
+test('a loadable directory is not compressed into the directory above it', () => {
+  const entries = [{ path: 'src/tmp/', status: '?', directory: true, added: 0, deleted: 0 }]
+  const rows = buildRows('unstaged', entries)
+  assert.deepEqual(rows.map(row => `${row.kind}:${row.name}`), ['dir:src', 'dir:tmp'])
+  assert.equal(rows[1].loadable, true)
+})
+
+test('nextFileRow crosses only unfolded file rows', () => {
+  const rows = [
+    { kind: 'group', key: 'g' },
+    { kind: 'file', key: 'a' },
+    { kind: 'dir', key: 'd' },
+    { kind: 'file', key: 'b' },
+    { kind: 'file', key: 'c' },
+  ]
+  const folded = new Set(['b'])
+  const isFoldedRow = row => folded.has(row.key)
+  assert.equal(nextFileRow(rows, 0, 1, isFoldedRow), 1)
+  assert.equal(nextFileRow(rows, 1, 1, isFoldedRow), 4, 'a folded file is skipped')
+  assert.equal(nextFileRow(rows, 1, -1, isFoldedRow), -1)
+  assert.equal(nextFileRow(rows, 4, -1, isFoldedRow), 1)
+  assert.equal(nextFileRow(rows, rows.length - 1, 1, isFoldedRow), -1)
+})
+
+test('the split fallback width is the documented one', () => {
+  assert.equal(SPLIT_MIN_WIDTH, 640)
 })

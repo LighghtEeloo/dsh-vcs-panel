@@ -28,10 +28,11 @@ const PAGE_SIZE = 300
 const STALE_MS = 30_000
 /** Below this width the panel shows one column at a time. */
 const NARROW_WIDTH = 760
-/** Below this detail width the file navigation moves above the diff stream. */
-const SIDE_NAV_WIDTH = 720
 /** Width of the divider between the timeline and the detail. */
 const RESIZER_WIDTH = 5
+
+/** Row-key prefix of the unstaged group, where untracked directories load. */
+const UNSTAGED_PREFIX = 'unstaged|'
 
 /** Empty status answer. */
 function idleStatus() {
@@ -190,7 +191,7 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     update({ ref: capabilities.defaultRange ?? ranges[0].value })
   }, [capabilities, state.ref, update])
 
-  // Panel width decides the single-column layout and where the file list goes.
+  // Panel width decides the single-column layout.
   useLayoutEffect(() => {
     const element = rootRef.current
     if (element === null) return undefined
@@ -379,21 +380,29 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     }
   }, [api, state.repo, t, locale, update])
 
-  // Re-open persisted untracked folders once their repository's status is known.
+  // Re-open persisted untracked directories once their repository's status is
+  // known. The directories live in the unstaged group now; a path that is no
+  // longer an untracked directory is simply dropped.
   useEffect(() => {
     if (state.repo === null || status.data === null) return
+    const loadable = new Set(
+      (status.data.groups?.untracked ?? [])
+        .filter(entry => entry.directory === true)
+        .map(entry => dirKey('unstaged', entry.path)),
+    )
     for (const key of Object.keys(state.dirs)) {
-      if (!key.startsWith('untracked|')) continue
+      if (!key.startsWith(UNSTAGED_PREFIX)) continue
+      if (!loadable.has(key)) continue
       if (dirChildren[key] !== undefined || loadingDirs[key] === true) continue
       if (attemptedDirsRef.current.has(key)) continue
-      void expandUntracked(key, `${key.slice('untracked|'.length)}/`)
+      void expandUntracked(key, `${key.slice(UNSTAGED_PREFIX.length)}/`)
     }
   }, [state.repo, state.dirs, status.data, dirChildren, loadingDirs, expandUntracked])
 
-  /** Toggle a navigation directory: collapse it, expand it, or fetch its children. */
-  const toggleDir = useCallback(row => {
-    const key = dirKey(row.group, row.path)
-    if (row.group === 'untracked' && row.loadable) {
+  /** Toggle a group or directory row; an untracked directory loads on open. */
+  const toggleRow = useCallback(row => {
+    const key = row.key
+    if (row.loadable === true) {
       if (row.expanded) {
         update({ dirs: omit(stateRef.current.dirs, key) })
         return
@@ -538,8 +547,6 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   }
 
   const missingTool = status.status === 'error' && status.error?.code === 'vcs-missing'
-  const detailWidth = narrow ? width : width - state.sidebarWidth - RESIZER_WIDTH
-  const navInline = detailWidth < SIDE_NAV_WIDTH
   const showTimeline = !narrow || !narrowDetail
   const showDetail = !narrow || narrowDetail
 
@@ -654,15 +661,15 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
                   loadingDirs={loadingDirs}
                   dirs={state.dirs}
                   collapsed={state.collapsed}
-                  onToggleDir={toggleDir}
+                  onToggleDir={toggleRow}
                   folds={state.folds}
                   onToggleFold={toggleFold}
+                  onSetFolds={folds => { update({ folds }) }}
                   split={state.split}
                   wrap={state.wrap}
                   onToggleSplit={split => { update({ split }) }}
                   onToggleWrap={wrap => { update({ wrap }) }}
                   narrow={narrow}
-                  navInline={navInline}
                   onBack={leaveDetail}
                   onLeaveNav={leaveDetail}
                   onSelectCommit={selectCommit}

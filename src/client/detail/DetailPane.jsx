@@ -1,30 +1,28 @@
 /**
  * The detail of one timeline node, the same for the working tree and commits:
- * a toolbar, a header block, the file navigation, and the diff stream.
+ * a toolbar and the change tree.
  *
- * The node decides only the header and where the files come from — the
- * working-tree status, or the commit's changed files from `vcs.commit`. Both
- * become file groups (`detail.js`), and the navigation and the stream read
- * those groups the same way.
+ * The node decides only the toolbar metadata, the header block, and where the
+ * files come from — the working-tree status, or the commit's changed files from
+ * `vcs.commit`. Both become file groups (`detail.js`), and the change tree
+ * turns those groups plus the expansion state into rows.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { WORKTREE } from '../state.js'
 import { errorMessage, formatCount, formatDateTime, shortChangeId, shortSha } from '../format.js'
-import { BACK, movement, unmodified } from '../keys.js'
 import { messageBody } from '../history/commits.js'
 import { worktreeSummary } from '../history/timeline.js'
 import {
-  BackIcon, BranchIcon, Button, CheckIcon, Chevron, CompareSplitIcon, CopyIcon, IconButton,
+  BackIcon, BranchIcon, Button, CheckIcon, CompareSplitIcon, CopyIcon, FoldIcon, IconButton,
   NowrapIcon, RefBadge, Spinner, WrapIcon,
 } from '../ui.jsx'
-import { buildRows } from './tree.js'
-import { commitGroups, defaultFolds, sectionKey, streamSections, worktreeGroups } from './detail.js'
-import { FileNav } from './FileNav.jsx'
-import { DiffStream } from './DiffStream.jsx'
-
-/** An inline file list starts open when it is at most this long. */
-const INLINE_NAV_OPEN = 12
+import { buildNodeRows } from './tree.js'
+import {
+  SPLIT_MIN_WIDTH, allFileFolds, commitGroups, commitSummary, comparisonBase, defaultFolds,
+  hasUnfoldedFile, streamSections, worktreeGroups,
+} from './detail.js'
+import { ChangeTree } from './ChangeTree.jsx'
 
 /** Commit id with a copy action. */
 function ShaButton({ sha, t }) {
@@ -109,7 +107,7 @@ function CommitHeader({ commitState, summary, onSelectCommit, isLoaded, onRetry,
   )
 }
 
-/** The working-tree header block: only states that replace the file list. */
+/** The working-tree header block: only states that replace the change tree. */
 function WorktreeHeader({ status, statusState, statusError, t }) {
   if (status === null) {
     if (statusState === 'error') {
@@ -134,8 +132,8 @@ function WorktreeHeader({ status, statusState, statusError, t }) {
 export function DetailPane({
   api, repo, node, summary, status, statusState, statusError,
   dirChildren, loadingDirs, dirs, collapsed, onToggleDir,
-  folds, onToggleFold, split, wrap, onToggleSplit, onToggleWrap,
-  narrow, navInline, onBack, onLeaveNav, onSelectCommit, isLoaded, onMissing,
+  folds, onToggleFold, onSetFolds, split, wrap, onToggleSplit, onToggleWrap,
+  narrow, onBack, onLeaveNav, onSelectCommit, isLoaded, onMissing,
   revision, cache, initialAnchor, onReading, control, capabilities, t, locale,
 }) {
   const isWorktree = node === WORKTREE && capabilities?.workingCopy !== 'commit'
@@ -143,10 +141,9 @@ export function DetailPane({
   const isWorkingCopy = workingCopyNode !== null && node === workingCopyNode
   const [commitState, setCommitState] = useState({ status: 'idle', commit: null, truncated: false, error: null })
   const [attempt, setAttempt] = useState(0)
-  const [cursor, setCursor] = useState(0)
-  const [readingKey, setReadingKey] = useState(initialAnchor?.key ?? null)
-  const streamControl = useRef(null)
-  const navRef = useRef(null)
+  const [width, setWidth] = useState(0)
+  const rootRef = useRef(null)
+  const treeControl = useRef(null)
 
   useEffect(() => {
     if (isWorktree) return undefined
@@ -162,6 +159,18 @@ export function DetailPane({
     return () => { controller.abort() }
   }, [api, attempt, isWorktree, node, onMissing, repo, revision])
 
+  // The tree's own width decides whether a side-by-side comparison fits.
+  useLayoutEffect(() => {
+    const element = rootRef.current
+    if (element === null) return undefined
+    const measure = () => { setWidth(element.clientWidth) }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => { observer.disconnect() }
+  }, [])
+
   const groups = useMemo(
     () => (isWorktree ? worktreeGroups(status) : commitGroups(commitState.commit)),
     [commitState.commit, isWorktree, status],
@@ -169,121 +178,48 @@ export function DetailPane({
   // The working-copy commit is addressed as `@` so a rewrite between the
   // commit detail and its diff requests cannot leave the diff on a stale id.
   const rev = isWorktree ? null : (isWorkingCopy ? workingCopyNode : (commitState.commit?.sha ?? node))
-  const sections = useMemo(() => streamSections(groups, dirChildren, rev), [dirChildren, groups, rev])
-  const defaults = useMemo(() => defaultFolds(sections), [sections])
+  // Default folding follows the fully expanded order, so collapsing a
+  // directory never changes which other files start folded.
+  const allSections = useMemo(() => streamSections(groups, dirChildren, rev), [dirChildren, groups, rev])
+  const defaults = useMemo(() => defaultFolds(allSections), [allSections])
+  const rows = useMemo(
+    () => buildNodeRows(groups, { collapsed, dirs, dirChildren, loadingDirs }),
+    [collapsed, dirChildren, dirs, groups, loadingDirs],
+  )
+  const someUnfolded = useMemo(
+    () => hasUnfoldedFile(allSections, defaults, folds),
+    [allSections, defaults, folds],
+  )
+  const splitNarrow = split && width > 0 && width < SPLIT_MIN_WIDTH
 
-  const labelOf = useCallback(group => (group.id === 'commit'
-    ? t('nav.files', { count: formatCount(group.entries.length, locale) })
-    : t(`changes.${group.id}`, { count: formatCount(group.entries.length, locale) })), [locale, t])
-
-  const navGroups = useMemo(() => {
-    const expansion = { collapsed, dirs, dirChildren, loadingDirs }
-    let index = 0
-    return groups.map(group => ({
-      id: group.id,
-      label: labelOf(group),
-      rows: buildRows(group.id, group.entries, expansion).map(row => ({ ...row, index: index++ })),
-    }))
-  }, [collapsed, dirChildren, dirs, groups, labelOf, loadingDirs])
-  const navRows = useMemo(() => navGroups.flatMap(group => group.rows), [navGroups])
-  const groupLabels = useMemo(() => {
-    if (!isWorktree) return null
-    return Object.fromEntries(groups.map(group => [group.id, labelOf(group)]))
-  }, [groups, isWorktree, labelOf])
-
-  /** Focus one navigation row once React has painted it; a closed inline list hands focus to the stream. */
-  const focusRow = useCallback(index => {
-    requestAnimationFrame(() => {
-      const row = navRef.current?.querySelector(`[data-row-index="${index}"]`)
-      if (row) row.focus()
-      else streamControl.current?.focus()
-    })
-  }, [])
-
-  // The row of the section being read becomes the keyboard cursor, unless the
-  // keyboard is already working in the navigation.
-  const onStreamReading = useCallback(anchor => {
-    setReadingKey(anchor?.key ?? null)
-    onReading(anchor)
-    if (anchor === null || navRef.current?.contains(document.activeElement)) return
-    const index = navRows.findIndex(row => row.kind === 'file' && sectionKey(row.group, row.path) === anchor.key)
-    if (index >= 0) setCursor(index)
-  }, [navRows, onReading])
-
-  const activate = useCallback(row => {
-    if (typeof row.index === 'number') setCursor(row.index)
-    if (row.kind === 'dir') {
-      onToggleDir(row)
+  /** Collapse or expand one row: file folds, group and directory expansion. */
+  const toggleRow = useCallback((row, nextExpanded) => {
+    if (row.kind === 'file') {
+      onToggleFold(row.key, !nextExpanded)
       return
     }
-    if (row.kind === 'file') streamControl.current?.scrollTo(sectionKey(row.group, row.path))
-  }, [onToggleDir])
+    onToggleDir(row)
+  }, [onToggleDir, onToggleFold])
 
-  const move = useCallback(delta => {
-    if (navRows.length === 0) return
-    let next = Math.max(0, Math.min(cursor, navRows.length - 1)) + delta
-    while (next >= 0 && next < navRows.length && navRows[next].kind === 'loading') next += delta
-    if (next < 0 || next >= navRows.length) return
-    setCursor(next)
-    const row = navRows[next]
-    if (row.kind === 'file') streamControl.current?.scrollTo(sectionKey(row.group, row.path))
-    focusRow(next)
-  }, [cursor, focusRow, navRows])
+  /** Collapse every file of the node, or clear the manual folds. */
+  const bulkFold = useCallback(mode => {
+    onSetFolds(mode === 'collapse' ? allFileFolds(allSections) : {})
+  }, [allSections, onSetFolds])
 
-  /** Move the keyboard into the diff stream; on a folder, open it or step inside. */
-  const forward = useCallback(() => {
-    const at = Math.max(0, Math.min(cursor, navRows.length - 1))
-    const row = navRows[at]
-    if (row === undefined) return
-    if (row.kind === 'dir') {
-      if (!row.expanded) {
-        onToggleDir(row)
-        return
-      }
-      // An open folder's first child is the next visible row below it.
-      const child = navRows[at + 1]
-      if (child !== undefined && child.kind !== 'loading' && child.depth > row.depth) move(1)
-      return
-    }
-    if (row.kind !== 'file') return
-    streamControl.current?.scrollTo(sectionKey(row.group, row.path))
-    streamControl.current?.focus()
-  }, [cursor, move, navRows, onToggleDir])
+  const toggleAll = () => {
+    const mode = someUnfolded ? 'collapse' : 'expand'
+    if (treeControl.current !== null) treeControl.current.bulkFold(mode)
+    else bulkFold(mode)
+  }
 
   useEffect(() => {
     control.current = {
       focusNav() {
-        if (navRows.length === 0) {
-          streamControl.current?.focus()
-          return
-        }
-        focusRow(Math.max(0, Math.min(cursor, navRows.length - 1)))
+        treeControl.current?.focusReading()
       },
     }
     return () => { control.current = null }
-  }, [control, cursor, focusRow, navRows.length])
-
-  const summaryCounts = isWorktree ? worktreeSummary(status) : null
-  const fileCount = sections.length
-  const [inlineOpen, setInlineOpen] = useState(null)
-  const inlineExpanded = inlineOpen ?? fileCount <= INLINE_NAV_OPEN
-
-  const nav = navRows.length === 0 ? null : (
-    <div ref={navRef} className="vcs-nav-host">
-      <FileNav
-        groups={navGroups}
-        cursor={Math.max(0, Math.min(cursor, navRows.length - 1))}
-        readingKey={readingKey}
-        onActivate={activate}
-        onMove={move}
-        onForward={forward}
-        onLeave={onLeaveNav}
-        truncated={isWorktree && status?.truncated === true}
-        t={t}
-        locale={locale}
-      />
-    </div>
-  )
+  }, [control])
 
   const header = isWorktree
     ? <WorktreeHeader status={status} statusState={statusState} statusError={statusError} t={t} />
@@ -302,39 +238,26 @@ export function DetailPane({
   const before = (
     <>
       {header}
-      {navInline && nav !== null ? (
-        <div className="vcs-inline-nav">
-          <button
-            type="button"
-            className="vcs-inline-nav-toggle"
-            aria-expanded={inlineExpanded}
-            onClick={() => { setInlineOpen(!inlineExpanded) }}
-          >
-            <Chevron open={inlineExpanded} />
-            {t('nav.files', { count: formatCount(fileCount, locale) })}
-          </button>
-          {inlineExpanded ? nav : null}
-        </div>
-      ) : null}
+      {isWorktree && status?.truncated === true ? <p className="vcs-note">{t('changes.truncatedMany')}</p> : null}
     </>
   )
 
   const refs = summary?.refs ?? commitState.commit?.refs ?? []
+  const summaryCounts = isWorktree ? worktreeSummary(status) : null
+  const commitCounts = isWorktree || commitState.commit === null ? null : commitSummary(commitState.commit.files)
+  const base = isWorktree ? null : comparisonBase(commitState.commit ?? summary, capabilities)
+  const baseText = base === null
+    ? null
+    : base.kind === 'root'
+      ? t('commit.baseRoot')
+      : base.kind === 'autoMerge'
+        ? t('commit.baseAutoMerge')
+        : base.kind === 'merge'
+          ? t('commit.baseMerge', { sha: shortSha(base.parent) })
+          : t('commit.baseParent', { sha: shortSha(base.parent) })
 
   return (
-    <div
-      className="vcs-detail"
-      onKeyDown={event => {
-        // Left, `h`, or Escape in the stream returns to the file list.
-        if (event.target?.closest?.('[data-zone="stream"]') == null) return
-        if (!unmodified(event)) return
-        if (event.key !== 'Escape' && movement(event) !== BACK) return
-        event.preventDefault()
-        event.stopPropagation()
-        if (navRef.current !== null) control.current?.focusNav()
-        else onLeaveNav()
-      }}
-    >
+    <div className="vcs-detail" ref={rootRef}>
       <div className="vcs-detail-toolbar">
         {narrow ? <IconButton label={t('detail.back')} onClick={onBack}><BackIcon /></IconButton> : null}
         {isWorktree ? (
@@ -361,14 +284,30 @@ export function DetailPane({
             <span className="vcs-detail-refs">
               {refs.map(reference => <RefBadge key={`${reference.kind}:${reference.name}`} reference={reference} />)}
             </span>
+            {commitCounts === null ? null : (
+              <span className="vcs-detail-stat">
+                <span className="vcs-dim">{t('detail.fileCount', { count: formatCount(commitCounts.count, locale) })}</span>
+                {commitCounts.added > 0 ? <span className="vcs-add">+{formatCount(commitCounts.added, locale)}</span> : null}
+                {commitCounts.deleted > 0 ? <span className="vcs-del">−{formatCount(commitCounts.deleted, locale)}</span> : null}
+              </span>
+            )}
+            {baseText === null ? null : <span className="vcs-detail-base vcs-dim">{baseText}</span>}
           </>
         )}
         <span className="vcs-detail-spacer" />
         <span className="vcs-diff-tools">
           <IconButton
+            label={someUnfolded ? t('tree.collapseAll') : t('tree.expandAll')}
+            title={someUnfolded ? t('tree.collapseAllHint') : t('tree.expandAllHint')}
+            onClick={toggleAll}
+            className="vcs-diff-tool"
+          >
+            <FoldIcon open={someUnfolded} />
+          </IconButton>
+          <IconButton
             label={t('diff.splitAria')}
             pressed={split}
-            title={split ? t('diff.unified') : t('diff.split')}
+            title={splitNarrow ? t('diff.splitNarrow') : split ? t('diff.unified') : t('diff.split')}
             onClick={() => { onToggleSplit(!split) }}
             className="vcs-diff-tool vcs-diff-split"
           >
@@ -385,28 +324,27 @@ export function DetailPane({
           </IconButton>
         </span>
       </div>
-      <div className="vcs-detail-body" data-nav={navInline ? 'inline' : 'side'}>
-        {!navInline && nav !== null ? <aside className="vcs-detail-nav">{nav}</aside> : null}
-        <DiffStream
-          api={api}
-          repo={repo}
-          sections={sections}
-          groupLabels={groupLabels}
-          defaults={defaults}
-          folds={folds}
-          onToggleFold={onToggleFold}
-          split={split}
-          wrap={wrap}
-          revision={revision}
-          cache={cache}
-          initialAnchor={initialAnchor}
-          onReading={onStreamReading}
-          control={streamControl}
-          before={before}
-          t={t}
-          locale={locale}
-        />
-      </div>
+      <ChangeTree
+        api={api}
+        repo={repo}
+        rev={rev}
+        rows={rows}
+        defaults={defaults}
+        folds={folds}
+        split={split && !splitNarrow}
+        wrap={wrap}
+        revision={revision}
+        cache={cache}
+        initialAnchor={initialAnchor}
+        onReading={onReading}
+        onToggleRow={toggleRow}
+        onBulkFold={bulkFold}
+        onLeave={onLeaveNav}
+        control={treeControl}
+        before={before}
+        t={t}
+        locale={locale}
+      />
     </div>
   )
 }

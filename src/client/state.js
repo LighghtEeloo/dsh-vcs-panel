@@ -3,9 +3,12 @@
  *
  * The Host owns Git; this module owns only what the panel remembers per
  * Session: repository, the selected timeline node, history range, expansion
- * and fold choices, layout choices, and reading positions. `sessionStorage` is
- * the boundary — losing it drops the panel back to defaults, never to an error.
+ * and fold choices, layout choices, and the reading position. `sessionStorage`
+ * is the boundary — losing it drops the panel back to defaults, never to an
+ * error. Row keys left over from the old file-list model are dropped on read.
  */
+
+import { isRowKey } from './detail/tree.js'
 
 /** Prefix that keeps this plugin's keys apart from any other tab state. */
 const KEY_PREFIX = 'vcs:'
@@ -57,22 +60,22 @@ function textOrNull(value) {
   return typeof value === 'string' && value !== '' ? value : null
 }
 
-/** Copy only boolean-true entries of a plain object. */
+/** Copy only boolean-true entries whose key addresses a current row. */
 function trueKeys(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
   const result = {}
   for (const [key, on] of Object.entries(value)) {
-    if (on === true) result[key] = true
+    if (on === true && isRowKey(key)) result[key] = true
   }
   return result
 }
 
-/** Copy only boolean entries of a plain object. */
+/** Copy only boolean entries whose key addresses a current row. */
 function booleanKeys(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
   const result = {}
   for (const [key, on] of Object.entries(value)) {
-    if (typeof on === 'boolean') result[key] = on
+    if (typeof on === 'boolean' && isRowKey(key)) result[key] = on
   }
   return result
 }
@@ -89,13 +92,14 @@ export function isNode(value) {
 }
 
 /**
- * Normalize a reading position inside the diff stream.
+ * Normalize a reading position in the change tree: any row key plus the offset
+ * below that row's top.
  * @param {unknown} value - persisted value.
  * @returns {{ key: string, offset: number } | null} the anchor or null.
  */
 function anchorOrNull(value) {
   if (value === null || typeof value !== 'object') return null
-  if (typeof value.key !== 'string' || value.key === '') return null
+  if (!isRowKey(value.key)) return null
   if (typeof value.offset !== 'number' || !Number.isFinite(value.offset) || value.offset < 0) return null
   return { key: value.key, offset: value.offset }
 }

@@ -128,6 +128,26 @@ export function Chevron({ open }) {
   )
 }
 
+/** Chevrons pointing inward (collapse all files) or outward (expand all files). */
+export function FoldIcon({ open }) {
+  return (
+    <svg className="vcs-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      {open ? (
+        <>
+          <path d="M4.5 2.5 8 6l3.5-3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M4.5 13.5 8 10l3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M3 8h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+        </>
+      ) : (
+        <>
+          <path d="M4.5 6 8 2.5 11.5 6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M4.5 10 8 13.5 11.5 10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      )}
+    </svg>
+  )
+}
+
 /** Back arrow used by the narrow single-column layout. */
 export function BackIcon() {
   return (

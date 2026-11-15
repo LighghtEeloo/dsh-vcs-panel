@@ -1,10 +1,10 @@
 /**
  * The panel's movement keys.
  *
- * The timeline, the file list, and the diff stream share one vocabulary:
- * up/down or `k`/`j` move within a list, and left/right or `h`/`l` move
- * between panes. Each zone decides what a direction means; command modifiers
- * keep the key's usual meaning.
+ * The timeline and the change tree share one vocabulary: up/down or `k`/`j`
+ * move within a list, left/right or `h`/`l` move between panes or into a row,
+ * and brackets step across hunks. Each zone decides what a direction means;
+ * command modifiers keep the key's usual meaning.
  */
 
 /** Directions a movement key can ask for. */
@@ -25,9 +25,22 @@ const DIRECTIONS = new Map([
   ['l', FORWARD],
 ])
 
-/** Whether the event carries no command modifier. */
+/** Keys that step to the next or previous hunk. */
+const HUNK_NEXT = ']'
+const HUNK_PREV = '['
+
+/**
+ * Whether the event carries no command modifier. AltGr reports itself as Alt
+ * on layouts where the right Alt key composes characters (German, French);
+ * the character it produces is what the user asked for, so it still counts as
+ * unmodified.
+ * @param {{ altKey?: boolean, ctrlKey?: boolean, metaKey?: boolean, getModifierState?: Function }} event - the key event.
+ * @returns {boolean} true when the key has no command modifier.
+ */
 export function unmodified(event) {
-  return !event.altKey && !event.ctrlKey && !event.metaKey
+  if (event.ctrlKey === true || event.metaKey === true) return false
+  if (event.altKey !== true) return true
+  return typeof event.getModifierState === 'function' && event.getModifierState('AltGraph') === true
 }
 
 /**
@@ -37,4 +50,16 @@ export function unmodified(event) {
 export function movement(event) {
   if (!unmodified(event)) return null
   return DIRECTIONS.get(event.key) ?? null
+}
+
+/**
+ * The hunk step a key event asks for: 1 forward, -1 backward, 0 none.
+ * @param {{ key: string, altKey?: boolean, ctrlKey?: boolean, metaKey?: boolean }} event - the key event.
+ * @returns {number} the step.
+ */
+export function hunkStep(event) {
+  if (!unmodified(event)) return 0
+  if (event.key === HUNK_NEXT) return 1
+  if (event.key === HUNK_PREV) return -1
+  return 0
 }

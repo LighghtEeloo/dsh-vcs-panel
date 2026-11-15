@@ -489,15 +489,32 @@ test('selection styles target the classes and attributes the components set', ()
   const read = path => readFileSync(new URL(`../src/client/${path}`, import.meta.url), 'utf8')
   const css = read('styles.css')
   const timeline = read('history/Timeline.jsx')
-  const nav = read('detail/FileNav.jsx')
+  const tree = read('detail/ChangeTree.jsx')
 
   // Timeline rows mark the selected node with aria-current, and so does the style.
   assert.match(timeline, /'aria-current': index === selectedRow \? 'true'/u)
   assert.match(css, /\.vcs-timeline-row\[aria-current='true'\]/u)
 
-  // The navigation marks the file being read with aria-current="location";
+  // The change tree marks the row being read with aria-current="location";
   // the style matches any aria-current value.
-  assert.match(nav, /aria-current=\{reading \? 'location' : undefined\}/u)
-  assert.match(css, /\.vcs-row\[aria-current\]/u)
+  assert.match(tree, /aria-current=\{readingKey === row\.key \? 'location' : undefined\}/u)
+  assert.match(css, /\.vcs-tree-row\[aria-current\]/u)
   assert.doesNotMatch(css, /aria-selected/u)
+})
+
+test('the change tree exposes disclosure semantics and one tab stop', () => {
+  const read = path => readFileSync(new URL(`../src/client/${path}`, import.meta.url), 'utf8')
+  const css = read('styles.css')
+  const tree = read('detail/ChangeTree.jsx')
+
+  // Every expandable row announces its state and controls its content.
+  assert.match(tree, /aria-expanded=\{row\.expanded\}/u)
+  assert.match(tree, /aria-expanded=\{expanded\}/u)
+  assert.match(tree, /aria-controls=\{bodyId\}/u)
+  // Roving tabindex: the whole tree is one Tab stop.
+  assert.match(tree, /tabIndex: row\.key === cursorKey \? 0 : -1/u)
+  // Hunk jumps locate the markers the diff renderer already writes.
+  assert.match(tree, /data-diff-hunk-header/u)
+  // The file head sticks below the group head, so at most two rows hold the top.
+  assert.match(css, /\.vcs-tree\[data-grouped\] \.vcs-tree-file-head-wrap \{\s*top: var\(--vcs-row-height\);/u)
 })

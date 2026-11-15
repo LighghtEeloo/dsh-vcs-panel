@@ -1,6 +1,6 @@
-/* Version control panel shell: header, timeline, detail toolbar, file
-   navigation, and diff stream. Colors and fonts come from DSH theme tokens;
-   only artwork may use literals. */
+/* Version control panel shell: header, timeline, detail toolbar, and the
+   change tree. Colors and fonts come from DSH theme tokens; only artwork may
+   use literals. */
 
 .vcs-root {
   display: flex;
@@ -406,6 +406,15 @@
   overflow: hidden;
 }
 
+.vcs-detail-base {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
 .vcs-detail-spacer {
   flex: 1;
 }
@@ -424,23 +433,6 @@
 
 .vcs-diff-split[aria-pressed='true'] .vcs-icon {
   transform: rotate(90deg);
-}
-
-.vcs-detail-body {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-}
-
-.vcs-detail-nav {
-  flex: none;
-  box-sizing: border-box;
-  width: 240px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  border-right: 0.5px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-layer-1));
 }
 
 /* Node header (inside the stream, scrolls away) --------------------------- */
@@ -539,41 +531,32 @@
   color: var(--dsw-alias-label-secondary);
 }
 
-/* File navigation --------------------------------------------------------- */
+/* Change tree ------------------------------------------------------------- */
 
-.vcs-nav {
-  padding: 4px 6px 12px;
+/* Every row has one height, so the two sticky layers and the scroll
+   alignment agree on where a row starts. */
+.vcs-tree {
+  --vcs-row-height: 28px;
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-anchor: auto;
+  padding-bottom: 24px;
 }
 
-.vcs-group + .vcs-group {
-  margin-top: 4px;
-}
-
-.vcs-group-header {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 6px 3px;
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-layer-1));
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.vcs-row {
+/* Group, directory, and file rows share one control. */
+.vcs-tree-row {
   display: flex;
   align-items: center;
   gap: 7px;
   box-sizing: border-box;
   width: 100%;
-  height: 24px;
+  height: var(--vcs-row-height);
   padding-right: 8px;
   border: none;
-  border-radius: var(--dsw-radius-sm, 6px);
   color: var(--dsw-alias-label-primary);
   background: transparent;
   font: inherit;
@@ -583,42 +566,92 @@
   white-space: nowrap;
 }
 
-.vcs-row:hover {
+.vcs-tree-row:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-/* The file whose section the stream is showing. */
-.vcs-row[aria-current] {
+/* The row the reader is on: a group, a directory, or a file. */
+.vcs-tree-row[aria-current] {
   background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent);
 }
 
-.vcs-row-name {
-  flex: 1;
+.vcs-tree-group-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
+  font-weight: 600;
+}
+
+.vcs-tree-group-name {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  letter-spacing: 0.01em;
+}
+
+.vcs-tree-dir-head {
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* A file head sticks under its group head and only until the comparison
+   below it ends, so at most two rows hold the top of the tree. */
+.vcs-tree-file-head-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.vcs-tree[data-grouped] .vcs-tree-file-head-wrap {
+  top: var(--vcs-row-height);
+}
+
+.vcs-tree-file-name {
+  display: inline-flex;
+  gap: 6px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.vcs-dir-row .vcs-row-name {
-  color: var(--dsw-alias-label-secondary);
+.vcs-tree-file-name strong {
+  font-weight: 600;
 }
 
-.vcs-row-stat {
-  display: inline-flex;
+/* An expanded file head adds its parent path, because the directory row that
+   named it may have scrolled away. */
+.vcs-tree-parent {
+  overflow: hidden;
+  font-weight: 400;
+  text-overflow: ellipsis;
+}
+
+.vcs-tree-dir-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vcs-tree-spacer {
+  flex: 1;
+}
+
+/* Chevron: expands a row toward the right when open. */
+.vcs-chevron {
+  width: 11px;
+  height: 11px;
   flex: none;
-  gap: 6px;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-secondary);
+  transition: transform 0.12s ease;
 }
 
-.vcs-add {
-  color: var(--dsw-alias-file-diff-added-marker, var(--dsw-alias-state-success-primary));
+.vcs-chevron[data-open] {
+  transform: rotate(90deg);
 }
 
-.vcs-del {
-  color: var(--dsw-alias-file-diff-deleted-marker, var(--dsw-alias-state-error-primary));
-}
-
+/* Status letters shared by group, directory, and file rows. */
 .vcs-status {
   flex: none;
   width: 12px;
@@ -651,160 +684,63 @@
   color: var(--dsw-alias-label-secondary);
 }
 
-.vcs-chevron {
-  width: 11px;
-  height: 11px;
+.vcs-add {
+  color: var(--dsw-alias-file-diff-added-marker, var(--dsw-alias-state-success-primary));
+}
+
+.vcs-del {
+  color: var(--dsw-alias-file-diff-deleted-marker, var(--dsw-alias-state-error-primary));
+}
+
+.vcs-tree-stat {
+  display: inline-flex;
   flex: none;
+  gap: 6px;
   color: var(--dsw-alias-label-secondary);
-  transition: transform 0.12s ease;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
-.vcs-chevron[data-open] {
-  transform: rotate(90deg);
-}
-
-.vcs-loading-row {
+.vcs-tree-loading {
   color: var(--dsw-alias-label-secondary);
   cursor: default;
 }
 
-.vcs-loading-row:hover {
+.vcs-tree-loading:hover {
   background: transparent;
 }
 
-/* Narrow details list the files above the stream, at a reading width. */
-.vcs-inline-nav {
-  max-width: 640px;
-  margin: 4px 10px 10px;
-  border: 0.5px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-sm, 6px);
-  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-layer-1));
-}
-
-.vcs-inline-nav-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  box-sizing: border-box;
-  width: 100%;
-  height: 28px;
-  padding: 0 8px;
-  border: none;
-  color: var(--dsw-alias-label-secondary);
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-}
-
-.vcs-inline-nav .vcs-nav {
-  max-height: 280px;
-  overflow-y: auto;
-  padding-top: 0;
-}
-
-/* Diff stream ------------------------------------------------------------- */
-
-.vcs-stream {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overflow-anchor: auto;
-  padding-bottom: 24px;
-}
-
-.vcs-stream-group {
-  margin: 12px 12px 6px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.vcs-section {
-  margin: 0 10px 10px;
-  border: 0.5px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-sm, 6px);
-}
-
-.vcs-section-header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-sm, 6px) var(--dsw-radius-sm, 6px) 0 0;
-  background: var(--dsw-alias-bg-layer-1);
-}
-
-.vcs-section-toggle {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  box-sizing: border-box;
-  width: 100%;
-  height: 32px;
-  padding: 0 10px;
-  border: none;
-  color: var(--dsw-alias-label-primary);
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-/* The path takes only its own width, so the counts sit right after it. */
-.vcs-section-path {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.vcs-section-path strong {
-  font-weight: 600;
-}
-
-.vcs-section-body {
+.vcs-tree-file-body {
   min-width: 0;
 }
 
-.vcs-section-folded {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
+.vcs-tree-folded {
   margin: 0;
-  padding: 8px 12px;
+  padding: 6px 16px 10px;
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
 }
 
-.vcs-section-placeholder {
+.vcs-tree-placeholder {
   display: flex;
   box-sizing: border-box;
 }
 
-/* Inside the stream a comparison takes its natural height; only long lines
+/* Inside the tree a comparison takes its natural height; only long lines
    scroll sideways. */
-.vcs-stream .vcs-diff-root,
-.vcs-stream .vcs-diff-columns {
+.vcs-tree .vcs-diff-root,
+.vcs-tree .vcs-diff-columns {
   flex: none;
 }
 
-.vcs-stream .vcs-diff-body {
+.vcs-tree .vcs-diff-body {
   flex: none;
   padding: 4px 0 8px;
   overflow-x: auto;
   overflow-y: hidden;
 }
 
-.vcs-stream .vcs-diff-column {
+.vcs-tree .vcs-diff-column {
   overflow-y: hidden;
 }
 
