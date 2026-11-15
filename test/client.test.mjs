@@ -584,8 +584,8 @@ test('changedLines and estimateHeight treat binaries and unknown counts as small
   assert.equal(changedLines({}), 0)
   assert.equal(estimateHeight({ binary: true }), 56)
   assert.equal(estimateHeight({ added: 0, deleted: 0 }), 120)
-  assert.ok(estimateHeight({ added: 40, deleted: 0 }) > 40 * 22)
-  assert.equal(estimateHeight({ added: 1e6, deleted: 0 }), 5000 * 22 + 24, 'capped at the rendered line limit')
+  assert.ok(estimateHeight({ added: 40, deleted: 0 }) > 40 * 20)
+  assert.equal(estimateHeight({ added: 1e6, deleted: 0 }), 5000 * 20 + 24, 'capped at the rendered line limit')
 })
 
 test('rowAt finds the row a scroll offset is reading', () => {

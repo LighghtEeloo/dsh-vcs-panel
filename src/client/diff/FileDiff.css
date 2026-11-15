@@ -4,12 +4,16 @@
  * Vendored from DeepSeek Harness
  * `@deepseek-ai/dsh-client-ui-deliverables/src/client/FileDiff.module.css`.
  * CSS modules were replaced with the `vcs-diff-` / `vcs-hl-` prefixes so the
- * stylesheet can be imported as text by the client entry. Theme variables and
- * dimensions follow the original; no literal UI colors are used.
+ * stylesheet can be imported as text by the client entry. Theme variables
+ * follow the original; no literal UI colors are used. The panel reads code
+ * at the host's inline-code size (12px) on 20px rows instead of the original
+ * code-block size (11px) on 22px rows; both follow the user's code font size.
  */
 
 .vcs-diff-root {
   --vcs-diff-empty-fill: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 50%, transparent);
+  /* `detail.js` estimates unloaded comparisons with the 20px default. */
+  --vcs-diff-line-height: calc(20px + var(--dsh-code-font-delta, 0px));
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -56,7 +60,8 @@
   min-height: 0;
   padding: 8px 0 16px;
   overflow: auto;
-  font: var(--dsw-font-markdown-code-block);
+  font: var(--dsw-font-markdown-code, 12px/20px var(--dsw-font-markdown-code-font-family, ui-monospace, monospace));
+  font-variant-ligatures: none;
 }
 
 .vcs-diff-columns {
@@ -86,12 +91,12 @@
 
 .vcs-diff-side-line {
   display: grid;
-  grid-template-columns: 3.5em max-content;
+  grid-template-columns: 5.5ch max-content;
   box-sizing: border-box;
   min-width: 100%;
   width: max-content;
-  min-height: 22px;
-  line-height: 22px;
+  min-height: var(--vcs-diff-line-height);
+  line-height: var(--vcs-diff-line-height);
   white-space: pre;
 }
 
@@ -109,29 +114,32 @@
 .vcs-diff-hunk-header {
   padding: 4px 16px;
   color: var(--dsw-alias-label-tertiary);
+  line-height: var(--vcs-diff-line-height);
   white-space: pre;
 }
 
+/* Line numbers fit four digits; the sign column leaves a clear gap before
+   the code so `+` and `−` never touch the first character. */
 .vcs-diff-line {
   display: grid;
-  grid-template-columns: 3.5em 3.5em 1.2em minmax(0, 1fr);
+  grid-template-columns: 5.5ch 5.5ch 2.5ch minmax(0, 1fr);
   box-sizing: border-box;
-  min-height: 22px;
-  line-height: 22px;
+  min-height: var(--vcs-diff-line-height);
+  line-height: var(--vcs-diff-line-height);
   white-space: pre;
 }
 
 .vcs-diff-split-line {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  min-height: 22px;
-  line-height: 22px;
+  min-height: var(--vcs-diff-line-height);
+  line-height: var(--vcs-diff-line-height);
   white-space: pre;
 }
 
 .vcs-diff-cell {
   display: grid;
-  grid-template-columns: 3.5em minmax(0, 1fr);
+  grid-template-columns: 5.5ch minmax(0, 1fr);
   box-sizing: border-box;
   min-width: 0;
 }
@@ -141,8 +149,9 @@
 }
 
 .vcs-diff-number {
-  padding-right: 8px;
+  padding-right: 1ch;
   color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
   text-align: right;
   user-select: none;
 }

@@ -22,8 +22,9 @@ export const MAX_PARALLEL = 4
 /** Below this tree width the side-by-side layout renders as one column. */
 export const SPLIT_MIN_WIDTH = 640
 
-/** Rendered height of one diff line, in CSS pixels (FileDiff's row height). */
-const LINE_HEIGHT = 22
+/** Rendered height of one diff line at the default code font size, in CSS
+ * pixels (`--vcs-diff-line-height` in FileDiff.css). */
+const LINE_HEIGHT = 20
 
 /** Lines `FileDiff` renders at most per comparison. */
 const MAX_LINES = 5000

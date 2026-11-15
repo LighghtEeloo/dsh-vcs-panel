@@ -263,7 +263,7 @@ export function DetailPane({
         {isWorktree ? (
           <>
             <strong className="vcs-detail-title">{t('timeline.worktree')}</strong>
-            {status?.branch?.name ? <span className="vcs-detail-branch vcs-dim"><BranchIcon />{status.branch.name}</span> : null}
+            {status?.branch?.name ? <span className="vcs-detail-branch vcs-dim"><BranchIcon /><span className="vcs-detail-branch-name">{status.branch.name}</span></span> : null}
             {summaryCounts !== null && summaryCounts.changed > 0 ? (
               <span className="vcs-detail-stat">
                 <span className="vcs-dim">{t('detail.fileCount', { count: formatCount(summaryCounts.changed, locale) })}</span>

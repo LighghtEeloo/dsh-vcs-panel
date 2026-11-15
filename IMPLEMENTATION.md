@@ -392,6 +392,10 @@ type CommitAnswer = {
 
 - 行高统一 28px（`--vcs-row-height`）。分组行 `position: sticky; top: 0`；展开的文件行在分组行下吸顶
   （`top: 28px`），提交树没有分组行时 `top: 0`。目录行不吸顶，所以吸顶最多两层。
+  只有展开的文件行用 `box-shadow` 画下分隔线，不占布局，所以收起与展开不改变行高。
+- 字体：根节点用 `--dsw-font-family`，正文 13px、次要文字 12px、计数与元信息 11px，强调为 500 字重。
+  diff 用 `--dsw-font-markdown-code`（12px）与 `--vcs-diff-line-height`（20px），两者都随
+  `--dsh-code-font-delta` 变化；`detail.js` 的 `estimateHeight` 按默认 20px 估算未加载的 diff。
 - 文件行就是 diff 的文件头：展开时补父目录路径并换文件头底色；行带 `aria-expanded` 与
   `aria-controls`（内容容器有稳定 id），不套 ARIA tree；行间 roving tabindex，整棵树一个 Tab 停靠点。
 - 工具栏按节点给出身份、文件数与增删行数、比较基准；提交节点的基准分普通（对父提交）、merge
@@ -429,6 +433,7 @@ type CommitAnswer = {
 
 - **diff**：内嵌并改编 DSH 的 `FileDiff`（`src/client/diff/FileDiff.jsx`、`FileDiff.css`、`diff-rows`），
   接本地 `VcsHunk`。外部插件不能加载 Harness Client 包，所以组件与高亮以源码形式打进 bundle。
+  与原版的差异：字号用行内代码令牌（12px）而非代码块令牌（11px），行高 20px 而非 22px，行号列按 `ch` 定宽。
 - **图**：`src/client/history/layout.js` 是 `git-graph-plus` 的 `git-graph-builder.ts`（commit c6c2a9a）
   的裁剪移植，后者又是 SourceGit 的移植。lane 分配、第一父延续、侧 lane 与颜色回收保留；
   remote-only/local-only 可达性与分支配色移除，因为日志路由不提供 upstream 关系，面板也没有分支配色配置。

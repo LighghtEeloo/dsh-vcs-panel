@@ -700,8 +700,8 @@ export function ChangeTree({
     const counts = lineCounts(entry)
     return (
       <span className="vcs-tree-stat">
-        {counts.added !== null ? <span className="vcs-add">+{formatCount(counts.added, locale)}</span> : null}
-        {counts.deleted !== null ? <span className="vcs-del">−{formatCount(counts.deleted, locale)}</span> : null}
+        {counts.added > 0 ? <span className="vcs-add">+{formatCount(counts.added, locale)}</span> : null}
+        {counts.deleted > 0 ? <span className="vcs-del">−{formatCount(counts.deleted, locale)}</span> : null}
       </span>
     )
   }
@@ -787,7 +787,7 @@ export function ChangeTree({
         data-file-key={row.key}
         ref={bindSection(row.key)}
       >
-        <div className="vcs-tree-file-head-wrap">
+        <div className="vcs-tree-file-head-wrap" data-open={expanded ? 'true' : undefined}>
           <button
             type="button"
             className="vcs-tree-row vcs-tree-file-head"
@@ -805,7 +805,7 @@ export function ChangeTree({
             <span className="vcs-tree-file-name">
               {row.entry.origPath === undefined
                 ? null
-                : <span className="vcs-dim">{splitPath(row.entry.origPath).base} →&nbsp;</span>}
+                : <span className="vcs-dim">{splitPath(row.entry.origPath).base} →</span>}
               <strong>{row.name}</strong>
               {expanded && parts.dir !== '' ? <span className="vcs-tree-parent vcs-dim">{parts.dir}</span> : null}
             </span>
