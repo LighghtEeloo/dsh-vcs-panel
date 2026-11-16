@@ -17,9 +17,9 @@ Read-only version control inside DeepSeek Harness conversations. Adds a `VCS` ta
 | Keys | Action |
 | --- | --- |
 | `⌘⇧G` / `Ctrl+Shift+G` | Toggle `VCS` view and return to previous view (rebind in **Settings → Shortcuts**) |
-| `↑` `↓` or `j` `k` | Move across commits or files |
+| `↑` `↓` or `j` `k` | Move across commits or rows; inside an expanded file's diff, `j` / `k` jump between hunks |
 | `←` `→` or `h` `l`, `Enter`, `Space` | Enter change tree, fold/expand rows, or return to timeline (`Esc` also returns) |
-| `[` / `]` | Jump to previous / next diff hunk |
+| `[` / `]` | Move to the previous / next row of the change tree |
 
 ## Install
 

@@ -3,8 +3,9 @@
  *
  * The timeline and the change tree share one vocabulary: up/down or `k`/`j`
  * move within a list, left/right or `h`/`l` move between panes or into a row,
- * and brackets step across hunks. Each zone decides what a direction means;
- * command modifiers keep the key's usual meaning.
+ * and inside an expanded file `j`/`k` step across hunks while brackets move
+ * between list rows. Each zone decides what a direction means; command
+ * modifiers keep the key's usual meaning.
  */
 
 /** Directions a movement key can ask for. */
@@ -25,9 +26,13 @@ const DIRECTIONS = new Map([
   ['l', FORWARD],
 ])
 
-/** Keys that step to the next or previous hunk. */
-const HUNK_NEXT = ']'
-const HUNK_PREV = '['
+/** Keys that step to the next or previous hunk inside an expanded file. */
+const HUNK_NEXT = 'j'
+const HUNK_PREV = 'k'
+
+/** Keys that move to the next or previous row of the change tree. */
+const ROW_NEXT = ']'
+const ROW_PREV = '['
 
 /**
  * Whether the event carries no command modifier. AltGr reports itself as Alt
@@ -61,6 +66,18 @@ export function hunkStep(event) {
   if (!unmodified(event)) return 0
   if (event.key === HUNK_NEXT) return 1
   if (event.key === HUNK_PREV) return -1
+  return 0
+}
+
+/**
+ * The row step a key event asks for: 1 forward, -1 backward, 0 none.
+ * @param {{ key: string, altKey?: boolean, ctrlKey?: boolean, metaKey?: boolean }} event - the key event.
+ * @returns {number} the step.
+ */
+export function rowStep(event) {
+  if (!unmodified(event)) return 0
+  if (event.key === ROW_NEXT) return 1
+  if (event.key === ROW_PREV) return -1
   return 0
 }
 

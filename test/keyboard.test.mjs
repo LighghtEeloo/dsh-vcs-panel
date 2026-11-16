@@ -701,8 +701,8 @@ test('keyboard navigation past in-flight diffs that abort mid-body never crashes
     // Focus the tree via keyboard and step down to b.js while a.js scrolls out
     // of the preload margin before its diff finishes loading.
     assert.equal(control.current.focusReading(), true)
-    harness.keyDown(harness.document.activeElement, 'j')
-    harness.keyDown(harness.document.activeElement, 'j')
+    harness.keyDown(harness.document.activeElement, ']')
+    harness.keyDown(harness.document.activeElement, ']')
     harness.intersections[0].trigger(el => el.dataset.fileKey !== 'unstaged|a.js')
     await harness.settle()
 
@@ -712,8 +712,8 @@ test('keyboard navigation past in-flight diffs that abort mid-body never crashes
       'an aborted diff must not be cached as null',
     )
 
-    // Stepping back onto a.js with `k` re-requests it cleanly and renders its hunk.
-    harness.keyDown(harness.document.activeElement, 'k')
+    // Stepping back onto a.js with `[` re-requests it cleanly and renders its hunk.
+    harness.keyDown(harness.document.activeElement, '[')
     harness.intersections[0].trigger(() => true)
     await harness.settle()
 
@@ -808,7 +808,7 @@ test('ChangeTree measures static row containers rather than sticky-displaced hea
 
     // Simulate scrolled layout (`scrollTop = 300`): before the fix, stuck
     // headers reported `offsetTop = 300` / `328` so `report()` misread the
-    // directory row (`top = 28`) instead of `src/a.js` (`top = 56`), and `k`
+    // directory row (`top = 28`) instead of `src/a.js` (`top = 56`), and `[`
     // refused to scroll back to `src/a.js`.
     treeEl.scrollTop = 300
     treeEl.props.onScroll?.({ currentTarget: treeEl })
@@ -816,9 +816,105 @@ test('ChangeTree measures static row containers rather than sticky-displaced hea
     assert.deepEqual(readings.at(-1), { key: 'unstaged|src/a.js', offset: 244 })
 
     control.current.focusReading()
-    harness.keyDown(harness.document.activeElement, 'j')
+    harness.keyDown(harness.document.activeElement, ']')
     treeEl.scrollTop = 300
+    harness.keyDown(harness.document.activeElement, '[')
+    assert.equal(treeEl.scrollTop, 28)
+  } finally {
+    harness.unmount()
+    restore()
+  }
+})
+
+test('ChangeTree steps hunks with j/k inside an expanded file and moves rows with brackets', async () => {
+  const harness = createHarness()
+  const restore = harness.installGlobals()
+  try {
+    const { ChangeTree } = await loadClientModule('src/client/detail/ChangeTree.jsx', harness)
+    const groups = [{
+      id: 'unstaged',
+      header: true,
+      entries: [
+        { path: 'a.js', status: 'M', added: 2, deleted: 0 },
+        { path: 'b.js', status: 'M', added: 1, deleted: 0 },
+      ],
+    }]
+    const rows = buildNodeRows(groups)
+    const budget = budgetFolds(streamSections(groups, {}, null))
+    const control = { current: null }
+    const hunk = line => ({ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: [line] })
+    const api = {
+      async diff(_repo, target) {
+        return {
+          kind: 'text',
+          path: target.path,
+          before: true,
+          after: true,
+          hunks: target.path === 'a.js' ? [hunk('+a1'), hunk('+a2')] : [hunk('+b1')],
+        }
+      },
+    }
+
+    harness.mount(harness.react.createElement(ChangeTree, {
+      api,
+      repo: '/repo',
+      rev: null,
+      rows,
+      budget,
+      folds: { 'unstaged|a.js': false, 'unstaged|b.js': false },
+      split: false,
+      wrap: false,
+      revision: 0,
+      cache: new Map(),
+      initialAnchor: null,
+      onReading() {},
+      onToggleRow() {},
+      onBulkFold() {},
+      onLeave() {},
+      control,
+      t,
+      locale: 'en-US',
+    }))
+    harness.intersections[0].trigger(() => true)
+    await harness.settle()
+
+    const treeEl = harness.document.body.querySelector('.vcs-tree')
+    const groupWrap = treeEl.querySelector('.vcs-tree-group')
+    const [fileASection, fileBSection] = treeEl.querySelectorAll('.vcs-tree-file')
+    const headers = treeEl.querySelectorAll('[data-diff-hunk-header]')
+    assert.equal(headers.length, 3)
+
+    // Lay out one group row, two file rows, and hunks at 100 / 300 inside a.js
+    // and 644 inside b.js.
+    groupWrap.offsetTop = 0
+    groupWrap.offsetParent = treeEl
+    fileASection.offsetTop = 56
+    fileASection.offsetParent = treeEl
+    fileBSection.offsetTop = 600
+    fileBSection.offsetParent = treeEl
+    headers[0].offsetTop = 44
+    headers[1].offsetTop = 244
+    headers[2].offsetTop = 44
+
+    // `]` reaches the first file row; `j` then steps to its hunks, while `k`
+    // walks back. The brackets keep moving rows past the diff level.
+    harness.keyDown(treeEl.querySelector('.vcs-tree-group-head'), ']')
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|a.js')
+    assert.equal(treeEl.scrollTop, 0)
+
+    harness.keyDown(harness.document.activeElement, 'j')
+    assert.equal(treeEl.scrollTop, 44)
+    harness.keyDown(harness.document.activeElement, 'j')
+    assert.equal(treeEl.scrollTop, 244)
     harness.keyDown(harness.document.activeElement, 'k')
+    assert.equal(treeEl.scrollTop, 44)
+
+    harness.keyDown(harness.document.activeElement, ']')
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|b.js')
+    assert.equal(treeEl.scrollTop, 572)
+
+    harness.keyDown(harness.document.activeElement, '[')
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|a.js')
     assert.equal(treeEl.scrollTop, 28)
   } finally {
     harness.unmount()

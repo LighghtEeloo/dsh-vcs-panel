@@ -11,13 +11,15 @@
  *
  * Keyboard and scroll share one cursor: moving the cursor scrolls the row into
  * view, while the wheel, the trackpad or paging move the cursor to the row
- * being read. Neither overrides the other.
+ * being read. Neither overrides the other. Keys follow the same levels as the
+ * layout: arrows and brackets move between rows, while inside an expanded file
+ * `j`/`k` step across its hunks.
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { FileDiff, isValidDiff } from '../diff/FileDiff.jsx'
 import { formatCount, lineCounts, splitPath, statusKey } from '../format.js'
-import { BACK, DOWN, FORWARD, hunkStep, isEditableTarget, movement, UP } from '../keys.js'
+import { BACK, DOWN, FORWARD, hunkStep, isEditableTarget, movement, rowStep, UP } from '../keys.js'
 import { Chevron, Spinner } from '../ui.jsx'
 import {
   MAX_PARALLEL, changedLines, diffTarget, estimateHeight, isFolded, nextFileRow, rowAt,
@@ -486,7 +488,7 @@ export function ChangeTree({
     report()
   }, [alignmentTop, flowTop, focusRowElement, grouped, hunkOffsets, navRows, report, setCursorAt])
 
-  /** `]` / `[`: step to the next or previous hunk, crossing files and skipping folded ones. */
+  /** `j` / `k` inside an expanded file: step to the next or previous hunk, crossing files and skipping folded ones. */
   const jumpHunk = useCallback(direction => {
     const root = scrollRef.current
     if (root === null || navRows.length === 0) return
@@ -528,10 +530,21 @@ export function ChangeTree({
   const onKeyDown = event => {
     if (isEditableTarget(event.target)) return
     if (event.isComposing === true) return
-    const step = hunkStep(event)
-    if (step !== 0) {
+    // An expanded file adds the hunk level below its row: j/k read within the
+    // diff, while brackets keep moving the row cursor at the tree level.
+    const activeRow = navRows[Math.max(0, Math.min(cursorRef.current, navRows.length - 1))]
+    if (activeRow?.kind === 'file' && !isRowFolded(activeRow)) {
+      const hunk = hunkStep(event)
+      if (hunk !== 0) {
+        event.preventDefault()
+        jumpHunk(hunk)
+        return
+      }
+    }
+    const row = rowStep(event)
+    if (row !== 0) {
       event.preventDefault()
-      jumpHunk(step)
+      move(row)
       return
     }
     const direction = movement(event)
