@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { BACK, DOWN, FORWARD, hunkStep, movement, unmodified, UP } from '../src/client/keys.js'
+import { BACK, DOWN, FORWARD, hunkStep, isEditableTarget, movement, unmodified, UP } from '../src/client/keys.js'
 
 test('movement maps arrows and vim keys to one direction', () => {
   assert.equal(movement({ key: 'ArrowUp' }), UP)
@@ -46,4 +46,15 @@ test('AltGr is a character modifier, not a command modifier', () => {
   assert.equal(hunkStep({ ...altGraph, key: ']' }), 1, 'German and French layouts type brackets with AltGr')
   assert.equal(unmodified({ altKey: true, getModifierState: () => false }), false)
   assert.equal(unmodified({ altKey: true }), false, 'an event without modifier state keeps Alt as a command key')
+})
+
+test('isEditableTarget recognizes form controls and editable elements without HTMLElement', () => {
+  assert.equal(isEditableTarget({ tagName: 'INPUT' }), true)
+  assert.equal(isEditableTarget({ tagName: 'textarea' }), true)
+  assert.equal(isEditableTarget({ tagName: 'SELECT' }), true)
+  assert.equal(isEditableTarget({ tagName: 'DIV', isContentEditable: true }), true)
+  assert.equal(isEditableTarget({ tagName: 'BUTTON', isContentEditable: false }), false)
+  assert.equal(isEditableTarget({ tagName: 'svg' }), false)
+  assert.equal(isEditableTarget(null), false)
+  assert.equal(isEditableTarget(undefined), false)
 })

@@ -63,3 +63,15 @@ export function hunkStep(event) {
   if (event.key === HUNK_PREV) return -1
   return 0
 }
+
+/**
+ * Whether a key event originated in a form control or editable element whose
+ * keys belong to text or option input rather than panel navigation.
+ * @param {unknown} target - `event.target`.
+ * @returns {boolean} true when panel keys must leave the event alone.
+ */
+export function isEditableTarget(target) {
+  if (target === null || typeof target !== 'object') return false
+  const tag = typeof target.tagName === 'string' ? target.tagName.toUpperCase() : ''
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable === true
+}

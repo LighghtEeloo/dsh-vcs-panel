@@ -51,6 +51,8 @@ function CommitHeader({ commitState, summary, onSelectCommit, isLoaded, onRetry,
   const body = messageBody(detail?.message)
   const changeId = detail?.changeId ?? summary?.changeId
   const workingCopy = detail?.workingCopy === true
+  const parents = Array.isArray(detail?.parents) ? detail.parents : []
+  const files = Array.isArray(detail?.files) ? detail.files : []
   return (
     <header className="vcs-node-header">
       <div className="vcs-node-heading">
@@ -62,7 +64,7 @@ function CommitHeader({ commitState, summary, onSelectCommit, isLoaded, onRetry,
           <span>{t('commit.error')} {errorMessage(t, commitState.error)}</span>
           <Button onClick={onRetry}>{t('error.retry')}</Button>
         </div>
-      ) : detail === null ? (
+      ) : detail === null || detail === undefined ? (
         <div className="vcs-node-status"><Spinner label={t('commit.loading')} /><span>{t('commit.loading')}</span></div>
       ) : (
         <>
@@ -75,17 +77,18 @@ function CommitHeader({ commitState, summary, onSelectCommit, isLoaded, onRetry,
             )}
             <dt>{t('commit.author')}</dt>
             <dd>{detail.author} <span className="vcs-dim">{formatDateTime(detail.authorTime, locale)}</span></dd>
-            {detail.committer !== detail.author || detail.committerTime !== detail.authorTime ? (
-              <>
-                <dt>{t('commit.committer')}</dt>
-                <dd>{detail.committer} <span className="vcs-dim">{formatDateTime(detail.committerTime, locale)}</span></dd>
-              </>
-            ) : null}
+            {detail.committer !== undefined
+              && (detail.committer !== detail.author || detail.committerTime !== detail.authorTime) ? (
+                <>
+                  <dt>{t('commit.committer')}</dt>
+                  <dd>{detail.committer} <span className="vcs-dim">{formatDateTime(detail.committerTime, locale)}</span></dd>
+                </>
+              ) : null}
             <dt>{t('commit.parents')}</dt>
             <dd>
-              {detail.parents.length === 0
+              {parents.length === 0
                 ? <span className="vcs-dim">{t('commit.root')}</span>
-                : detail.parents.map(parent => (isLoaded(parent) ? (
+                : parents.map(parent => (isLoaded(parent) ? (
                   <button
                     key={parent}
                     type="button"
@@ -99,8 +102,8 @@ function CommitHeader({ commitState, summary, onSelectCommit, isLoaded, onRetry,
             </dd>
           </dl>
           {body === '' ? null : <pre className="vcs-commit-message">{body}</pre>}
-          {detail.files.length === 0 ? <p className="vcs-note">{t('commit.noFiles')}</p> : null}
-          {commitState.truncated ? <p className="vcs-note">{t('commit.filesTruncated', { count: formatCount(detail.files.length, locale) })}</p> : null}
+          {files.length === 0 ? <p className="vcs-note">{t('commit.noFiles')}</p> : null}
+          {commitState.truncated ? <p className="vcs-note">{t('commit.filesTruncated', { count: formatCount(files.length, locale) })}</p> : null}
         </>
       )}
     </header>
@@ -133,7 +136,7 @@ export function DetailPane({
   api, repo, node, summary, status, statusState, statusError,
   dirChildren, loadingDirs, dirs, collapsed, onToggleDir,
   folds, onToggleFold, onSetFolds, split, wrap, onToggleSplit, onToggleWrap,
-  narrow, onBack, onLeaveNav, onSelectCommit, isLoaded, onMissing,
+  narrow, onBack, onLeaveNav, onSelectCommit, isLoaded, onMissing, onSettled,
   revision, cache, initialAnchor, onReading, control, capabilities, t, locale,
 }) {
   const isWorktree = node === WORKTREE && capabilities?.workingCopy !== 'commit'
@@ -150,9 +153,14 @@ export function DetailPane({
     const controller = new AbortController()
     setCommitState(previous => ({ ...previous, status: previous.commit === null ? 'loading' : 'refreshing', error: null }))
     api.commit(repo, node, controller.signal).then(answer => {
+      if (controller.signal.aborted) return
+      if (answer?.commit === null || typeof answer?.commit !== 'object') {
+        setCommitState({ status: 'error', commit: null, truncated: false, error: null })
+        return
+      }
       setCommitState({ status: 'ready', commit: answer.commit, truncated: answer.truncated === true, error: null })
     }).catch(error => {
-      if (error?.name === 'AbortError') return
+      if (error?.name === 'AbortError' || controller.signal.aborted) return
       if (error?.code === 'not-found') onMissing()
       setCommitState({ status: 'error', commit: null, truncated: false, error })
     })
@@ -212,14 +220,22 @@ export function DetailPane({
     else bulkFold(mode)
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     control.current = {
       focusNav() {
-        treeControl.current?.focusReading()
+        return treeControl.current?.focusReading() === true
       },
     }
     return () => { control.current = null }
   }, [control])
+
+  const settled = isWorktree
+    ? status !== null || statusState === 'error'
+    : commitState.commit !== null || commitState.status === 'error'
+  useEffect(() => {
+    if (!settled) return
+    onSettled?.(rows.length > 0)
+  }, [onSettled, rows.length, settled])
 
   const header = isWorktree
     ? <WorktreeHeader status={status} statusState={statusState} statusError={statusError} t={t} />
@@ -245,7 +261,8 @@ export function DetailPane({
   const refs = summary?.refs ?? commitState.commit?.refs ?? []
   const summaryCounts = isWorktree ? worktreeSummary(status) : null
   const commitCounts = isWorktree || commitState.commit === null ? null : commitSummary(commitState.commit.files)
-  const base = isWorktree ? null : comparisonBase(commitState.commit ?? summary, capabilities)
+  const commitSource = commitState.commit ?? summary ?? null
+  const base = isWorktree || commitSource === null ? null : comparisonBase(commitSource, capabilities)
   const baseText = base === null
     ? null
     : base.kind === 'root'

@@ -13,6 +13,7 @@ import {
   loadState, nodePatch, preferredNode, saveState, SIDEBAR_MAX, SIDEBAR_MIN, WORKTREE,
 } from './state.js'
 import { errorMessage, formatCount } from './format.js'
+import { isEditableTarget } from './keys.js'
 import { dirKey } from './detail/tree.js'
 import { buildGraph } from './history/layout.js'
 import { indexCommits } from './history/commits.js'
@@ -92,8 +93,13 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   const pageControllerRef = useRef(null)
   const diffCacheRef = useRef(new Map())
   const detailControl = useRef(null)
+  const pendingEntryFocusRef = useRef(false)
+  const pendingDetailFocusRef = useRef(false)
 
   const narrow = width > 0 && width < NARROW_WIDTH
+  const missingTool = status.status === 'error' && status.error?.code === 'vcs-missing'
+  const showTimeline = !narrow || !narrowDetail
+  const showDetail = !narrow || narrowDetail
   const repositoriesReady = repositories.status === 'ready'
   const repoInfo = repositories.list.find(entry => entry.path === state.repo) ?? null
   const capabilities = status.data?.capabilities ?? repoInfo?.capabilities ?? null
@@ -120,7 +126,8 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   // focus into the panel after the view switches, then acknowledges it.
   useEffect(() => {
     if (viewRequest?.view !== 'vcs') return
-    rootRef.current?.focus()
+    pendingEntryFocusRef.current = true
+    rootRef.current?.focus({ preventScroll: true })
     completeViewRequest?.()
   }, [viewRequest, completeViewRequest])
 
@@ -140,6 +147,7 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
 
   /** Move the selection; the patch also resets per-node reading state. */
   const selectNode = useCallback((node, chosen) => {
+    if (chosen) pendingDetailFocusRef.current = false
     const patch = nodePatch(stateRef.current, node, chosen)
     if ('anchor' in patch) anchorRef.current = null
     if (Object.keys(patch).length > 0) update(patch)
@@ -147,6 +155,7 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
 
   /** Remember one repository's selection and restore the next one's. */
   const switchRepo = useCallback((nextRepo, nextCapabilities) => {
+    pendingDetailFocusRef.current = false
     const current = stateRef.current
     if (current.repo !== null && current.repo !== nextRepo) {
       perRepoRef.current.set(current.repo, {
@@ -210,8 +219,9 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     const controller = new AbortController()
     setRepositories(previous => ({ ...previous, status: previous.list.length === 0 ? 'loading' : 'ready', error: null }))
     api.repositories(controller.signal).then(answer => {
-      const list = Array.isArray(answer.repositories) ? answer.repositories : []
-      setRepositories({ status: 'ready', list, truncated: answer.truncated === true, error: null })
+      if (controller.signal.aborted) return
+      const list = Array.isArray(answer?.repositories) ? answer.repositories : []
+      setRepositories({ status: 'ready', list, truncated: answer?.truncated === true, error: null })
       const previousRepo = stateRef.current.repo
       const nextEntry = pickRepository(list, previousRepo)
       const nextRepo = nextEntry?.path ?? null
@@ -219,7 +229,7 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
       if (nextRepo === null) onWorkingStatusRef.current?.(null, null)
       if (list.length === 0) setRefreshing(false)
     }).catch(error => {
-      if (error?.name === 'AbortError') return
+      if (error?.name === 'AbortError' || controller.signal.aborted) return
       setRepositories({ status: 'error', list: [], truncated: false, error })
       setRefreshing(false)
     })
@@ -240,6 +250,12 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
       error: null,
     }))
     api.status(state.repo, controller.signal).then(data => {
+      if (controller.signal.aborted) return
+      if (data === null || typeof data !== 'object') {
+        setStatus(previous => ({ status: 'error', data: previous.data, error: null }))
+        setRefreshing(false)
+        return
+      }
       setStatus({ status: 'ready', data, error: null })
       setRefreshing(false)
       lastLoaded.current = Date.now()
@@ -247,7 +263,7 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
       const node = preferredNode(stateRef.current, data)
       if (node !== null && node !== stateRef.current.node) selectNode(node, false)
     }).catch(error => {
-      if (error?.name === 'AbortError') return
+      if (error?.name === 'AbortError' || controller.signal.aborted) return
       setStatus(previous => ({ status: 'error', data: previous.data, error }))
       setRefreshing(false)
     })
@@ -267,26 +283,27 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   // First history page, invalidated by refresh.
   useEffect(() => {
     if (!repositoriesReady || state.repo === null) return undefined
-    if (capabilities !== null && !capabilities.ranges.some(range => range.value === state.ref)) return undefined
+    if (capabilities !== null && Array.isArray(capabilities.ranges) && !capabilities.ranges.some(range => range.value === state.ref)) return undefined
     const key = `${state.repo}|${state.ref}|${revision}`
     if (logKeyRef.current === key) return undefined
     const controller = new AbortController()
     let settled = false
     setLog(previous => ({ ...previous, status: 'loading', error: null }))
     api.log(state.repo, { ref: state.ref, skip: 0, limit: PAGE_SIZE }, controller.signal).then(page => {
+      if (controller.signal.aborted) return
       settled = true
       logKeyRef.current = key
-      const commits = Array.isArray(page.commits) ? page.commits : []
+      const commits = Array.isArray(page?.commits) ? page.commits : []
       setLog({
         status: 'ready',
         commits,
         error: null,
-        truncated: page.truncated === true,
-        hasMore: commits.length >= PAGE_SIZE && page.truncated !== true,
+        truncated: page?.truncated === true,
+        hasMore: commits.length >= PAGE_SIZE && page?.truncated !== true,
         loadingMore: false,
       })
     }).catch(error => {
-      if (error?.name === 'AbortError') return
+      if (error?.name === 'AbortError' || controller.signal.aborted) return
       logKeyRef.current = ''
       setLog({ ...idleLog(), status: 'error', error })
     })
@@ -325,6 +342,8 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     setLoadingDirs({})
     setNarrowDetail(false)
     setNotice(null)
+    pendingEntryFocusRef.current = false
+    pendingDetailFocusRef.current = false
     attemptedDirsRef.current.clear()
     perRepoRef.current.clear()
     diffCacheRef.current.clear()
@@ -345,6 +364,36 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   const summary = state.node === null || state.node === WORKTREE
     ? null
     : log.commits[commitIndex.get(state.node)] ?? null
+  const hasTimelineRows = worktreeRow || log.commits.length > 0
+  const timelineSettled = hasTimelineRows || log.status === 'ready' || log.status === 'error'
+
+  // Once the timeline mounts after a view-open request, hand focus from the
+  // root shell to the active timeline row so movement keys work right away.
+  useEffect(() => {
+    if (!pendingEntryFocusRef.current) return
+    if (repositories.status === 'loading') return
+    if (repositories.status === 'ready' && state.repo === null && repositories.list.length > 0) return
+    if (repositories.status !== 'ready' || state.repo === null || missingTool || !showTimeline) {
+      pendingEntryFocusRef.current = false
+      return
+    }
+    if (!timelineSettled) return
+    pendingEntryFocusRef.current = false
+    const active = typeof document === 'undefined' ? null : document.activeElement
+    if (active !== null && active !== rootRef.current && active !== document.body) return
+    const row = selectedRow >= 0 ? selectedRow : 0
+    rootRef.current?.querySelector(`[data-timeline-index="${row}"]`)?.focus({ preventScroll: true })
+  }, [missingTool, repositories.list.length, repositories.status, selectedRow, showTimeline, state.repo, timelineSettled])
+
+  // When the default selection moves onto HEAD after status and history arrive,
+  // keep an untouched timeline focus on the newly selected row.
+  useEffect(() => {
+    if (state.nodeChosen || selectedRow < 0 || !showTimeline) return
+    const active = typeof document === 'undefined' ? null : document.activeElement
+    if (active === null || active?.dataset?.timelineIndex === undefined) return
+    if (active.dataset.timelineIndex === String(selectedRow)) return
+    rootRef.current?.querySelector(`[data-timeline-index="${selectedRow}"]`)?.focus({ preventScroll: true })
+  }, [selectedRow, showTimeline, state.nodeChosen])
 
   /** Refresh repositories, status, history, and every open comparison. */
   const refresh = useCallback(() => {
@@ -447,16 +496,41 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     focusTimelineRow(next)
   }, [focusTimelineRow, log.commits, selectNode, selectedRow, worktreeRow, workingCopyNode])
 
-  /** Move the keyboard into the selected node's files. */
+  /** Move the keyboard into the selected node's files, or wait while they load. */
   const openDetail = useCallback(() => {
+    pendingDetailFocusRef.current = true
     if (narrow) setNarrowDetail(true)
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => { detailControl.current?.focusNav() })
+      requestAnimationFrame(() => {
+        if (!pendingDetailFocusRef.current) return
+        if (detailControl.current?.focusNav() === true) {
+          pendingDetailFocusRef.current = false
+          return
+        }
+        const active = typeof document === 'undefined' ? null : document.activeElement
+        if (narrow && (active === null || active === document.body || !rootRef.current?.contains(active))) {
+          rootRef.current?.focus({ preventScroll: true })
+        }
+      })
     })
   }, [narrow])
 
+  /** Complete a deferred detail focus once the selected node's rows arrive. */
+  const onDetailSettled = useCallback(hasRows => {
+    if (!pendingDetailFocusRef.current) return
+    pendingDetailFocusRef.current = false
+    if (!hasRows) return
+    const active = typeof document === 'undefined' ? null : document.activeElement
+    if (active !== null && active !== document.body && rootRef.current !== null && !rootRef.current.contains(active)) {
+      return
+    }
+    if (isEditableTarget(active)) return
+    detailControl.current?.focusNav()
+  }, [])
+
   /** Return the keyboard to the timeline, closing the narrow detail. */
   const leaveDetail = useCallback(() => {
+    pendingDetailFocusRef.current = false
     if (narrow) setNarrowDetail(false)
     focusTimelineRow(selectedRow < 0 ? 0 : selectedRow)
   }, [focusTimelineRow, narrow, selectedRow])
@@ -494,17 +568,18 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     setLog(previous => ({ ...previous, loadingMore: true }))
     try {
       const page = await api.log(repo, { ref, skip: log.commits.length, limit: PAGE_SIZE }, controller.signal)
+      if (controller.signal.aborted) return
       if (stateRef.current.repo !== repo || stateRef.current.ref !== ref) return
-      const commits = Array.isArray(page.commits) ? page.commits : []
+      const commits = Array.isArray(page?.commits) ? page.commits : []
       setLog(previous => ({
         ...previous,
         loadingMore: false,
         commits: [...previous.commits, ...commits],
-        truncated: page.truncated === true,
-        hasMore: commits.length >= PAGE_SIZE && page.truncated !== true,
+        truncated: page?.truncated === true,
+        hasMore: commits.length >= PAGE_SIZE && page?.truncated !== true,
       }))
     } catch (error) {
-      if (error?.name === 'AbortError') return
+      if (error?.name === 'AbortError' || controller.signal.aborted) return
       if (stateRef.current.repo !== repo || stateRef.current.ref !== ref) return
       setLog(previous => ({ ...previous, loadingMore: false }))
       setNotice(errorMessage(t, error))
@@ -516,8 +591,7 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   /** Escape closes the narrow detail from anywhere inside it. */
   const onKeyDown = event => {
     if (event.key !== 'Escape' || !narrow || !narrowDetail) return
-    const target = event.target
-    if (target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.isContentEditable)) return
+    if (isEditableTarget(event.target)) return
     event.preventDefault()
     leaveDetail()
   }
@@ -525,7 +599,11 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   /** Drag the sidebar divider. */
   const startResize = event => {
     event.preventDefault()
-    event.currentTarget.setPointerCapture(event.pointerId)
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+    } catch {
+      // A synthetic or already-released pointer simply skips capture.
+    }
     dragRef.current = { x: event.clientX, width: state.sidebarWidth }
   }
   const resize = event => {
@@ -546,10 +624,6 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
       </div>
     )
   }
-
-  const missingTool = status.status === 'error' && status.error?.code === 'vcs-missing'
-  const showTimeline = !narrow || !narrowDetail
-  const showDetail = !narrow || narrowDetail
 
   return (
     <div
@@ -676,6 +750,7 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
                   onSelectCommit={selectCommit}
                   isLoaded={sha => commitIndex.has(sha)}
                   onMissing={onMissing}
+                  onSettled={onDetailSettled}
                   revision={revision}
                   cache={diffCacheRef.current}
                   initialAnchor={anchorRef.current}

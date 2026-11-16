@@ -43,7 +43,7 @@ export function splitPath(path) {
  * @returns {string} the short id.
  */
 export function shortSha(sha) {
-  return sha.slice(0, 7)
+  return typeof sha === 'string' ? sha.slice(0, 7) : ''
 }
 
 /**
@@ -52,7 +52,7 @@ export function shortSha(sha) {
  * @returns {string} the prefix.
  */
 export function shortChangeId(changeId) {
-  return changeId.slice(0, 8)
+  return typeof changeId === 'string' ? changeId.slice(0, 8) : ''
 }
 
 /**
@@ -80,7 +80,11 @@ export function formatDateTime(ms, locale) {
   try {
     return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(ms))
   } catch {
-    return new Date(ms).toISOString()
+    try {
+      return new Date(ms).toISOString()
+    } catch {
+      return ''
+    }
   }
 }
 

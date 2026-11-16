@@ -285,7 +285,7 @@ export function apply(ctx) {
   function LocalizedVcsView(props) {
     const locale = useActiveLocale()
     return (
-      <ViewErrorBoundary t={t}>
+      <ViewErrorBoundary key={props.sessionId} t={t}>
         <VcsView
           {...props}
           locale={locale}

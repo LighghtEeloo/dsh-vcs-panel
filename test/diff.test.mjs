@@ -49,6 +49,7 @@ const {
   splitRows,
   renderedHunks,
   isOneSided,
+  isValidDiff,
   MAX_RENDERED_LINES,
 } = diffModule
 
@@ -314,6 +315,16 @@ test('FileDiff error state renders a plain retry button and calls retry', () => 
   assert.equal(textOf(tree).includes('diff.error'), true)
   button.props.onClick()
   assert.equal(retried, 1)
+
+  // Null or malformed payloads degrade to the retryable error state instead of throwing.
+  assert.equal(isValidDiff(null), false)
+  assert.equal(isValidDiff({ kind: 'text' }), false)
+  assert.equal(isValidDiff({ kind: 'binary', path: 'a.bin' }), true)
+  assert.equal(isValidDiff(textDiff()), true)
+  for (const invalid of [null, 42, {}, { kind: 'text' }, { kind: 'unknown' }]) {
+    const fallback = renderFileDiff({ state: invalid, split: false, wrap: false, retry() { retried += 1 }, t: tFor([]) })
+    assert.equal(textOf(fallback).includes('diff.error'), true)
+  }
 })
 
 test('FileDiff renders binary and oversized notices through t', () => {

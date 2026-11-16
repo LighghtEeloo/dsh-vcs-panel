@@ -45,6 +45,17 @@ export function queryString(params) {
  * @param {string} [options.base] - URL prefix; empty means relative to the app.
  * @returns {object} the route methods.
  */
+/** Whether an async failure came from an AbortSignal cancellation. */
+function isAborted(error, signal) {
+  return error?.name === 'AbortError' || signal?.aborted === true
+}
+
+/** Normalize a cancelled request to an `AbortError`. */
+function toAbortError(error) {
+  if (error?.name === 'AbortError') return error
+  return new DOMException('The request was aborted.', 'AbortError')
+}
+
 export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' } = {}) {
   /**
    * One JSON request.
@@ -63,20 +74,27 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
         signal,
       })
     } catch (error) {
-      if (error?.name === 'AbortError') throw error
+      if (isAborted(error, signal)) throw toAbortError(error)
       throw new ApiError('network', 'The version control panel could not reach the Host.', 0)
     }
     let body = null
+    let bodyFailed = false
     try {
       body = await response.json()
-    } catch {
+    } catch (error) {
+      if (isAborted(error, signal)) throw toAbortError(error)
       // A body-less failure still carries its HTTP status.
+      bodyFailed = true
     }
+    if (signal?.aborted === true) throw toAbortError(signal.reason)
     if (!response.ok) {
       const error = body?.error
       const code = typeof error?.code === 'string' ? error.code : 'internal'
       const message = typeof error?.message === 'string' ? error.message : `Request failed (${response.status}).`
       throw new ApiError(code, message, response.status)
+    }
+    if (bodyFailed || body === null || typeof body !== 'object') {
+      throw new ApiError('internal', 'The version control response could not be read.', response.status)
     }
     return body
   }

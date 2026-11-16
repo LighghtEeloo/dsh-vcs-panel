@@ -1467,6 +1467,65 @@ test('Jujutsu status snapshots a new working-copy change on refresh', { skip: !H
   }
 })
 
+test('Jujutsu shared snapshot survives one caller aborting and cancels when all callers abort', { skip: !HAS_JJ }, async () => {
+  let snapshots = 0
+  let snapshotAborted = 0
+  let releaseSnapshot = null
+  const delayedHandlers = createHandlers(createHost({
+    subprocess: {
+      resolveExecutable: fakeSubprocess.resolveExecutable,
+      spawn(spec) {
+        const isSnapshot = spec.argv.includes('commit_id') && !spec.argv.includes('--ignore-working-copy')
+        const handle = fakeSubprocess.spawn(spec)
+        if (!isSnapshot) return handle
+        snapshots += 1
+        spec.signal?.addEventListener('abort', () => { snapshotAborted += 1 }, { once: true })
+        const gate = new Promise(resolve => { releaseSnapshot = resolve })
+        return {
+          ...handle,
+          done: Promise.all([handle.done, gate]).then(([outcome]) => outcome),
+        }
+      },
+    },
+  }))
+
+  const firstAbort = new AbortController()
+  const secondAbort = new AbortController()
+  const firstPromise = delayedHandlers.status(new Request(
+    `http://127.0.0.1${route('/api/vcs.status', { sessionId: 's-jj', repo: jjPath })}`,
+    { signal: firstAbort.signal },
+  ))
+  while (releaseSnapshot === null) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const secondPromise = delayedHandlers.log(new Request(
+    `http://127.0.0.1${route('/api/vcs.log', { sessionId: 's-jj', repo: jjPath })}`,
+    { signal: secondAbort.signal },
+  ))
+  await new Promise(resolve => { setTimeout(resolve, 15) })
+
+  firstAbort.abort()
+  await assert.rejects(firstPromise, error => error?.name === 'AbortError')
+  assert.equal(snapshotAborted, 0, 'the shared snapshot continues for the remaining caller')
+
+  releaseSnapshot()
+  const secondResponse = await secondPromise
+  assert.equal(secondResponse.status, 200)
+  const secondBody = await secondResponse.json()
+  assert.equal(Array.isArray(secondBody.commits), true)
+  assert.equal(snapshots, 1)
+
+  releaseSnapshot = null
+  const loneAbort = new AbortController()
+  const lonePromise = delayedHandlers.status(new Request(
+    `http://127.0.0.1${route('/api/vcs.status', { sessionId: 's-jj', repo: jjPath })}`,
+    { signal: loneAbort.signal },
+  ))
+  while (releaseSnapshot === null) await new Promise(resolve => { setTimeout(resolve, 5) })
+  loneAbort.abort()
+  releaseSnapshot()
+  await assert.rejects(lonePromise, error => error?.name === 'AbortError')
+  assert.equal(snapshotAborted, 1)
+})
+
 test('apply registers all six GET routes inside the fence and honors enabled: false', async () => {
   const routes = []
   const ctx = {

@@ -291,6 +291,17 @@ function TextDiff({ diff, split, wrap, t, locale }) {
 }
 
 /**
+ * Whether a value is a renderable `VcsFileDiff` payload.
+ * @param {unknown} value - candidate comparison state.
+ * @returns {boolean} true for a binary, oversized, or hunk-bearing text diff.
+ */
+export function isValidDiff(value) {
+  if (value === null || typeof value !== 'object') return false
+  if (value.kind === 'binary' || value.kind === 'oversized') return true
+  return value.kind === 'text' && Array.isArray(value.hunks)
+}
+
+/**
  * Render a file comparison with the same states, numbering, and layout choices
  * as DSH's built-in `FileDiff`.
  * Addition-only and deletion-only comparisons use one column without changing
@@ -304,7 +315,7 @@ export function FileDiff({ state, split, wrap, retry, t, locale }) {
     content = h('p', { className: 'vcs-diff-status', role: 'status' }, t('diff.loading'))
   } else if (state === 'missing') {
     content = h('p', { className: 'vcs-diff-status' }, t('diff.missing'))
-  } else if (state === 'error') {
+  } else if (state === 'error' || !isValidDiff(state)) {
     content = h('div', { className: 'vcs-diff-status' },
       h('span', null, t('diff.error')),
       h('button', {

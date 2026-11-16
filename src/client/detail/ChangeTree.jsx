@@ -15,9 +15,9 @@
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { FileDiff } from '../diff/FileDiff.jsx'
+import { FileDiff, isValidDiff } from '../diff/FileDiff.jsx'
 import { formatCount, lineCounts, splitPath, statusKey } from '../format.js'
-import { BACK, DOWN, FORWARD, hunkStep, movement, UP } from '../keys.js'
+import { BACK, DOWN, FORWARD, hunkStep, isEditableTarget, movement, UP } from '../keys.js'
 import { Chevron, Spinner } from '../ui.jsx'
 import {
   MAX_PARALLEL, changedLines, diffTarget, estimateHeight, isFolded, nextFileRow, rowAt,
@@ -84,23 +84,28 @@ function ancestorKeys(key) {
  * do not jump when the answer arrives.
  */
 const FileBody = memo(function FileBody({
-  fileKey, entry, target, near, folded, foldReason, request, revision,
+  fileKey, group, entry, rev, near, folded, foldReason, request, revision,
   split, wrap, onLoaded, t, locale,
 }) {
   const [answer, setAnswer] = useState(null)
   const [attempt, setAttempt] = useState(0)
+  const target = useMemo(() => diffTarget(group, entry, rev), [group, entry, rev])
+  const currentTargetKey = targetKey(target)
 
   useEffect(() => {
-    if (folded || target === null || !near) return undefined
-    if (answer !== null && answer.revision === revision && answer.attempt === attempt) return undefined
+    if (folded || !near) return undefined
+    if (answer !== null
+      && answer.revision === revision
+      && answer.attempt === attempt
+      && answer.targetKey === currentTargetKey) return undefined
     // The previous answer stays on screen until the new one arrives.
     return request(target, revision, result => {
-      setAnswer({ ...result, revision, attempt })
+      setAnswer({ ...result, revision, attempt, targetKey: currentTargetKey })
       onLoaded(fileKey, result)
     })
-    // `answer` is read only to skip work that already finished.
+    // `answer` and `target` are keyed by `revision`, `attempt`, and `currentTargetKey`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folded, near, revision, attempt, request, onLoaded, fileKey, targetKey(target ?? {})])
+  }, [folded, near, revision, attempt, request, onLoaded, fileKey, currentTargetKey])
 
   if (folded) {
     if (foldReason === undefined) return null
@@ -171,15 +176,22 @@ export function ChangeTree({
     setCursor(index)
   }, [])
 
-  /** The top offset of one element inside the scrolling tree. */
+  /** The top offset of one element inside the scrolling tree, ignoring sticky displacement. */
   const flowTop = useCallback(element => {
     const root = scrollRef.current
     if (element === null || element === undefined || root === null) return 0
-    let top = 0
+    // Group and file headers stick while scrolling, shifting their own
+    // `offsetTop`; their static wrapper holds the layout position in the tree.
     let node = element
-    while (node !== null && node !== root) {
-      top += node.offsetTop
-      node = node.offsetParent
+    if (node.classList?.contains('vcs-tree-file-head')) {
+      node = node.parentElement?.parentElement ?? node
+    } else if (node.classList?.contains('vcs-tree-group-head')) {
+      node = node.parentElement ?? node
+    }
+    let top = 0
+    while (node !== null && node !== undefined && node !== root) {
+      top += node.offsetTop ?? 0
+      node = node.offsetParent ?? null
     }
     return top
   }, [])
@@ -254,16 +266,24 @@ export function ChangeTree({
     }
     const controller = new AbortController()
     let settled = false
-    const cancel = queue.enqueue(() => api.diff(repo, target, controller.signal).then(diff => {
-      settled = true
-      const result = { status: 'ready', diff }
-      remember(cache, key, result)
-      onAnswer(result)
-    }, error => {
-      if (error?.name === 'AbortError') return
-      settled = true
-      onAnswer({ status: error?.code === 'not-found' ? 'missing' : 'error', diff: null })
-    }))
+    const cancel = queue.enqueue(() => {
+      if (controller.signal.aborted) return Promise.resolve()
+      return api.diff(repo, target, controller.signal).then(diff => {
+        if (controller.signal.aborted) return
+        settled = true
+        if (!isValidDiff(diff)) {
+          onAnswer({ status: 'error', diff: null })
+          return
+        }
+        const result = { status: 'ready', diff }
+        remember(cache, key, result)
+        onAnswer(result)
+      }, error => {
+        if (error?.name === 'AbortError' || controller.signal.aborted) return
+        settled = true
+        onAnswer({ status: error?.code === 'not-found' ? 'missing' : 'error', diff: null })
+      })
+    })
     return () => {
       if (settled) return
       cancel()
@@ -500,10 +520,7 @@ export function ChangeTree({
   }, [focusRowElement, flowTop, grouped, hunkOffsets, isRowFolded, navRows, report, scrollToFileHunk, setCursorAt])
 
   const onKeyDown = event => {
-    const target = event.target
-    if (target instanceof HTMLElement
-      && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'
-        || target.tagName === 'SELECT' || target.isContentEditable)) return
+    if (isEditableTarget(event.target)) return
     if (event.isComposing === true) return
     const step = hunkStep(event)
     if (step !== 0) {
@@ -561,7 +578,12 @@ export function ChangeTree({
       const key = readingRef.current
       if (key === null) return
       const index = navIndexByKey.get(key)
-      if (index !== undefined && index !== cursorRef.current) setCursorAt(index)
+      if (index === undefined || index === cursorRef.current) return
+      setCursorAt(index)
+      const active = typeof document === 'undefined' ? null : document.activeElement
+      if (active !== null && scrollRef.current?.contains(active) && active.classList?.contains('vcs-tree-row')) {
+        focusRowElement(key)
+      }
     })
   }
 
@@ -636,9 +658,14 @@ export function ChangeTree({
     const root = scrollRef.current
     const row = navRows[Math.max(0, Math.min(cursorRef.current, navRows.length - 1))]
     const element = row === undefined ? undefined : rowEls.current.get(row.key)
-    pendingPreserve.current = root === null || element === undefined
-      ? null
-      : { key: row.key, screenTop: flowTop(element) - root.scrollTop }
+    if (root === null || element === undefined) {
+      pendingPreserve.current = null
+    } else {
+      const screenTop = typeof element.getBoundingClientRect === 'function' && typeof root.getBoundingClientRect === 'function'
+        ? element.getBoundingClientRect().top - root.getBoundingClientRect().top
+        : flowTop(element) - root.scrollTop
+      pendingPreserve.current = { key: row.key, screenTop }
+    }
     callback()
   }, [flowTop, navRows])
 
@@ -665,13 +692,14 @@ export function ChangeTree({
   })
 
   /** Expose the tree's focus and bulk-fold hooks to the detail pane. */
-  useEffect(() => {
+  useLayoutEffect(() => {
     control.current = {
       focusReading() {
-        if (navRows.length === 0) return
+        if (navRows.length === 0) return false
         const index = indexOfKey(readingRef.current)
         const target = index >= 0 ? index : Math.max(0, Math.min(cursorRef.current, navRows.length - 1))
         focusRowAt(target)
+        return true
       },
       bulkFold(mode) {
         preserve(() => { onBulkFold(mode) })
@@ -816,8 +844,9 @@ export function ChangeTree({
         <div className="vcs-tree-file-body" id={bodyId} ref={bindBody(row.key)}>
           <FileBody
             fileKey={row.key}
+            group={row.group}
             entry={row.entry}
-            target={diffTarget(row.group, row.entry, rev)}
+            rev={rev}
             near={everyNear || near.get(row.key) === true}
             folded={!expanded}
             foldReason={foldReason}

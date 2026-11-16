@@ -6,7 +6,7 @@ import {
   SIDEBAR_MIN, SIDEBAR_MAX, WORKING_COPY, WORKTREE,
 } from '../src/client/state.js'
 import {
-  errorMessage, formatCommitTime, formatCount, lineCounts, shortChangeId, shortSha, splitPath, statusKey,
+  errorMessage, formatCommitTime, formatCount, formatDateTime, lineCounts, shortChangeId, shortSha, splitPath, statusKey,
 } from '../src/client/format.js'
 import {
   buildNodeRows, buildRows, dirKey, isRowKey, rowBodyId, sectionKey, summarizeEntries,
@@ -212,6 +212,9 @@ test('errorMessage localizes known codes and falls back to the Host message', ()
 test('shortChangeId keeps change ids readable in a row', () => {
   assert.equal(shortChangeId('abcdefghijkl'), 'abcdefgh')
   assert.equal(shortChangeId('abc'), 'abc')
+  assert.equal(shortChangeId(undefined), '')
+  assert.equal(shortSha(undefined), '')
+  assert.equal(formatDateTime(1e20, 'en-US'), '')
 })
 
 test('formatCommitTime is relative within a week and absolute beyond', () => {
@@ -405,6 +408,101 @@ test('createApi maps failure bodies and transport failures', async () => {
   })
   await assert.rejects(offline.repositories(), error => {
     assert.equal(error.code, 'network')
+    return true
+  })
+
+  // A body-less non-2xx failure still carries its HTTP status.
+  const gateway = createApi('s', {
+    fetchImpl: async () => ({
+      ok: false,
+      status: 502,
+      async json() { throw new SyntaxError('bad gateway html') },
+    }),
+  })
+  await assert.rejects(gateway.status('/r'), error => {
+    assert.ok(error instanceof ApiError)
+    assert.equal(error.code, 'internal')
+    assert.equal(error.status, 502)
+    return true
+  })
+})
+
+test('createApi preserves AbortError when cancelled during response body decoding and rejects malformed 200 bodies', async () => {
+  const midBodyController = new AbortController()
+  const abortedMidBody = createApi('s', {
+    fetchImpl: async (_url, options) => ({
+      ok: true,
+      status: 200,
+      async json() {
+        midBodyController.abort()
+        assert.equal(options.signal.aborted, true)
+        throw new DOMException('The request was aborted.', 'AbortError')
+      },
+    }),
+  })
+  await assert.rejects(
+    abortedMidBody.diff('/r', { scope: 'unstaged', path: 'a.js' }, midBodyController.signal),
+    error => {
+      assert.equal(error.name, 'AbortError')
+      return true
+    },
+  )
+
+  const streamAbortController = new AbortController()
+  const abortedStream = createApi('s', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        streamAbortController.abort()
+        throw new TypeError('BodyStreamBuffer was aborted')
+      },
+    }),
+  })
+  await assert.rejects(
+    abortedStream.diff('/r', { scope: 'unstaged', path: 'a.js' }, streamAbortController.signal),
+    error => {
+      assert.equal(error.name, 'AbortError')
+      return true
+    },
+  )
+
+  const fetchAbortController = new AbortController()
+  fetchAbortController.abort('cancelled')
+  const abortedFetch = createApi('s', {
+    fetchImpl: async () => { throw new TypeError('Failed to fetch') },
+  })
+  await assert.rejects(
+    abortedFetch.repositories(fetchAbortController.signal),
+    error => {
+      assert.equal(error.name, 'AbortError')
+      return true
+    },
+  )
+
+  const truncated200 = createApi('s', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() { throw new SyntaxError('Unexpected end of JSON input') },
+    }),
+  })
+  await assert.rejects(truncated200.diff('/r', { scope: 'unstaged', path: 'a.js' }), error => {
+    assert.ok(error instanceof ApiError)
+    assert.equal(error.code, 'internal')
+    return true
+  })
+
+  const null200 = createApi('s', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() { return null },
+    }),
+  })
+  await assert.rejects(null200.diff('/r', { scope: 'unstaged', path: 'a.js' }), error => {
+    assert.ok(error instanceof ApiError)
+    assert.equal(error.code, 'internal')
     return true
   })
 })
