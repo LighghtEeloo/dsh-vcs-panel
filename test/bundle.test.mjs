@@ -131,13 +131,18 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
       assert.equal(typeof entries['view.label'], 'string')
       assert.equal(typeof entries['diff.loading'], 'string')
       assert.equal(typeof entries['turn.openHint'], 'string')
+      assert.equal(typeof entries['turn.openSummary'], 'string')
+      assert.equal(typeof entries['turn.fileChanged'], 'string')
+      assert.equal(typeof entries['turn.filesChanged'], 'string')
     }
 
     assert.equal(styles.length, 1)
     assert.match(styles[0].textContent, /\.vcs-root/)
     assert.match(styles[0].textContent, /\.vcs-diff-body/)
     assert.match(styles[0].textContent, /\.vcs-graph/)
-    assert.match(styles[0].textContent, /\.vcs-turn-icon/)
+    assert.match(styles[0].textContent, /\.vcs-turn-banner/)
+    assert.match(styles[0].textContent, /\.vcs-turn-stat/)
+    assert.match(styles[0].textContent, /\.vcs-turn-popout/)
 
     // The fold that publishes "this Turn changed files" has no view target.
     assert.equal(definitions.length, 1)
@@ -160,6 +165,7 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     const tree = view.component({ sessionId: 'session-1', t: key => `vcs:${key}` })
     const viewTree = tree.props?.children ?? tree.children?.[0]
     assert.equal(viewTree.props.locale, 'zh')
+    assert.equal(typeof viewTree.props.onWorkingStatus, 'function')
 
     // The Turn-tail entry reuses the Conversation shell's store handle, which
     // is what exposes `setView` to a non-header entry.
@@ -171,38 +177,86 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     assert.equal(tail.options.store, store)
     assert.equal(typeof tail.component, 'function')
 
+    const renderBanner = bannerProps => {
+      const active = tail.component(bannerProps)
+      assert.equal(typeof active.type, 'function')
+      const banner = active.type(active.props)
+      assert.equal(typeof banner.type, 'function')
+      return banner.type(banner.props)
+    }
+
     const turn = { data: { get: key => (key === 'vcs-changes' ? { changed: true } : undefined) } }
     const props = {
       turn,
       sessionId: 'session-1',
-      t: key => `vcs:${key}`,
+      t: (key, vars) => {
+        if (vars === undefined) return `vcs:${key}`
+        if ('count' in vars) return `vcs:${key}:${vars.count}`
+        return `vcs:${key}:${vars.added}:${vars.deleted}`
+      },
       actions: { setView: view => setViews.push(view) },
     }
-    const entry = tail.component(props)
-    assert.equal(typeof entry.type, 'function')
-    const rendered = entry.type(entry.props)
+    const rendered = renderBanner(props)
     assert.equal(rendered.props.className, 'vcs-turn-tail')
     const button = rendered.props.children
     assert.equal(button.type, 'button')
+    assert.equal(button.props.className, 'vcs-turn-banner')
     assert.equal(button.props['aria-label'], 'vcs:turn.openHint')
     assert.equal(button.props.title, 'vcs:turn.openHint')
+    const [initialLeft, initialRight] = button.props.children
+    assert.equal(initialLeft.props.className, 'vcs-turn-left')
+    assert.equal(initialLeft.props.children[1].props.children, 'vcs:turn.openHint')
+    assert.equal(initialRight.props.className, 'vcs-turn-right')
+    assert.equal(initialRight.props.children[0], null, 'no line counts before status resolves')
+    const initialPopout = initialRight.props.children[1].type()
+    assert.equal(initialPopout.props.className, 'vcs-turn-popout')
     button.props.onClick()
     assert.deepEqual(activations, [{ sessionId: 'session-1', view: 'vcs' }])
     assert.deepEqual(setViews, ['vcs'])
 
+    // Once working status is known, the banner renders branch, file count, +/- pair, and popout icon.
+    viewTree.props.onWorkingStatus('/repo', {
+      branch: { name: 'main', detached: false, unborn: false },
+      total: 2,
+      groups: {
+        staged: [{ path: 'a.js', added: 1200, deleted: 0 }],
+        unstaged: [{ path: 'b.js', added: 34, deleted: 0 }],
+      },
+    })
+    const withCounts = renderBanner(props).props.children
+    assert.equal(withCounts.props.title, 'vcs:turn.openHint')
+    assert.equal(withCounts.props['aria-label'], 'main · vcs:turn.filesChanged:2 · vcs:turn.openSummary:1,234:0')
+    const [, right] = withCounts.props.children
+    const [stat, popout] = right.props.children
+    assert.equal(stat.props.className, 'vcs-turn-stat')
+    const [addedSpan, deletedSpan] = stat.props.children
+    assert.equal(addedSpan.props.className, 'vcs-add')
+    assert.deepEqual(addedSpan.props.children, ['+', '1,234'])
+    assert.equal(deletedSpan.props.className, 'vcs-del')
+    assert.deepEqual(deletedSpan.props.children, ['−', '0'])
+    assert.equal(popout.type().props.className, 'vcs-turn-popout')
+
+    // Jujutsu working-copy status renders `@`, short change id, and singular file count.
+    viewTree.props.onWorkingStatus('/repo', {
+      capabilities: { workingCopy: 'commit' },
+      workingCopy: { changeId: 'qpvuntsm9999', summary: { changed: 1, added: 5, deleted: 2 } },
+    })
+    const jjBanner = renderBanner(props).props.children
+    assert.equal(jjBanner.props['aria-label'], '@ qpvuntsm · vcs:turn.fileChanged · vcs:turn.openSummary:5:2')
+
     // A store with `openView` leaves a focus request for the view instead.
     const opened = []
-    const withOpenView = tail.component({
+    const withOpenView = renderBanner({
       ...props,
       actions: { openView: (view, focus) => opened.push([view, focus]), setView: view => setViews.push(view) },
     })
-    withOpenView.type(withOpenView.props).props.children.props.onClick()
+    withOpenView.props.children.props.onClick()
     assert.deepEqual(opened, [['vcs', 'turn-tail']])
     assert.deepEqual(setViews, ['vcs'], 'setView is not also called when openView exists')
 
-    // A Turn without mutation evidence contributes nothing.
+    // A Turn without mutation evidence contributes nothing and mounts no hooks.
     const unchanged = tail.component({ ...props, turn: { data: { get: () => undefined } } })
-    assert.equal(unchanged.type(unchanged.props), null)
+    assert.equal(unchanged, null)
 
     // Every registration is owned by an effect, so unload removes it.
     for (const effect of effects) assert.equal(typeof effect.label, 'string')
@@ -210,10 +264,13 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     const localeDisposer = effects.find(effect => effect.label.includes('locale'))?.disposer
     const styleDisposer = effects.find(effect => effect.label.includes('styles'))?.disposer
     const turnDisposer = effects.find(effect => effect.label.includes('turn changes'))?.disposer
+    const statusDisposer = effects.find(effect => effect.label.includes('working status'))?.disposer
     assert.equal(typeof localeDisposer, 'function')
     assert.equal(typeof styleDisposer, 'function')
     assert.equal(typeof turnDisposer, 'function')
+    assert.equal(typeof statusDisposer, 'function')
     styleDisposer()
+    statusDisposer()
     assert.equal(style.removed, true)
   } finally {
     globalThis.document = previousDocument

@@ -18,10 +18,11 @@ import {
   SHORTCUT_DEFAULTS, SHORTCUT_ID, VCS_VIEW,
   createViewRegistry, mainSessionId, resolveBackView,
 } from './shortcuts.js'
-import { createTurnChangesDefinition } from './turn.js'
+import { createTurnChangesDefinition, turnChangedFiles } from './turn.js'
 import { TurnTailChanges } from './TurnTail.jsx'
 import { VcsView } from './VcsView.jsx'
 import { ViewErrorBoundary } from './ViewErrorBoundary.jsx'
+import { createWorkingStatusStore } from './working-status.js'
 
 /** Locale namespace owned by this plugin. */
 const NS = 'vcs'
@@ -243,23 +244,55 @@ export function apply(ctx) {
 
   ctx.effect(() => ctx.uiConversation.events.register(createTurnChangesDefinition()), 'dsh-vcs-panel: turn changes')
 
+  const workingStatus = createWorkingStatusStore()
+  ctx.effect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      workingStatus.refreshStale()
+    }
+    if (typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', onVisible)
+    }
+    return () => {
+      if (typeof document.removeEventListener === 'function') {
+        document.removeEventListener('visibilitychange', onVisible)
+      }
+      workingStatus.dispose()
+    }
+  }, 'dsh-vcs-panel: working status')
+
   const t = ctx.locale.bind(NS)
 
   /**
    * Track the active UI locale so dates and counts follow the language switch.
-   * The translate function reads the locale at call time; this wrapper makes
-   * the view re-render when the switch happens.
-   * @param {object} props - standard Conversation view props.
-   * @returns {object} the version control view with the active locale.
+   * The translate function reads the locale at call time; subscribing makes the
+   * caller re-render when the switch happens.
+   * @returns {string} active BCP 47 locale tag.
    */
-  function LocalizedVcsView(props) {
+  function useActiveLocale() {
     const [locale, setLocale] = useState(() => ctx.locale.getLocale().active)
     useEffect(() => ctx.locale.subscribe(() => {
       setLocale(ctx.locale.getLocale().active)
     }), [])
+    return locale
+  }
+
+  /**
+   * Version control view bound to the active UI locale and shared working status.
+   * @param {object} props - standard Conversation view props.
+   * @returns {object} the version control view with the active locale.
+   */
+  function LocalizedVcsView(props) {
+    const locale = useActiveLocale()
     return (
       <ViewErrorBoundary t={t}>
-        <VcsView {...props} locale={locale} />
+        <VcsView
+          {...props}
+          locale={locale}
+          onWorkingStatus={(repo, status) => {
+            workingStatus.publish(props.sessionId, repo, status)
+          }}
+        />
       </ViewErrorBoundary>
     )
   }
@@ -274,14 +307,28 @@ export function apply(ctx) {
 
   ctx.slots.inject('conversation.chat.turnTail', () => mountWithConversationStore(ctx, (store) => {
     /**
-     * Select the version control view for one Session.
+     * Banner for a Turn that changed files, subscribed to the Session's shared
+     * working-state line counts.
      *
      * `openView` also leaves a focus request for the view, so the keyboard
      * lands inside the panel after the Chat row unmounts; `setView` is the
      * older fallback when that action is absent. Binding activation keeps
      * the target set aligned with a header tab switch.
      */
-    function TurnTailEntry(props) {
+    function ActiveTurnTailEntry(props) {
+      const locale = useActiveLocale()
+      const [summary, setSummary] = useState(() => workingStatus.get(props.sessionId))
+      useEffect(() => {
+        setSummary(workingStatus.get(props.sessionId))
+        return workingStatus.subscribe(props.sessionId, () => {
+          setSummary(workingStatus.get(props.sessionId))
+        })
+      }, [props.sessionId])
+      const turnNumber = props.turn?.turn
+      const seq = props.seq
+      useEffect(() => {
+        workingStatus.observe(props.sessionId, { turn: turnNumber, seq })
+      }, [props.sessionId, turnNumber, seq])
       const open = () => {
         try {
           ctx.uiConversation.binding(props.sessionId).activate(VIEW_ID)
@@ -298,7 +345,21 @@ export function apply(ctx) {
           // The Conversation store can be disposed with its view.
         }
       }
-      return <TurnTailChanges {...props} onOpen={open} />
+      return (
+        <TurnTailChanges
+          turn={props.turn}
+          summary={summary}
+          locale={locale}
+          t={props.t}
+          onOpen={open}
+        />
+      )
+    }
+
+    /** Skip hooks and subscriptions on Turns that changed no files. */
+    function TurnTailEntry(props) {
+      if (!turnChangedFiles(props.turn)) return null
+      return <ActiveTurnTailEntry {...props} />
     }
     return ctx.slots.register({
       name: 'conversation.chat.turnTail',

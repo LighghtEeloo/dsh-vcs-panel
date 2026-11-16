@@ -16,7 +16,7 @@ import { errorMessage, formatCount } from './format.js'
 import { dirKey } from './detail/tree.js'
 import { buildGraph } from './history/layout.js'
 import { indexCommits } from './history/commits.js'
-import { graphInput, headOf, nodeAt, rowOf } from './history/timeline.js'
+import { graphInput, headOf, nodeAt, pickRepository, rowOf } from './history/timeline.js'
 import { Timeline } from './history/Timeline.jsx'
 import { DetailPane } from './detail/DetailPane.jsx'
 import { TopBar } from './TopBar.jsx'
@@ -58,12 +58,14 @@ function omit(record, key) {
 
 /**
  * Render the version control view for one Session.
- * @param {{ sessionId: string, t: Function, locale?: string, viewRequest?: object, completeViewRequest?: Function }} props - standard Conversation view props plus the active UI locale.
+ * @param {{ sessionId: string, t: Function, locale?: string, viewRequest?: object, completeViewRequest?: Function, onWorkingStatus?: (repo: string | null, status: object | null) => void }} props - standard Conversation view props plus the active UI locale.
  */
-export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest }) {
+export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest, onWorkingStatus }) {
   const [state, setState] = useState(() => loadState(sessionId))
   const stateRef = useRef(state)
   stateRef.current = state
+  const onWorkingStatusRef = useRef(onWorkingStatus)
+  onWorkingStatusRef.current = onWorkingStatus
   // Live reading positions: written on every scroll, persisted lazily.
   const anchorRef = useRef(state.anchor)
   const timelineScrollRef = useRef(state.timelineScroll)
@@ -211,12 +213,10 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
       const list = Array.isArray(answer.repositories) ? answer.repositories : []
       setRepositories({ status: 'ready', list, truncated: answer.truncated === true, error: null })
       const previousRepo = stateRef.current.repo
-      const nextEntry = list.find(entry => entry.path === previousRepo)
-        ?? list.find(entry => entry.enclosing)
-        ?? list[0]
-        ?? null
+      const nextEntry = pickRepository(list, previousRepo)
       const nextRepo = nextEntry?.path ?? null
       if (nextRepo !== previousRepo) switchRepo(nextRepo, nextEntry?.capabilities)
+      if (nextRepo === null) onWorkingStatusRef.current?.(null, null)
       if (list.length === 0) setRefreshing(false)
     }).catch(error => {
       if (error?.name === 'AbortError') return
@@ -243,6 +243,7 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
       setStatus({ status: 'ready', data, error: null })
       setRefreshing(false)
       lastLoaded.current = Date.now()
+      onWorkingStatusRef.current?.(state.repo, data)
       const node = preferredNode(stateRef.current, data)
       if (node !== null && node !== stateRef.current.node) selectNode(node, false)
     }).catch(error => {

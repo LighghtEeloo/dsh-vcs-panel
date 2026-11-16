@@ -306,17 +306,20 @@ type CommitAnswer = {
 
 ### 对话结束的入口
 
-- turn-tail 入口注册为 `id: 'dsh-vcs-panel'`、`order: -10`、`locale: 'vcs'`，只在该轮有文件改动时渲染一个图标，位置在交付卡片之前。
+- turn-tail 入口注册为 `id: 'dsh-vcs-panel'`、`order: -10`、`locale: 'vcs'`，只在该轮有文件改动时渲染一条全宽横幅（`.vcs-turn-banner`），位置在交付卡片之前：左侧是分支图标、当前分支或 `@`（含短变更 ID）及改动文件数（状态就绪前显示打开提示），右侧在工作状态就绪后成对渲染 `+added` / `−deleted`（`.vcs-turn-stat`）并常驻跳转图标（`.vcs-turn-popout`）。未改动文件的轮次提前返回 `null`，不挂载状态订阅与副作用。
 - 改动证据来自 `turn.js` 的 `createTurnChangesDefinition()`（kind `vcs-changes`，无 view target）：
   匹配 `turn/start`、`workspace/changes`、`tool/call` 与 `surfaceOp === 'append'` 的 `tool/result`。
   记录器按 git 工作树或文件工具捕获的 `workspace/changes` 覆盖 shell 与同一工作区内的子代理改动；
-  `write`、`edit`、`apply_patch` 与改写型 `str_replace_editor` 的成功结果覆盖记录器未覆盖的编辑。两者任一成立即显示图标。
+  `write`、`edit`、`apply_patch` 与改写型 `str_replace_editor` 的成功结果覆盖记录器未覆盖的编辑。两者任一成立即显示横幅。
   定义通过 `buildLocationData` 在 Turn Location 上发布 `{ changed: true }`；Location 数据键必须等于定义 kind，因此键为 `vcs-changes`，与 kind 共用同一个常量。
+- 工作状态摘要由 `working-status.js` 的 `createWorkingStatusStore()` 按会话共享：
+  同一会话内多条横幅共用一条记录，首次挂载在微任务边界合并为一次 `vcs.repositories` + `vcs.status` 请求，仓库选择（`pickRepository`）与状态归约（`workingHead` + `workingSummary`：Git 读取分支与 `staged` / `unstaged` 统计，Jujutsu 读取 `@` 的 `changeId` 与 `workingCopy.summary`）与 `VcsView` 共用同一实现。
+  出现更高轮次或序列号的改动横幅、持久化仓库切换、或页面重新可见超过 30 s 时刷新一次；`VcsView` 加载状态后通过 `publish` 直接同步，切回 Chat 无需重复请求；最后一个订阅横幅卸载时取消未完成的请求。
 - 视图切换借用 `conversation.session` 槽位声明的 Conversation store：`ctx.slots.entries('conversation.session')`
   找到带 `setView` 动作的 handle，turn-tail 入口以同一个 handle 注册，从而拿到同一实例的 `actions`；
   点击时先 `ctx.uiConversation.binding(sessionId).activate('vcs')`，再 `actions.openView('vcs', 'turn-tail')`（没有该动作时退回 `setView`）；
   `openView` 留下 `viewRequest`，`VcsView` 挂载后在 effect 里聚焦根节点并 `completeViewRequest()`，键盘落点不会掉到 `body`。
-  这是本插件唯一依赖宿主内部槽位 store 的地方；`conversation.session` 尚未注册时，入口等待该槽位的注册再挂载，始终找不到 store 或视图动作时入口不出现，面板其余部分不受影响。
+  `conversation.session` 尚未注册时，入口等待该槽位的注册再挂载，始终找不到 store 或视图动作时入口不出现，面板其余部分不受影响。
 - `cordis.patch.yml` 只插入插件行，不改宿主插件配置。宿主卡片由样式表规则
   `[data-turn-tail] [data-changed-files] { display: none !important; }` 隐藏：记录器、摘要、交付卡片与本机打开保持原样。
   `workspace-changes` 的 `maxFiles` 必须在 1 以上（`apply` 拒绝 0），所以不能通过清空摘要来隐藏卡片；
