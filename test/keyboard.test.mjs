@@ -922,6 +922,93 @@ test('ChangeTree steps hunks with j/k inside an expanded file and moves rows wit
   }
 })
 
+test('ChangeTree closes an open file on left before leaving the tree', async () => {
+  const harness = createHarness()
+  const restore = harness.installGlobals()
+  try {
+    const { ChangeTree } = await loadClientModule('src/client/detail/ChangeTree.jsx', harness)
+    const groups = [{
+      id: 'unstaged',
+      header: true,
+      entries: [{ path: 'a.js', status: 'M', added: 1, deleted: 0 }],
+    }]
+    const rows = buildNodeRows(groups)
+    const budget = budgetFolds(streamSections(groups, {}, null))
+    const control = { current: null }
+    const toggles = []
+    let leaves = 0
+    const api = {
+      async diff(_repo, target) {
+        return {
+          kind: 'text',
+          path: target.path,
+          before: true,
+          after: true,
+          hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['+a'] }],
+        }
+      },
+    }
+
+    function Tree() {
+      const [folds, setFolds] = harness.react.useState({ 'unstaged|a.js': false })
+      return harness.react.createElement(ChangeTree, {
+        api,
+        repo: '/repo',
+        rev: null,
+        rows,
+        budget,
+        folds,
+        split: false,
+        wrap: false,
+        revision: 0,
+        cache: new Map(),
+        initialAnchor: null,
+        onReading() {},
+        onToggleRow(row, expanded) {
+          toggles.push([row.key, expanded])
+          setFolds(previous => ({ ...previous, [row.key]: !expanded }))
+        },
+        onBulkFold() {},
+        onLeave() { leaves += 1 },
+        control,
+        t,
+        locale: 'en-US',
+      })
+    }
+
+    harness.mount(harness.react.createElement(Tree))
+    harness.intersections[0].trigger(() => true)
+    await harness.settle()
+
+    const treeEl = harness.document.body.querySelector('.vcs-tree')
+    const fileHead = () => treeEl.querySelector('.vcs-tree-file-head')
+    harness.keyDown(treeEl.querySelector('.vcs-tree-group-head'), ']')
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|a.js')
+    assert.equal(fileHead().attributes.get('aria-expanded'), 'true')
+
+    // The first left closes the diff level instead of leaving the tree.
+    harness.keyDown(harness.document.activeElement, 'ArrowLeft')
+    assert.deepEqual(toggles, [['unstaged|a.js', false]])
+    assert.equal(leaves, 0)
+    assert.equal(fileHead().attributes.get('aria-expanded'), 'false')
+
+    // With the file already closed, the same key leaves the tree.
+    harness.keyDown(harness.document.activeElement, 'ArrowLeft')
+    assert.equal(leaves, 1)
+    assert.deepEqual(toggles, [['unstaged|a.js', false]])
+
+    // Escape remains the immediate way out, even while a file is open.
+    harness.keyDown(harness.document.activeElement, 'l')
+    assert.equal(fileHead().attributes.get('aria-expanded'), 'true')
+    harness.keyDown(harness.document.activeElement, 'Escape')
+    assert.equal(leaves, 2)
+    assert.deepEqual(toggles, [['unstaged|a.js', false], ['unstaged|a.js', true]])
+  } finally {
+    harness.unmount()
+    restore()
+  }
+})
+
 test('VcsView lands keyboard focus on the timeline and completes deferred detail entry when commit files finish loading', async () => {
   for (const width of [1000, 620]) {
     const harness = createHarness({ width })

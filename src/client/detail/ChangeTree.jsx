@@ -458,6 +458,21 @@ export function ChangeTree({
     if (inside) focusRowAt(index + 1)
   }, [focusRowAt, isExpanded, navRows, onToggleRow])
 
+  /**
+   * `←` / `h`: close the focused file when it is open, so the first back
+   * step leaves the diff level. A closed file row has nothing below it, so the
+   * same key then leaves the tree.
+   */
+  const back = useCallback(() => {
+    const index = Math.max(0, Math.min(cursorRef.current, navRows.length - 1))
+    const row = navRows[index]
+    if (row?.kind === 'file' && isExpanded(row)) {
+      toggle(row, true)
+      return
+    }
+    onLeave()
+  }, [isExpanded, navRows, onLeave, toggle])
+
   /** Top offsets of the hunk headers inside one file's comparison. */
   const hunkOffsets = useCallback(row => {
     const body = bodyEls.current.get(row.key)
@@ -563,7 +578,13 @@ export function ChangeTree({
       forward()
       return
     }
-    if (direction === BACK || event.key === 'Escape') {
+    if (direction === BACK) {
+      event.preventDefault()
+      event.stopPropagation()
+      back()
+      return
+    }
+    if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
       onLeave()
