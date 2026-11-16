@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 
 import { createApi } from '../src/client/api.js'
 import { buildNodeRows } from '../src/client/detail/tree.js'
-import { defaultFolds, streamSections } from '../src/client/detail/detail.js'
+import { budgetFolds, streamSections } from '../src/client/detail/detail.js'
 import { GIT_CAPABILITIES } from '../lib/vcs/capabilities.js'
 
 const require = createRequire(import.meta.url)
@@ -633,7 +633,7 @@ test('keyboard navigation past in-flight diffs that abort mid-body never crashes
     ]
     const groups = [{ id: 'unstaged', entries, header: true }]
     const rows = buildNodeRows(groups)
-    const defaults = defaultFolds(streamSections(groups, {}, null))
+    const budget = budgetFolds(streamSections(groups, {}, null))
     const cache = new Map()
     const control = { current: null }
 
@@ -676,8 +676,8 @@ test('keyboard navigation past in-flight diffs that abort mid-body never crashes
       repo: '/repo',
       rev: null,
       rows,
-      defaults,
-      folds: {},
+      budget,
+      folds: { 'unstaged|a.js': false, 'unstaged|b.js': false },
       split: false,
       wrap: false,
       revision: 0,
@@ -741,7 +741,7 @@ test('ChangeTree measures static row containers rather than sticky-displaced hea
       ],
     }]
     const rows = buildNodeRows(groups)
-    const defaults = defaultFolds(streamSections(groups, {}, null))
+    const budget = budgetFolds(streamSections(groups, {}, null))
     const control = { current: null }
     const readings = []
 
@@ -762,8 +762,8 @@ test('ChangeTree measures static row containers rather than sticky-displaced hea
       repo: '/repo',
       rev: null,
       rows,
-      defaults,
-      folds: {},
+      budget,
+      folds: { 'unstaged|src/a.js': false, 'unstaged|src/b.js': false },
       split: false,
       wrap: false,
       revision: 0,
@@ -1104,11 +1104,20 @@ test('rapid keyboard commit switching while commit and diff bodies abort never t
 
       harness.keyDown(harness.document.activeElement, 'k')
       await harness.settle()
+
+      // Files start collapsed; open both of sha2's files before loading them.
+      const treeEl = harness.document.body.querySelector('.vcs-tree')
+      assert.equal(treeEl.querySelectorAll('[data-diff-hunk-header]').length, 0)
+      const fileHeads = treeEl.querySelectorAll('.vcs-tree-file-head')
+      assert.equal(fileHeads.length, 2)
+      for (const head of fileHeads) {
+        head.props.onClick()
+        await harness.settle()
+      }
       for (const observer of harness.intersections) observer.trigger(() => true)
       await new Promise(resolve => { setTimeout(resolve, 40) })
       await harness.settle()
 
-      const treeEl = harness.document.body.querySelector('.vcs-tree')
       assert.equal(treeEl.querySelectorAll('[data-diff-hunk-header]').length, 2)
     } finally {
       globalThis.fetch = savedFetch

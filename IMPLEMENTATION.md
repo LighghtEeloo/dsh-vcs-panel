@@ -160,7 +160,7 @@ type TurnSummary = {
 | 单会话列出的仓库数 | 50 | Host `discoverRepositories` |
 | 每组状态文件数（Git）/ 单提交详情文件数 / 未跟踪目录展开条目数 | 各 500 | Host `status` / `commit` / `untracked` |
 | 单文件 diff 输出 / 渲染行数 | 2 MB / 5,000 行 | Host `diff`、Client `FileDiff` |
-| 默认自动展开的 diff 预算 | 单文件 1,000 行；单节点累计 20,000 行 | Client `defaultFolds` |
+| “全部展开”的 diff 预算 | 单文件 1,000 行；单节点累计 20,000 行 | Client `budgetFolds`、`expandedFileFolds` |
 | diff 请求并发 / 视口预载距离 / 结果缓存 | 4 个并发 / 800 px / 最近 300 条 | Client 请求队列与缓存 |
 | 历史分页 / 最多加载提交数 | 300 条/页，最多 10,000 条 | Host `log` |
 | 单会话保留的轮末头指针 / 客户端空闲轮次摘要缓存 | 2,000 轮 / 500 条 | Host `TurnTracker`、Client `turn-summary` |
@@ -188,12 +188,12 @@ Client 顶层注入 `['slots', 'locale', 'uiConversation']`，在四处与 DSH �
 
 会话状态保存在 `sessionStorage` 的 `vcs:<sessionId>`，包含 `repo`、`node`、`nodeChosen`、`ref`、`dirs`、`collapsed`、`folds`、`anchor`（`{ key, offset }`）、`split`、`wrap`、`sidebarWidth` 与 `timelineScroll`；内存另外按仓库记住切换前的选中节点、目录折叠与历史范围。
 
-行键前缀白名单为 `staged|`、`unstaged|`、`commit|`；`sanitizeState` 在读取时丢弃未知字段与旧版遗留的 `untracked|` 键。数据刷新、折叠全部文件或收起吸顶文件头时，统一先记录锚点行与行内像素偏移，重排后恢复；锚点行未渲染时沿“文件行 → 父目录链 → 分组行”降级。
+`folds` 只为用户显式操作过的文件保存布尔值：空记录表示文件全部收起，也就是详情的默认形态。行键前缀白名单为 `staged|`、`unstaged|`、`commit|`；`sanitizeState` 在读取时丢弃未知字段与旧版遗留的 `untracked|` 键。数据刷新、折叠全部文件或收起吸顶文件头时，统一先记录锚点行与行内像素偏移，重排后恢复；锚点行未渲染时沿“文件行 → 父目录链 → 分组行”降级。
 
 ### 图布局与变更树管线
 
 - **时间线图布局**：`buildGraph` 接收拓扑序节点，按 `pass / goto / end` 遍历活动 lane（第一父延续当前 lane，其余父节点分配或复用侧 lane，lane 结束时回收颜色；Git 工作区虚节点以虚线连向 `HEAD`），输出路径与圆点坐标，与虚拟列表共用滚动容器渲染；分页追加时 O(n) 重算整图并按提交锚点恢复位置。
-- **变更树与请求调度**：客户端将 Git 的 `untracked` 条目并入 `unstaged` 分组（可按需展开的未跟踪目录不参与单子目录链压缩），生成单一扁平行列表供渲染、roving tabindex 键盘导航与滚动锚点共用；发起 `vcs.diff` 时仍按条目自身状态还原 `scope`（`?` 走 `untracked`，重命名带 `oldPath`）。变更树窄于 640 px（`SPLIT_MIN_WIDTH`）时将 `FileDiff` 的 `split` 置为 `false` 单栏渲染。展开文件由 `IntersectionObserver` 入队请求，离开视口时经 `AbortController` 取消；键盘匹配排除 `AltGraph`，保证需要 AltGr 输入 `[` / `]` 的键盘布局可用。
+- **变更树与请求调度**：客户端将 Git 的 `untracked` 条目并入 `unstaged` 分组（可按需展开的未跟踪目录不参与单子目录链压缩），生成单一扁平行列表供渲染、roving tabindex 键盘导航与滚动锚点共用；文件默认收起，只有展开的行才请求 `vcs.diff`。发起请求时仍按条目自身状态还原 `scope`（`?` 走 `untracked`，重命名带 `oldPath`）。变更树窄于 640 px（`SPLIT_MIN_WIDTH`）时将 `FileDiff` 的 `split` 置为 `false` 单栏渲染。展开文件由 `IntersectionObserver` 入队请求，离开视口时经 `AbortController` 取消；键盘匹配排除 `AltGraph`，保证需要 AltGr 输入 `[` / `]` 的键盘布局可用。
 
 ## 复用与来源
 

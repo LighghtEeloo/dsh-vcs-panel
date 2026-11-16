@@ -12,9 +12,9 @@ import {
   buildNodeRows, buildRows, dirKey, isRowKey, rowBodyId, sectionKey, summarizeEntries,
 } from '../src/client/detail/tree.js'
 import {
-  FOLD_LINES, SPLIT_MIN_WIDTH, STREAM_BUDGET, allFileFolds, changedLines, commitGroups, commitSummary,
-  comparisonBase, defaultFolds, diffTarget, estimateHeight, hasUnfoldedFile, isFolded, nextFileRow, rowAt,
-  streamSections, worktreeGroups,
+  FOLD_LINES, SPLIT_MIN_WIDTH, STREAM_BUDGET, allFileFolds, budgetFolds, changedLines, commitGroups,
+  commitSummary, comparisonBase, diffTarget, estimateHeight, expandedFileFolds, hasUnfoldedFile, isFolded,
+  nextFileRow, rowAt, streamSections, worktreeGroups,
 } from '../src/client/detail/detail.js'
 import { createQueue } from '../src/client/detail/queue.js'
 import { graphInput, headOf, nodeAt, rowOf, worktreeSummary } from '../src/client/history/timeline.js'
@@ -663,7 +663,7 @@ test('diffTarget takes its scope from the file, not from its group', () => {
   )
 })
 
-test('defaultFolds folds large sections and everything past the stream budget', () => {
+test('budgetFolds reports the files that stay folded when every file is expanded', () => {
   const section = (key, added) => ({ key, entry: { added, deleted: 0 } })
   // Sections at the per-file limit fill the budget after this many.
   const fill = STREAM_BUDGET / FOLD_LINES
@@ -674,17 +674,18 @@ test('defaultFolds folds large sections and everything past the stream budget', 
     section('c', 1),
     section('d', 1),
   ]
-  const folds = defaultFolds(sections)
+  const folds = budgetFolds(sections)
   assert.equal(folds.get('huge'), 'large')
   assert.equal(folds.has('a'), false)
   assert.equal(folds.has(`full${fill - 1}`), false, 'the section that crosses the budget still renders')
   assert.equal(folds.get('c'), 'budget')
   assert.equal(folds.get('d'), 'budget')
-  assert.equal(defaultFolds([section('edge', FOLD_LINES)]).size, 0, 'exactly the limit stays open')
+  assert.equal(budgetFolds([section('edge', FOLD_LINES)]).size, 0, 'exactly the limit stays open')
 
-  assert.equal(isFolded('c', folds, {}), true)
-  assert.equal(isFolded('c', folds, { c: false }), false, 'the user can unfold a default fold')
-  assert.equal(isFolded('a', folds, { a: true }), true, 'and fold an open section')
+  assert.equal(isFolded('c', {}), true, 'files start folded')
+  assert.equal(isFolded('c', { c: false }), false, 'the user can open a budget fold')
+  assert.equal(isFolded('a', { a: false }), false, 'the user can open any file')
+  assert.equal(isFolded('a', { a: true }), true, 'and fold it again')
 })
 
 test('changedLines and estimateHeight treat binaries and unknown counts as small', () => {
@@ -778,24 +779,27 @@ test('commitSummary counts the files and lines of a commit toolbar', () => {
   assert.deepEqual(commitSummary(null), { count: 0, added: 0, deleted: 0 })
 })
 
-test('the bulk fold button collapses every file and expansion returns to the defaults', () => {
+test('the bulk fold button collapses every file and expansion follows the budget', () => {
   const large = { key: 'commit|large.js', entry: { added: FOLD_LINES + 1, deleted: 0 } }
   const small = { key: 'commit|small.js', entry: { added: 4, deleted: 0 } }
   const sections = [small, large]
-  const defaults = defaultFolds(sections)
-  assert.equal(hasUnfoldedFile(sections, defaults, {}), true)
-  assert.equal(isFolded(large.key, defaults, {}), true, 'the large file is folded by default')
+  const budget = budgetFolds(sections)
+  assert.equal(isFolded(small.key, {}), true, 'every file starts collapsed')
+  assert.equal(hasUnfoldedFile(sections, {}), false)
+  assert.equal(budget.get(large.key), 'large')
+
+  // "Expand all files" opens the small file and leaves the large one folded.
+  const expanded = expandedFileFolds(sections, budget)
+  assert.deepEqual(expanded, { 'commit|small.js': false, 'commit|large.js': true })
+  assert.equal(hasUnfoldedFile(sections, expanded), true)
+  assert.equal(isFolded(small.key, expanded), false)
+  assert.equal(isFolded(large.key, expanded), true, 'the budget keeps the large file folded')
 
   // "Collapse all files" folds the ones that were open, including hidden ones.
   const collapsed = allFileFolds(sections)
   assert.deepEqual(collapsed, { 'commit|small.js': true, 'commit|large.js': true })
-  assert.equal(hasUnfoldedFile(sections, defaults, collapsed), false)
-  assert.equal(isFolded(small.key, defaults, collapsed), true)
-
-  // "Expand all files" clears the manual choices, so defaults apply again.
-  assert.equal(hasUnfoldedFile(sections, defaults, {}), true)
-  assert.equal(isFolded(large.key, defaults, {}), true)
-  assert.equal(isFolded(small.key, defaults, {}), false)
+  assert.equal(hasUnfoldedFile(sections, collapsed), false)
+  assert.equal(isFolded(small.key, collapsed), true)
 })
 
 test('the folding budget does not depend on which directories are collapsed', () => {
@@ -805,10 +809,10 @@ test('the folding budget does not depend on which directories are collapsed', ()
     { path: 'other/c.js', status: 'M', added: 10, deleted: 0 },
   ]
   const groups = [{ id: 'commit', entries, header: false }]
-  const defaults = defaultFolds(streamSections(groups, {}, 'rev'))
+  const budget = budgetFolds(streamSections(groups, {}, 'rev'))
   const rowsClosed = buildNodeRows([groups[0]], { collapsed: { [dirKey('commit', 'src')]: true } })
   assert.deepEqual(rowsClosed.filter(row => row.kind === 'file').map(row => row.name), ['c.js'])
-  assert.deepEqual([...defaults.keys()], [], 'no file folds, so collapsing nothing else changes')
+  assert.deepEqual([...budget.keys()], [], 'no file folds, so collapsing nothing else changes')
   const allFolds = allFileFolds(streamSections(groups, {}, 'rev'))
   assert.deepEqual(allFolds, { 'commit|other/c.js': true, 'commit|src/a.js': true, 'commit|src/b.js': true })
 })

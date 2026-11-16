@@ -19,8 +19,8 @@ import {
 } from '../ui.jsx'
 import { buildNodeRows } from './tree.js'
 import {
-  SPLIT_MIN_WIDTH, allFileFolds, commitGroups, commitSummary, comparisonBase, defaultFolds,
-  hasUnfoldedFile, streamSections, worktreeGroups,
+  SPLIT_MIN_WIDTH, allFileFolds, budgetFolds, commitGroups, commitSummary, comparisonBase,
+  expandedFileFolds, hasUnfoldedFile, streamSections, worktreeGroups,
 } from './detail.js'
 import { ChangeTree } from './ChangeTree.jsx'
 
@@ -186,17 +186,17 @@ export function DetailPane({
   // The working-copy commit is addressed as `@` so a rewrite between the
   // commit detail and its diff requests cannot leave the diff on a stale id.
   const rev = isWorktree ? null : (isWorkingCopy ? workingCopyNode : (commitState.commit?.sha ?? node))
-  // Default folding follows the fully expanded order, so collapsing a
-  // directory never changes which other files start folded.
+  // The expand action follows the fully expanded order, so collapsing a
+  // directory never changes which other files stay folded.
   const allSections = useMemo(() => streamSections(groups, dirChildren, rev), [dirChildren, groups, rev])
-  const defaults = useMemo(() => defaultFolds(allSections), [allSections])
+  const budget = useMemo(() => budgetFolds(allSections), [allSections])
   const rows = useMemo(
     () => buildNodeRows(groups, { collapsed, dirs, dirChildren, loadingDirs }),
     [collapsed, dirChildren, dirs, groups, loadingDirs],
   )
   const someUnfolded = useMemo(
-    () => hasUnfoldedFile(allSections, defaults, folds),
-    [allSections, defaults, folds],
+    () => hasUnfoldedFile(allSections, folds),
+    [allSections, folds],
   )
   const splitNarrow = split && width > 0 && width < SPLIT_MIN_WIDTH
 
@@ -209,10 +209,10 @@ export function DetailPane({
     onToggleDir(row)
   }, [onToggleDir, onToggleFold])
 
-  /** Collapse every file of the node, or clear the manual folds. */
+  /** Collapse every file of the node, or expand every file the budget allows. */
   const bulkFold = useCallback(mode => {
-    onSetFolds(mode === 'collapse' ? allFileFolds(allSections) : {})
-  }, [allSections, onSetFolds])
+    onSetFolds(mode === 'collapse' ? allFileFolds(allSections) : expandedFileFolds(allSections, budget))
+  }, [allSections, budget, onSetFolds])
 
   const toggleAll = () => {
     const mode = someUnfolded ? 'collapse' : 'expand'
@@ -346,7 +346,7 @@ export function DetailPane({
         repo={repo}
         rev={rev}
         rows={rows}
-        defaults={defaults}
+        budget={budget}
         folds={folds}
         split={split && !splitNarrow}
         wrap={wrap}

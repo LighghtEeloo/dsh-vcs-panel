@@ -10,10 +10,10 @@
 
 import { buildNodeRows, summarizeEntries } from './tree.js'
 
-/** Sections with more changed lines than this start folded. */
+/** Changed lines above which a file stays folded when every file is expanded. */
 export const FOLD_LINES = 1000
 
-/** Changed lines the tree renders unfolded before folding the rest. */
+/** Changed lines expanded files may render before the remaining files stay folded. */
 export const STREAM_BUDGET = 20_000
 
 /** Diff requests in flight at once. */
@@ -101,7 +101,7 @@ export function sectionsFromRows(rows, rev) {
  * The diff sections of a node as if every directory were expanded, in the
  * order they would render.
  *
- * The default folding budget is computed from this order, so collapsing or
+ * The expand action's folding budget is computed from this order, so collapsing or
  * expanding a directory does not change which other files start folded.
  * Untracked directories contribute only the children already loaded.
  *
@@ -129,17 +129,19 @@ export function changedLines(entry) {
 }
 
 /**
- * Which file rows start folded, and why.
+ * Which files stay folded when every file is expanded, and why.
  *
- * A file over {@link FOLD_LINES} changed lines folds on its own. The others
- * unfold in order until their changed lines pass {@link STREAM_BUDGET}; the
- * rest fold so one large node cannot render an unbounded page. Changed lines
- * stand in for rendered lines, which also include a few lines of context.
+ * The tree starts with every file folded, so this budget governs only the
+ * toolbar's expand action. A file over {@link FOLD_LINES} changed lines stays
+ * folded on its own. The others open in order until their changed lines pass
+ * {@link STREAM_BUDGET}; the rest stay folded so one large node cannot render
+ * an unbounded page. Changed lines stand in for rendered lines, which also
+ * include a few lines of context.
  *
  * @param {Array<{ key: string, entry: object }>} sections - sections in full expansion order.
  * @returns {Map<string, 'large' | 'budget'>} folded section keys with their reason.
  */
-export function defaultFolds(sections) {
+export function budgetFolds(sections) {
   const folds = new Map()
   let rendered = 0
   for (const section of sections) {
@@ -158,27 +160,25 @@ export function defaultFolds(sections) {
 }
 
 /**
- * Whether one file is folded: the user's choice, else the default.
+ * Whether one file is folded. A file opens only when the user asked for it:
+ * the tree is a file list until then.
  * @param {string} key - the file row key.
- * @param {Map<string, string>} defaults - from {@link defaultFolds}.
  * @param {Record<string, boolean>} folds - the user's fold choices.
  * @returns {boolean} true when folded.
  */
-export function isFolded(key, defaults, folds) {
-  const chosen = folds?.[key]
-  return typeof chosen === 'boolean' ? chosen : defaults.has(key)
+export function isFolded(key, folds) {
+  return folds?.[key] !== false
 }
 
 /**
  * Whether any file of the node is currently unfolded, which decides whether
  * the toolbar button collapses or expands.
  * @param {Array<{ key: string }>} sections - every file section of the node.
- * @param {Map<string, string>} defaults - from {@link defaultFolds}.
  * @param {Record<string, boolean>} folds - the user's fold choices.
  * @returns {boolean} true when at least one file is unfolded.
  */
-export function hasUnfoldedFile(sections, defaults, folds) {
-  return sections.some(section => !isFolded(section.key, defaults, folds))
+export function hasUnfoldedFile(sections, folds) {
+  return sections.some(section => !isFolded(section.key, folds))
 }
 
 /**
@@ -189,6 +189,19 @@ export function hasUnfoldedFile(sections, defaults, folds) {
 export function allFileFolds(sections) {
   const folds = {}
   for (const section of sections) folds[section.key] = true
+  return folds
+}
+
+/**
+ * The fold choices that expand every file the folding budget allows. Files in
+ * the budget stay folded and keep their localized reason.
+ * @param {Array<{ key: string }>} sections - every file section of the node.
+ * @param {Map<string, string>} budget - from {@link budgetFolds}.
+ * @returns {Record<string, boolean>} one fold choice per file.
+ */
+export function expandedFileFolds(sections, budget) {
+  const folds = {}
+  for (const section of sections) folds[section.key] = budget.has(section.key)
   return folds
 }
 

@@ -49,11 +49,10 @@ function remember(cache, key, value) {
   while (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value)
 }
 
-/** The localized reason a folded file gives, when the default rules folded it. */
+/** The localized reason a folded file gives when the folding budget kept it closed. */
 function foldedText(reason, entry, t, locale) {
   if (reason === 'large') return t('stream.foldedLarge', { count: formatCount(changedLines(entry), locale) })
-  if (reason === 'budget') return t('stream.foldedBudget')
-  return t('stream.folded')
+  return t('stream.foldedBudget')
 }
 
 /**
@@ -136,7 +135,7 @@ const FileBody = memo(function FileBody({
  * @param {object} props - rows, expansion data, and panel state.
  */
 export function ChangeTree({
-  api, repo, rev, rows, defaults, folds, split, wrap, revision, cache,
+  api, repo, rev, rows, budget, folds, split, wrap, revision, cache,
   initialAnchor, onReading, onToggleRow, onBulkFold, onLeave, control, before = null, t, locale,
 }) {
   const scrollRef = useRef(null)
@@ -169,7 +168,14 @@ export function ChangeTree({
   const cursorKey = navRows[Math.max(0, Math.min(cursor, navRows.length - 1))]?.key ?? null
 
   /** Whether one file row is folded under the current rules. */
-  const isRowFolded = useCallback(row => isFolded(row.key, defaults, folds), [defaults, folds])
+  const isRowFolded = useCallback(row => isFolded(row.key, folds), [folds])
+
+  // Folding reasons describe why some files stay closed while diffs are being
+  // read; in the collapsed default they would only repeat the file list.
+  const someUnfolded = useMemo(
+    () => rows.some(row => row.kind === 'file' && !isRowFolded(row)),
+    [isRowFolded, rows],
+  )
 
   const setCursorAt = useCallback(index => {
     cursorRef.current = index
@@ -805,7 +811,7 @@ export function ChangeTree({
   }
   const renderFile = row => {
     const expanded = !isRowFolded(row)
-    const foldReason = typeof folds?.[row.key] === 'boolean' ? undefined : defaults.get(row.key)
+    const foldReason = expanded || !someUnfolded ? undefined : budget.get(row.key)
     const parts = splitPath(row.entry.path)
     const bodyId = rowBodyId(row.key)
     return (
