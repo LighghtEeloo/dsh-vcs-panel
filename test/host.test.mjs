@@ -16,7 +16,7 @@ import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { delimiter, dirname, join, basename, resolve as resolvePath, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 
-import { apply, createHandlers, normalizeConfig } from '../index.js'
+import { apply, createHandlers, createTurnTracker, normalizeConfig } from '../index.js'
 
 // Keep the fixtures independent of the user's global git configuration.
 process.env.GIT_CONFIG_GLOBAL = '/dev/null'
@@ -1489,6 +1489,8 @@ test('Jujutsu shared snapshot survives one caller aborting and cancels when all 
     },
   }))
 
+  // Caller 1 (e.g. TurnTail status) starts snapshotting; Caller 2 (VcsView log)
+  // joins while the snapshot is still running; Caller 1 aborts on view switch.
   const firstAbort = new AbortController()
   const secondAbort = new AbortController()
   const firstPromise = delayedHandlers.status(new Request(
@@ -1513,6 +1515,7 @@ test('Jujutsu shared snapshot survives one caller aborting and cancels when all 
   assert.equal(Array.isArray(secondBody.commits), true)
   assert.equal(snapshots, 1)
 
+  // When the only waiting caller aborts, the snapshot subprocess is aborted and evicted.
   releaseSnapshot = null
   const loneAbort = new AbortController()
   const lonePromise = delayedHandlers.status(new Request(
@@ -1526,7 +1529,7 @@ test('Jujutsu shared snapshot survives one caller aborting and cancels when all 
   assert.equal(snapshotAborted, 1)
 })
 
-test('apply registers all six GET routes inside the fence and honors enabled: false', async () => {
+test('apply registers all seven GET routes inside the fence and honors enabled: false', async () => {
   const routes = []
   const ctx = {
     sessions: { get: id => sessions.get(id) },
@@ -1555,6 +1558,7 @@ test('apply registers all six GET routes inside the fence and honors enabled: fa
     '/api/vcs.diff',
     '/api/vcs.log',
     '/api/vcs.commit',
+    '/api/vcs.turn',
   ])
   for (const registered of routes) {
     assert.deepEqual(registered.methods, ['GET'])
@@ -1584,6 +1588,209 @@ test('normalizeConfig turns the feature off only for a literal enabled: false', 
   assert.deepEqual(normalizeConfig({ enabled: 'false' }), { enabled: true })
   assert.deepEqual(normalizeConfig({ enabled: 0 }), { enabled: true })
   assert.deepEqual(normalizeConfig({ enabled: false }), { enabled: false })
+})
+
+test('vcs.turn records each turn\'s active branch across switches, validates inputs, and cleans up', async () => {
+  const repoDir = join(fixture.scratch, 'turn-branches')
+  initRepo(repoDir)
+  writeFileSync(join(repoDir, 'file.txt'), 'v1\n')
+  git(repoDir, ['add', '-A'])
+  git(repoDir, ['commit', '-qm', 'base'])
+
+  const listeners = new Map()
+  const turnSessions = new Map([
+    ['s-turns', { id: 's-turns', header: { cwd: repoDir } }],
+    ['s-unborn', { id: 's-unborn', header: { cwd: fixture.unborn } }],
+    ['s-plain', { id: 's-plain', header: { cwd: fixture.plain } }],
+    ['s-nocwd', { id: 's-nocwd', header: {} }],
+  ])
+  const summaries = new Map([
+    ['s-turns:11', { turn: 1, cwd: repoDir, files: [{ path: 'file.txt', display: 'file.txt', added: 4, deleted: 1 }], total: 1, added: 4, deleted: 1, snapshot: { before: 'a', after: 'b' } }],
+    ['s-turns:22', { turn: 2, cwd: repoDir, files: [], total: 3, added: 18, deleted: 5 }],
+    ['s-turns:33', { turn: 3, cwd: repoDir, files: [], total: 2, added: 9, deleted: 0 }],
+    ['s-plain:44', { turn: 1, cwd: fixture.plain, files: [], total: 1, added: 7, deleted: 0 }],
+  ])
+
+  const emit = (name, ...args) => {
+    for (const fn of listeners.get(name) ?? []) fn(...args)
+  }
+  const emitStopping = async (session, turn) => {
+    for (const fn of listeners.get('agent/turn-stopping') ?? []) {
+      const bail = await fn({ agent: { session }, turn })
+      assert.equal(bail, undefined, 'agent/turn-stopping listener must not return a Cordis bail value')
+    }
+  }
+
+  const host = {
+    sessions: { get: id => turnSessions.get(id) },
+    fs: fakeFs,
+    subprocess: fakeSubprocess,
+    on(name, fn) {
+      const list = listeners.get(name) ?? []
+      list.push(fn)
+      listeners.set(name, list)
+      return () => {
+        const index = list.indexOf(fn)
+        if (index >= 0) list.splice(index, 1)
+      }
+    },
+    // Cordis exposes optional services via ctx.get() while direct property read throws without inject.
+    get(name) {
+      if (name === 'workspaceChanges') {
+        return {
+          summary: (sessionId, seq) => summaries.get(`${sessionId}:${seq}`),
+        }
+      }
+      return undefined
+    },
+    get workspaceChanges() {
+      throw new Error('handlers must resolve workspaceChanges via ctx.get when present')
+    },
+  }
+
+  const tracker = createTurnTracker(host)
+  const detach = tracker.attach()
+  const turnHandlers = createHandlers(host, { turnTracker: tracker })
+  const session = turnSessions.get('s-turns')
+
+  try {
+    // Turn 1 runs on `main`.
+    emit('session/event', session, { type: 'turn/start', seq: 1, data: { turn: 1 } })
+    emit('session/event', session, { type: 'tool/result', seq: 10, data: { turn: 1, message: { isError: false } } })
+    await emitStopping(session, 1)
+    emit('session/event', session, { type: 'turn/end', seq: 12, data: { turn: 1 } })
+
+    // Turn 2 checks out `feat/round-2` before stopping.
+    git(repoDir, ['checkout', '-qb', 'feat/round-2'])
+    emit('session/event', session, { type: 'turn/start', seq: 13, data: { turn: 2 } })
+    emit('session/event', session, { type: 'tool/result', seq: 21, data: { turn: 2, message: { isError: false } } })
+    await emitStopping(session, 2)
+    emit('session/event', session, { type: 'turn/end', seq: 23, data: { turn: 2 } })
+
+    // Turn 3 detaches HEAD and ends abruptly without `agent/turn-stopping`.
+    git(repoDir, ['checkout', '-q', '--detach', 'HEAD'])
+    emit('session/event', session, { type: 'turn/start', seq: 24, data: { turn: 3 } })
+    emit('session/event', session, { type: 'tool/result', seq: 32, data: { turn: 3, message: { isError: false } } })
+    emit('session/event', session, { type: 'turn/end', seq: 34, data: { turn: 3 } })
+
+    // Turn 4 has a recorded head (`detached`) without a workspaceChanges summary.
+    emit('session/event', session, { type: 'turn/start', seq: 35, data: { turn: 4 } })
+    emit('session/event', session, { type: 'tool/result', seq: 36, data: { turn: 4, message: { isError: false } } })
+    await emitStopping(session, 4)
+    emit('session/event', session, { type: 'turn/end', seq: 37, data: { turn: 4 } })
+
+    // Each turn keeps the branch on which that turn ran, and never leaks cwd/snapshot/files.
+    const t1 = await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 's-turns', turn: 1, seq: 11 }))
+    assert.equal(t1.status, 200)
+    assert.deepEqual(t1.body, {
+      turn: 1,
+      head: { kind: 'branch', name: 'main' },
+      changed: 1,
+      added: 4,
+      deleted: 1,
+    })
+
+    const t2 = await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 's-turns', turn: 2, seq: 22 }))
+    assert.equal(t2.status, 200)
+    assert.deepEqual(t2.body, {
+      turn: 2,
+      head: { kind: 'branch', name: 'feat/round-2' },
+      changed: 3,
+      added: 18,
+      deleted: 5,
+    })
+
+    const t3 = await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 's-turns', turn: 3, seq: 33 }))
+    assert.equal(t3.status, 200)
+    assert.deepEqual(t3.body, {
+      turn: 3,
+      head: { kind: 'detached' },
+      changed: 2,
+      added: 9,
+      deleted: 0,
+    })
+
+    const t4 = await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 's-turns', turn: 4 }))
+    assert.equal(t4.status, 200)
+    assert.deepEqual(t4.body, {
+      turn: 4,
+      head: { kind: 'detached' },
+      changed: null,
+      added: null,
+      deleted: null,
+    })
+
+    // Unborn repository records `unborn`; plain directory records `head: null`.
+    const unbornSession = turnSessions.get('s-unborn')
+    emit('session/event', unbornSession, { type: 'turn/start', seq: 1, data: { turn: 1 } })
+    emit('session/event', unbornSession, { type: 'tool/result', seq: 2, data: { turn: 1, message: { isError: false } } })
+    await emitStopping(unbornSession, 1)
+    const unborn = await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 's-unborn', turn: 1 }))
+    assert.equal(unborn.status, 200)
+    assert.deepEqual(unborn.body.head, { kind: 'unborn' })
+
+    const plainSession = turnSessions.get('s-plain')
+    emit('session/event', plainSession, { type: 'turn/start', seq: 1, data: { turn: 1 } })
+    emit('session/event', plainSession, { type: 'tool/result', seq: 2, data: { turn: 1, message: { isError: false } } })
+    await emitStopping(plainSession, 1)
+    const plain = await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 's-plain', turn: 1, seq: 44 }))
+    assert.equal(plain.status, 200)
+    assert.deepEqual(plain.body, { turn: 1, head: null, changed: 1, added: 7, deleted: 0 })
+
+    // Validation & missing-turn refusals.
+    assert.equal((await call(turnHandlers.turn, route('/api/vcs.turn', { turn: 1 }))).status, 400)
+    assert.equal((await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 'missing', turn: 1 }))).status, 409)
+    assert.equal((await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 's-nocwd', turn: 1 }))).status, 409)
+    assert.equal((await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 's-turns', turn: 0 }))).status, 400)
+    assert.equal((await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 's-turns', turn: 1, seq: -1 }))).status, 400)
+    assert.equal((await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 's-turns', turn: 2, seq: 11 }))).status, 400)
+    assert.equal((await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 's-turns', turn: 99, seq: 999 }))).status, 404)
+
+    // Session disposal clears recorded heads.
+    summaries.clear()
+    emit('session/disposed', session)
+    assert.equal((await call(turnHandlers.turn, route('/api/vcs.turn', { sessionId: 's-turns', turn: 1 }))).status, 404)
+  } finally {
+    detach()
+    rmSync(repoDir, { recursive: true, force: true })
+  }
+})
+
+test('vcs.turn records Jujutsu working-copy change ids without snapshotting', { skip: !HAS_JJ }, async () => {
+  const opBefore = jj(fixture.jj, ['op', 'log', '--no-graph', '--ignore-working-copy', '-n', '1', '-T', 'id.short(12)'])
+  const expectedChangeId = jj(fixture.jj, ['log', '--no-graph', '--ignore-working-copy', '-r', '@', '-T', 'change_id'])
+  const listeners = new Map()
+  const jjSession = { id: 's-jj', header: { cwd: fixture.jj } }
+  const host = createHost({
+    on(name, fn) {
+      listeners.set(name, fn)
+      return () => { listeners.delete(name) }
+    },
+    workspaceChanges: {
+      summary: (_id, seq) => (seq === 7 ? { turn: 1, cwd: fixture.jj, files: [], total: 2, added: 11, deleted: 3 } : undefined),
+    },
+  })
+  const tracker = createTurnTracker(host)
+  const detach = tracker.attach()
+  const jjHandlers = createHandlers(host, { turnTracker: tracker })
+  try {
+    listeners.get('session/event')(jjSession, { type: 'turn/start', seq: 1, data: { turn: 1 } })
+    listeners.get('session/event')(jjSession, { type: 'tool/result', seq: 6, data: { turn: 1, message: { isError: false } } })
+    await listeners.get('agent/turn-stopping')({ agent: { session: jjSession }, turn: 1 })
+    const answer = await call(jjHandlers.turn, route('/api/vcs.turn', { sessionId: 's-jj', turn: 1, seq: 7 }))
+    assert.equal(answer.status, 200)
+    assert.deepEqual(answer.body, {
+      turn: 1,
+      head: { kind: 'workingCopy', changeId: expectedChangeId },
+      changed: 2,
+      added: 11,
+      deleted: 3,
+    })
+    const opAfter = jj(fixture.jj, ['op', 'log', '--no-graph', '--ignore-working-copy', '-n', '1', '-T', 'id.short(12)'])
+    assert.equal(opAfter, opBefore, 'turn head capture must not write a jj working-copy snapshot')
+  } finally {
+    detach()
+  }
 })
 
 test('every route is read-only: repository state is identical after all requests', async () => {

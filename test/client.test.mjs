@@ -375,7 +375,9 @@ test('createApi builds exact Host routes', async () => {
   await api.diff('/repo', { scope: 'commit', path: 'a.js', oldPath: 'old/a.js', rev: 'abc1234' })
   await api.log('/repo', { ref: 'all', skip: 300, limit: 300 })
   await api.commit('/repo', 'abc1234')
-  assert.equal(calls.length, 6)
+  await api.turn(3, 42)
+  await api.turn(4, null)
+  assert.equal(calls.length, 8)
   assert.match(calls[0], /^\/api\/vcs\.repositories\?sessionId=session\+1$/)
   assert.match(calls[1], /^\/api\/vcs\.status\?sessionId=session\+1&repo=%2Frepo$/)
   assert.match(calls[2], /path=dir%2F/)
@@ -385,6 +387,8 @@ test('createApi builds exact Host routes', async () => {
   assert.match(calls[4], /skip=300/)
   assert.match(calls[4], /limit=300/)
   assert.match(calls[5], /sha=abc1234/)
+  assert.equal(calls[6], '/api/vcs.turn?sessionId=session+1&turn=3&seq=42')
+  assert.equal(calls[7], '/api/vcs.turn?sessionId=session+1&turn=4')
 })
 
 test('createApi maps failure bodies and transport failures', async () => {
@@ -428,6 +432,9 @@ test('createApi maps failure bodies and transport failures', async () => {
 })
 
 test('createApi preserves AbortError when cancelled during response body decoding and rejects malformed 200 bodies', async () => {
+  // Cancelling a diff after 200 headers arrive (for example stepping past an
+  // unloaded file with the keyboard) must reject as AbortError rather than
+  // resolving null into FileDiff.
   const midBodyController = new AbortController()
   const abortedMidBody = createApi('s', {
     fetchImpl: async (_url, options) => ({
@@ -448,6 +455,8 @@ test('createApi preserves AbortError when cancelled during response body decodin
     },
   )
 
+  // Some runtimes reject an aborted body stream with a TypeError while
+  // signal.aborted is true; that is still an abort, not a null payload.
   const streamAbortController = new AbortController()
   const abortedStream = createApi('s', {
     fetchImpl: async () => ({
@@ -467,6 +476,7 @@ test('createApi preserves AbortError when cancelled during response body decodin
     },
   )
 
+  // A transport rejection while signal.aborted is true also normalizes to AbortError.
   const fetchAbortController = new AbortController()
   fetchAbortController.abort('cancelled')
   const abortedFetch = createApi('s', {
@@ -480,6 +490,7 @@ test('createApi preserves AbortError when cancelled during response body decodin
     },
   )
 
+  // An uncancelled 200 response with unreadable JSON or a null body fails cleanly.
   const truncated200 = createApi('s', {
     fetchImpl: async () => ({
       ok: true,

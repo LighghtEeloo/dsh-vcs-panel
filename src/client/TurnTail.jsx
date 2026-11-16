@@ -2,10 +2,11 @@
  * Turn-tail banner for a completed Turn that changed files.
  *
  * Replaces DSH's per-turn changed-files card with one full-width banner whose
- * target is the version control view: the branch glyph, active branch or `@`,
- * and changed-file count on the left; the working `+added` / `−deleted` pair
- * and a popout icon on the right. The definition in `turn.js` decides whether
- * the banner appears, and `working-status.js` supplies the shared working state.
+ * target is the version control view: the branch glyph, the branch or `@` on
+ * which that turn ran, and that turn's changed-file count on the left; that
+ * turn's `+added` / `−deleted` pair and a popout icon on the right. The
+ * definition in `turn.js` decides whether the banner appears, and
+ * `turn-summary.js` reads the recorded per-turn summary once.
  */
 
 import { formatCount, shortChangeId } from './format.js'
@@ -65,57 +66,54 @@ function renderHead(head, t) {
   }
 }
 
-/** Localized changed-file count phrase for the banner. */
+/** Localized changed-file count phrase for a positive per-turn count. */
 function filesChangedText(changed, locale, t) {
-  if (changed <= 0) return t('changes.clean')
   if (changed === 1) return t('turn.fileChanged')
   return t('turn.filesChanged', { count: formatCount(changed, locale) })
 }
 
 /**
  * Render the VCS banner at the end of a Turn.
- * @param {object} props - Turn Location, working summary, localized copy, and the view opener.
+ * @param {object} props - Turn Location, per-turn summary, localized copy, and the view opener.
  * @param {object} props.turn - Turn Location with this definition's data.
- * @param {{ head?: object | null, changed: number, added: number, deleted: number } | null} [props.summary] - working state.
+ * @param {{ head?: object | null, changed: number | null, added: number | null, deleted: number | null } | null} [props.summary] - recorded turn state.
  * @param {string} [props.locale] - active BCP 47 locale for number grouping.
  * @param {(key: string, vars?: Record<string, string>) => string} props.t - this plugin's translator.
  * @param {() => void} props.onOpen - selects the version control view.
- * @returns {object | null} the banner, or null when the Turn changed no files.
+ * @returns {object | null} the banner, or null when the Turn made no net changes.
  */
 export function TurnTailChanges({ turn, summary = null, locale, t, onOpen }) {
   if (!turnChangedFiles(turn)) return null
+  const hasCounts = summary !== null
+    && typeof summary.changed === 'number'
+    && typeof summary.added === 'number'
+    && typeof summary.deleted === 'number'
+  if (hasCounts && summary.changed <= 0) return null
+
   const hint = t('turn.openHint')
   const head = summary === null ? { node: null, text: '' } : renderHead(summary.head, t)
-  const filesText = summary === null ? null : filesChangedText(summary.changed, locale, t)
-  const added = summary === null ? null : formatCount(summary.added, locale)
-  const deleted = summary === null ? null : formatCount(summary.deleted, locale)
-  const openLabel = summary === null ? hint : t('turn.openSummary', { added, deleted })
-  const label = summary === null
-    ? hint
-    : [head.text, filesText, openLabel].filter(part => part !== '').join(' · ')
+  const leftText = hasCounts ? filesChangedText(summary.changed, locale, t) : hint
+  const added = hasCounts ? formatCount(summary.added, locale) : null
+  const deleted = hasCounts ? formatCount(summary.deleted, locale) : null
+  const openLabel = hasCounts ? t('turn.openSummary', { added, deleted }) : hint
+  const label = hasCounts
+    ? [head.text, leftText, openLabel].filter(part => part !== '').join(' · ')
+    : [head.text, hint].filter(part => part !== '').join(' · ')
   return (
     <div className="vcs-turn-tail">
       <button type="button" className="vcs-turn-banner" title={hint} aria-label={label} onClick={onOpen}>
         <span className="vcs-turn-left" aria-hidden="true">
           <GitBranchIcon />
-          {summary === null ? (
-            <span className="vcs-turn-files">{hint}</span>
-          ) : (
+          {head.node === null ? null : (
             <>
-              {head.node === null ? null : (
-                <>
-                  {head.node}
-                  <span className="vcs-turn-sep">·</span>
-                </>
-              )}
-              <span className="vcs-turn-files" data-clean={summary.changed === 0 ? 'true' : undefined}>
-                {filesText}
-              </span>
+              {head.node}
+              <span className="vcs-turn-sep">·</span>
             </>
           )}
+          <span className="vcs-turn-files">{leftText}</span>
         </span>
         <span className="vcs-turn-right" aria-hidden="true">
-          {summary === null ? null : (
+          {!hasCounts ? null : (
             <span className="vcs-turn-stat">
               <span className="vcs-add">+{added}</span>
               <span className="vcs-del">−{deleted}</span>

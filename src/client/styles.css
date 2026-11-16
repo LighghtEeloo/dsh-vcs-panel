@@ -1127,10 +1127,6 @@
   white-space: nowrap;
 }
 
-.vcs-turn-files[data-clean='true'] {
-  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary));
-}
-
 .vcs-turn-right {
   display: inline-flex;
   flex: none;

@@ -6,7 +6,7 @@
 
 ### 注册与路由
 
-Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessions', 'subprocess', 'fs']`。`apply` 仅在配置显式为字面量 `enabled: false` 时跳过路由注册（如需同时移除前端页签，需在 Plugins 中停用整个 bundle）。六条只读 `GET` 路由注册在 `ctx.connection.fetch` 的认证栅栏内；请求 `signal` 与插件生命周期 `AbortController` 组合，取消的请求保留 `AbortError`，不转为错误 JSON。
+Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessions', 'subprocess', 'fs']`。`apply` 仅在配置显式为字面量 `enabled: false` 时跳过路由注册（如需同时移除前端页签，需在 Plugins 中停用整个 bundle）。七条只读 `GET` 路由注册在 `ctx.connection.fetch` 的认证栅栏内；请求 `signal` 与插件生命周期 `AbortController` 组合，取消的请求保留 `AbortError`，不转为错误 JSON。
 
 | 路由 | 查询参数 | 应答字段 |
 | --- | --- | --- |
@@ -16,6 +16,7 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 | `GET /api/vcs.diff` | `sessionId`、`repo`、`scope`、`path`、`oldPath?`、`rev?` | `VcsFileDiff` |
 | `GET /api/vcs.log` | `sessionId`、`repo`、`ref`、`limit`、`skip` | `commits[]`、`truncated`、`nextSkip` |
 | `GET /api/vcs.commit` | `sessionId`、`repo`、`sha` | `commit`（`CommitDetail`，不含 patch）、`truncated` |
+| `GET /api/vcs.turn` | `sessionId`、`turn`、`seq?` | `turn`、`head`（`TurnHead \| null`）、`changed`、`added`、`deleted` |
 
 ### 输入校验与路径边界
 
@@ -43,7 +44,7 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 - **Git**：固定 `-c core.quotepath=false`，环境设 `GIT_CONFIG_COUNT=0`、`GIT_TERMINAL_PROMPT=0`、`GIT_OPTIONAL_LOCKS=0`；比较命令加 `--no-pager`、`--no-ext-diff`、`--no-color`、`-U3`。
 - **Jujutsu**：固定 `--color=never`、`--no-pager`，环境设 `JJ_EDITOR=true`；除工作副本快照外的读取均带 `--ignore-working-copy`。
 
-每个后端实现 `require`、`status`、`log`、`commit`、`diff`（可选 `untracked`）并声明 `capabilities`；Client 仅按能力对象驱动布局，不按后端名称分支：
+每个后端实现 `require`、`head`、`status`、`log`、`commit`、`diff`（可选 `untracked`）并声明 `capabilities`；Client 仅按能力对象驱动布局，不按后端名称分支：
 
 | 能力字段 | Git | Jujutsu |
 | --- | --- | --- |
@@ -54,8 +55,9 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 
 两个后端的读取规则差异：
 
-- **Git**：`status` 组合 `status --porcelain=v2 -z --branch --untracked-files=normal` 与两次 `diff --numstat -z`（index 与工作区），按 `XY` 拆成 `staged`、`unstaged`、`untracked`（两侧均改时各出现一次，冲突标 `U`）。`diff` 按 `staged`（对 `HEAD`）、`unstaged`（对 index）、`untracked`（按新文件合成）、`commit`（对第一父，root 对空树）取值；空仓库读取 `HEAD` 日志视为空历史而非错误。
-- **Jujutsu**：每次 `status` 刷新执行一次 `jj log --no-graph -r @ -T commit_id` 快照工作副本（并发请求复用同一 Promise，失败清空缓存），其余读取复用该状态。`log` 使用 `::@ ~ root()` 或 `all() ~ root()`；`diff` 使用 `jj diff --git -r <rev>`，输出含 NUL 或 `U+FFFD` 时按二进制处理。
+- **Git**：`head` 仅读取 `symbolic-ref -q --short HEAD` 与 `rev-parse -q --verify HEAD^{commit}`，不扫描索引与工作区；`status` 组合 `status --porcelain=v2 -z --branch --untracked-files=normal` 与两次 `diff --numstat -z`（index 与工作区），按 `XY` 拆成 `staged`、`unstaged`、`untracked`（两侧均改时各出现一次，冲突标 `U`）。`diff` 按 `staged`（对 `HEAD`）、`unstaged`（对 index）、`untracked`（按新文件合成）、`commit`（对第一父，root 对空树）取值；空仓库读取 `HEAD` 日志视为空历史而非错误。
+- **Jujutsu**：每次 `status` 刷新执行一次 `jj log --no-graph -r @ -T commit_id` 快照工作副本（并发请求复用同一 Promise，失败清空缓存），其余读取（含轮末 `head` 读取 `change_id`）均带 `--ignore-working-copy` 复用已记录状态，不触发额外快照。`log` 使用 `::@ ~ root()` 或 `all() ~ root()`；`diff` 使用 `jj diff --git -r <rev>`，输出含 NUL 或 `U+FFFD` 时按二进制处理。
+- **每轮摘要与头指针记录**：`createTurnTracker`（`lib/turns.js`）监听活跃会话的 `session/event`、`agent/turn-stopping`、`tools/pre-execute` 与 `session/disposed`，在有工具执行或 `workspace/changes` 的轮次结束时串行读取外围仓库的 `head`（下一轮工具执行前等待上一轮完成，防止跨轮切分支串台）。`vcs.turn` 通过 `ctx.get('workspaceChanges')` 可选读取宿主的每轮 `{ total, added, deleted }`（校验 `turn` 与 `seq` 归属一致，剔除宿主路径与文件明细），并与该轮 `head` 合并返回；两者均不存在（如 Host 重启后的历史轮次）时返回 `404 not-found`。
 
 ## 核心数据形状
 
@@ -133,6 +135,20 @@ type VcsFileDiff =
   | { kind: 'binary'; path: string }
   | { kind: 'oversized'; path: string }
 // Client 视图层在此之上另有 'loading' | 'missing' | 'error' 三种状态
+
+type TurnHead =
+  | { kind: 'branch'; name: string }
+  | { kind: 'detached' }
+  | { kind: 'unborn' }
+  | { kind: 'workingCopy'; changeId: string | null }
+
+type TurnSummary = {
+  turn: number
+  head: TurnHead | null
+  changed: number | null
+  added: number | null
+  deleted: number | null
+}
 ```
 
 ## 上限
@@ -147,6 +163,7 @@ type VcsFileDiff =
 | 默认自动展开的 diff 预算 | 单文件 1,000 行；单节点累计 20,000 行 | Client `defaultFolds` |
 | diff 请求并发 / 视口预载距离 / 结果缓存 | 4 个并发 / 800 px / 最近 300 条 | Client 请求队列与缓存 |
 | 历史分页 / 最多加载提交数 | 300 条/页，最多 10,000 条 | Host `log` |
+| 单会话保留的轮末头指针 / 客户端空闲轮次摘要缓存 | 2,000 轮 / 500 条 | Host `TurnTracker`、Client `turn-summary` |
 | 单条后端命令 | 30 s 超时，stdout 8 MB，stderr 尾部 16 KB，终止宽限 2 s | Host `CommandRunner` |
 | 页面重新可见自动刷新阈值 / Jujutsu 快照频率 | 隐藏超过 30 s 刷新一次 / 每次刷新快照一次 | Client 可见性监听、Jujutsu 后端 |
 
@@ -163,7 +180,7 @@ type VcsFileDiff =
 Client 顶层注入 `['slots', 'locale', 'uiConversation']`，在四处与 DSH 宿主内部机制衔接，每处均设有降级或恢复边界：
 
 - **视图槽位与崩溃隔离**：注册 `conversation.view`（`id: 'vcs'`，`order: 20`）。DSH 的 `SlotErrorBoundary` 捕获异常后会将条目永久标为 abdicated 并移除页签，因此视图内部包有 `ViewErrorBoundary`：捕获渲染错误后展示重试页，将时间、错误与截断至 12,000 字符的调用栈写入 `sessionStorage` 的 `vcs:last-error`，重试时保留原会话状态重新挂载。
-- **Turn 改动判定与状态共享**：`createTurnChangesDefinition` 注册 `vcs-changes` 事件定义，聚合 `workspace/changes` 记录与成功的文件写入工具结果；Conversation 引擎要求 Location 数据键与定义 `kind` 完全同名，因此键固定为 `vcs-changes`。`conversation.chat.turnTail` 条目（`order: -10`）仅在该标志为真时订阅 `working-status.js`：同一会话内多条横幅合并为一次微任务状态请求，并在出现更高轮次/序列号、`VcsView` 发布新状态或页面重新可见超 30 s 时刷新。
+- **Turn 改动判定与每轮摘要缓存**：`createTurnChangesDefinition` 注册 `vcs-changes` 事件定义，聚合每轮最新的 `workspace/changes` 事件序号（`seq`）与成功的文件写入工具结果；Conversation 引擎要求 Location 数据键与定义 `kind` 完全同名，因此键固定为 `vcs-changes`。`conversation.chat.turnTail` 条目（`order: -10`）仅在该标志为真时按 `(sessionId, turn, seq)` 从 `turn-summary.js` 读取一次 `/api/vcs.turn`：已解析结果在客户端按 LRU 缓存，切回 Chat 直接同步渲染；`404`/`400`/`409` 记为 `missing` 不再重复请求（回退展示“打开版本管理”）；净改动文件数为 0 的轮次隐藏横幅；连接重置（`connection/reset`）时仅重拉未就绪条目。
 - **隐藏宿主改动卡片**：`workspace-changes` 拒绝 `maxFiles: 0`，因此 `cordis.patch.yml` 不改动宿主配置，改由样式规则 `[data-turn-tail] [data-changed-files] { display: none !important; }` 仅隐藏文件卡片，保留改动记录器与 `present` 交付卡片。宿主 DOM 标记变更时仅退化为重新显示原卡片。
 - **会话 Store 借用与全局快捷键**：DSH 未将视图切换暴露为独立服务，当前视图保存在 `conversation.session` 槽位声明的 Store 中。Turn 横幅与 `conversation.session.header.utilities` 上的零渲染桥接条目（`dsh-vcs-panel:view-bridge`）通过声明同一 Store handle 拿到 `actions`（槽位未就绪时订阅等待，缺失时不挂载）。快捷键 `vcs.view.toggle` 在可选的 `['shortcuts', 'sessions']` 作用域注册（默认键位冲突时回退为空绑定）：进入 VCS 调用 `activate('vcs')` + `openView('vcs', source)` 留下聚焦请求；返回上一非 VCS 视图调用 `activate(view)` + `setView(view)` + `completeViewRequest()`，清除可能尚未消费的聚焦请求。模态框打开或无活跃主视图会话（`retainedBy.mainView > 0`）时返回 `pass`。
 

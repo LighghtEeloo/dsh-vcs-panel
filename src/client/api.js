@@ -37,14 +37,6 @@ export function queryString(params) {
   return text === '' ? '' : `?${text}`
 }
 
-/**
- * Create the Session-scoped API.
- * @param {string} sessionId - the open Conversation Session.
- * @param {object} [options] - injection seam for tests.
- * @param {typeof fetch} [options.fetchImpl] - fetch implementation.
- * @param {string} [options.base] - URL prefix; empty means relative to the app.
- * @returns {object} the route methods.
- */
 /** Whether an async failure came from an AbortSignal cancellation. */
 function isAborted(error, signal) {
   return error?.name === 'AbortError' || signal?.aborted === true
@@ -56,6 +48,14 @@ function toAbortError(error) {
   return new DOMException('The request was aborted.', 'AbortError')
 }
 
+/**
+ * Create the Session-scoped API.
+ * @param {string} sessionId - the open Conversation Session.
+ * @param {object} [options] - injection seam for tests.
+ * @param {typeof fetch} [options.fetchImpl] - fetch implementation.
+ * @param {string} [options.base] - URL prefix; empty means relative to the app.
+ * @returns {object} the route methods.
+ */
 export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' } = {}) {
   /**
    * One JSON request.
@@ -167,6 +167,17 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
      */
     commit(repo, sha, signal) {
       return get('/api/vcs.commit', { repo, sha }, signal)
+    },
+
+    /**
+     * One completed turn's recorded repository head and change totals.
+     * @param {number} turn - 1-based turn number.
+     * @param {number | null} [seq] - announcing `workspace/changes` event sequence, when present.
+     * @param {AbortSignal} [signal] - cancellation.
+     * @returns {Promise<object>} the turn summary.
+     */
+    turn(turn, seq, signal) {
+      return get('/api/vcs.turn', { turn, seq }, signal)
     },
   }
 }

@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 /** Load the generated bundle with a stub module loader and React. */
-function loadBundle() {
+function loadBundle({ onEffect } = {}) {
   let registered
   new Function('window', readFileSync(new URL('../client.js', import.meta.url), 'utf8'))({
     __ModuleLoader__: {
@@ -16,7 +16,7 @@ function loadBundle() {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
     Fragment: Symbol('Fragment'),
     useCallback: fn => fn,
-    useEffect: () => undefined,
+    useEffect: fn => onEffect?.(fn),
     useLayoutEffect: fn => fn(),
     useMemo: fn => fn(),
     memo: component => component,
@@ -43,8 +43,14 @@ test('client.js registers the expected module id and exports apply/inject', () =
   assert.equal(typeof plugin.apply, 'function')
 })
 
-test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-tail entry', () => {
-  const { plugin } = loadBundle()
+test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-tail entry', async () => {
+  const pendingEffects = []
+  let capturingEffects = false
+  const { plugin } = loadBundle({
+    onEffect: fn => {
+      if (capturingEffects) pendingEffects.push(fn)
+    },
+  })
   const effects = []
   const localeCalls = []
   const injections = []
@@ -53,6 +59,7 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
   const activations = []
   const styles = []
   const setViews = []
+  const fetchCalls = []
   const document = {
     visibilityState: 'visible',
     head: {
@@ -71,7 +78,24 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     spec: { actions: { setView() {} } },
   }
   const previousDocument = globalThis.document
+  const previousFetch = globalThis.fetch
   globalThis.document = document
+  globalThis.fetch = async url => {
+    fetchCalls.push(url)
+    const params = new URL(url, 'http://127.0.0.1').searchParams
+    const turnNumber = Number(params.get('turn'))
+    const payloads = {
+      1: { turn: 1, head: { kind: 'branch', name: 'feat/turn-1' }, changed: 2, added: 1234, deleted: 0 },
+      2: { turn: 2, head: { kind: 'workingCopy', changeId: 'qpvuntsm9999' }, changed: 1, added: 5, deleted: 2 },
+      3: { turn: 3, head: { kind: 'branch', name: 'main' }, changed: null, added: null, deleted: null },
+      4: { turn: 4, head: { kind: 'branch', name: 'main' }, changed: 0, added: 0, deleted: 0 },
+    }
+    return {
+      ok: true,
+      status: 200,
+      async json() { return payloads[turnNumber] },
+    }
+  }
   try {
     const ctx = {
       inject() { return () => undefined },
@@ -165,7 +189,6 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     const tree = view.component({ sessionId: 'session-1', t: key => `vcs:${key}` })
     const viewTree = tree.props?.children ?? tree.children?.[0]
     assert.equal(viewTree.props.locale, 'zh')
-    assert.equal(typeof viewTree.props.onWorkingStatus, 'function')
 
     // The Turn-tail entry reuses the Conversation shell's store handle, which
     // is what exposes `setView` to a non-header entry.
@@ -177,6 +200,14 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     assert.equal(tail.options.store, store)
     assert.equal(typeof tail.component, 'function')
 
+    const makeTurn = (turnNumber, seq) => ({
+      turn: turnNumber,
+      data: {
+        get: key => (key === 'vcs-changes'
+          ? (seq === undefined ? { changed: true } : { changed: true, seq })
+          : undefined),
+      },
+    })
     const renderBanner = bannerProps => {
       const active = tail.component(bannerProps)
       assert.equal(typeof active.type, 'function')
@@ -184,10 +215,18 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
       assert.equal(typeof banner.type, 'function')
       return banner.type(banner.props)
     }
+    const flushEffects = async () => {
+      const disposers = []
+      while (pendingEffects.length > 0) {
+        const dispose = pendingEffects.shift()()
+        if (typeof dispose === 'function') disposers.push(dispose)
+      }
+      for (let i = 0; i < 6; i += 1) await Promise.resolve()
+      return () => { for (const dispose of disposers) dispose() }
+    }
 
-    const turn = { data: { get: key => (key === 'vcs-changes' ? { changed: true } : undefined) } }
     const props = {
-      turn,
+      turn: makeTurn(1, 12),
       sessionId: 'session-1',
       t: (key, vars) => {
         if (vars === undefined) return `vcs:${key}`
@@ -196,6 +235,7 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
       },
       actions: { setView: view => setViews.push(view) },
     }
+    capturingEffects = true
     const rendered = renderBanner(props)
     assert.equal(rendered.props.className, 'vcs-turn-tail')
     const button = rendered.props.children
@@ -205,27 +245,28 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     assert.equal(button.props.title, 'vcs:turn.openHint')
     const [initialLeft, initialRight] = button.props.children
     assert.equal(initialLeft.props.className, 'vcs-turn-left')
-    assert.equal(initialLeft.props.children[1].props.children, 'vcs:turn.openHint')
+    assert.equal(initialLeft.props.children[2].props.children, 'vcs:turn.openHint')
     assert.equal(initialRight.props.className, 'vcs-turn-right')
-    assert.equal(initialRight.props.children[0], null, 'no line counts before status resolves')
+    assert.equal(initialRight.props.children[0], null, 'no line counts before turn summary resolves')
     const initialPopout = initialRight.props.children[1].type()
     assert.equal(initialPopout.props.className, 'vcs-turn-popout')
     button.props.onClick()
     assert.deepEqual(activations, [{ sessionId: 'session-1', view: 'vcs' }])
     assert.deepEqual(setViews, ['vcs'])
 
-    // Once working status is known, the banner renders branch, file count, +/- pair, and popout icon.
-    viewTree.props.onWorkingStatus('/repo', {
-      branch: { name: 'main', detached: false, unborn: false },
-      total: 2,
-      groups: {
-        staged: [{ path: 'a.js', added: 1200, deleted: 0 }],
-        unstaged: [{ path: 'b.js', added: 34, deleted: 0 }],
-      },
-    })
+    // Flush the turn-1 effect and mount turn 2 in the same Session: each turn
+    // keeps its own recorded branch / `@` and line-diff counts.
+    const cleanupTurn1 = await flushEffects()
+    renderBanner({ ...props, turn: makeTurn(2, 24) })
+    const cleanupTurn2 = await flushEffects()
+    assert.deepEqual(fetchCalls, [
+      '/api/vcs.turn?sessionId=session-1&turn=1&seq=12',
+      '/api/vcs.turn?sessionId=session-1&turn=2&seq=24',
+    ])
+
     const withCounts = renderBanner(props).props.children
     assert.equal(withCounts.props.title, 'vcs:turn.openHint')
-    assert.equal(withCounts.props['aria-label'], 'main · vcs:turn.filesChanged:2 · vcs:turn.openSummary:1,234:0')
+    assert.equal(withCounts.props['aria-label'], 'feat/turn-1 · vcs:turn.filesChanged:2 · vcs:turn.openSummary:1,234:0')
     const [, right] = withCounts.props.children
     const [stat, popout] = right.props.children
     assert.equal(stat.props.className, 'vcs-turn-stat')
@@ -236,13 +277,26 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     assert.deepEqual(deletedSpan.props.children, ['−', '0'])
     assert.equal(popout.type().props.className, 'vcs-turn-popout')
 
-    // Jujutsu working-copy status renders `@`, short change id, and singular file count.
-    viewTree.props.onWorkingStatus('/repo', {
-      capabilities: { workingCopy: 'commit' },
-      workingCopy: { changeId: 'qpvuntsm9999', summary: { changed: 1, added: 5, deleted: 2 } },
-    })
-    const jjBanner = renderBanner(props).props.children
+    const jjBanner = renderBanner({ ...props, turn: makeTurn(2, 24) }).props.children
     assert.equal(jjBanner.props['aria-label'], '@ qpvuntsm · vcs:turn.fileChanged · vcs:turn.openSummary:5:2')
+
+    // A turn with recorded branch but no line counts shows branch + Open VCS.
+    renderBanner({ ...props, turn: makeTurn(3) })
+    const cleanupTurn3 = await flushEffects()
+    const headOnly = renderBanner({ ...props, turn: makeTurn(3) }).props.children
+    assert.equal(headOnly.props['aria-label'], 'main · vcs:turn.openHint')
+    assert.equal(headOnly.props.children[1].props.children[0], null)
+
+    // A superseded turn whose net changed-file count is 0 hides the banner.
+    renderBanner({ ...props, turn: makeTurn(4, 48) })
+    const cleanupTurn4 = await flushEffects()
+    assert.equal(renderBanner({ ...props, turn: makeTurn(4, 48) }), null)
+
+    cleanupTurn1()
+    cleanupTurn2()
+    cleanupTurn3()
+    cleanupTurn4()
+    capturingEffects = false
 
     // A store with `openView` leaves a focus request for the view instead.
     const opened = []
@@ -264,16 +318,17 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     const localeDisposer = effects.find(effect => effect.label.includes('locale'))?.disposer
     const styleDisposer = effects.find(effect => effect.label.includes('styles'))?.disposer
     const turnDisposer = effects.find(effect => effect.label.includes('turn changes'))?.disposer
-    const statusDisposer = effects.find(effect => effect.label.includes('working status'))?.disposer
+    const summariesDisposer = effects.find(effect => effect.label.includes('turn summaries'))?.disposer
     assert.equal(typeof localeDisposer, 'function')
     assert.equal(typeof styleDisposer, 'function')
     assert.equal(typeof turnDisposer, 'function')
-    assert.equal(typeof statusDisposer, 'function')
+    assert.equal(typeof summariesDisposer, 'function')
     styleDisposer()
-    statusDisposer()
+    summariesDisposer()
     assert.equal(style.removed, true)
   } finally {
     globalThis.document = previousDocument
+    globalThis.fetch = previousFetch
   }
 })
 

@@ -1,11 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { pickRepository, workingHead, workingSummary } from '../src/client/history/timeline.js'
+import { pickRepository } from '../src/client/history/timeline.js'
 import {
-  createTurnChangesDefinition, isMutationCall, TURN_CHANGES_KIND, turnChangedFiles,
+  createTurnChangesDefinition, isMutationCall, TURN_CHANGES_KIND, turnChangedFiles, turnChanges,
 } from '../src/client/turn.js'
-import { createWorkingStatusStore } from '../src/client/working-status.js'
+import {
+  createTurnSummaryStore, normalizeTurnHead, normalizeTurnSummary,
+} from '../src/client/turn-summary.js'
 
 /** One tool/call event in turn 3. */
 function call(callId, name, args) {
@@ -85,13 +87,18 @@ test('the definition matches the Turn, its record, its calls, and appended resul
   assert.equal(definition.match({ type: 'assistant/message', data: { turn: 3 } }), null)
 })
 
-test('the recorder record alone marks the Turn, covering shell and subagent edits', () => {
+test('the recorder record marks the Turn and replaces earlier sequences in the same Turn', () => {
   const definition = createTurnChangesDefinition()
   const context = startContext(definition)
   assert.equal(definition.buildLocationData(context, 'turn', null), null)
-  const changed = apply(definition, context, { type: 'workspace/changes', data: { turn: 3 } })
-  assert.equal(changed.changed, true)
-  assert.equal(apply(definition, { state: changed }, { type: 'workspace/changes', data: { turn: 3 } }), changed)
+
+  const first = apply(definition, context, { type: 'workspace/changes', seq: 14, data: { turn: 3 } })
+  assert.equal(first.changed, true)
+  assert.equal(first.seq, 14)
+  assert.equal(apply(definition, { state: first }, { type: 'workspace/changes', seq: 14, data: { turn: 3 } }), first)
+
+  const superseded = apply(definition, { state: first }, { type: 'workspace/changes', seq: 19, data: { turn: 3 } })
+  assert.equal(superseded.seq, 19)
 })
 
 test('a successful mutation marks the Turn; failures and non-mutations do not', () => {
@@ -105,6 +112,7 @@ test('a successful mutation marks the Turn; failures and non-mutations do not', 
   // Its successful result does.
   state = apply(definition, { state }, result('c1'))
   assert.equal(state.changed, true)
+  assert.equal(state.seq, null)
 
   // Failed results, unmatched results, and read calls stay unchanged.
   const clean = startContext(definition)
@@ -124,7 +132,7 @@ test('a successful mutation marks the Turn; failures and non-mutations do not', 
   assert.equal(apply(definition, marked, result('c4')), marked.state)
 })
 
-test('location data publishes only changed Turns and keeps its identity', () => {
+test('location data publishes changed Turns with their latest sequence and keeps identity', () => {
   const definition = createTurnChangesDefinition()
   let context = startContext(definition)
   assert.equal(definition.buildLocationData(context, 'step', null), null)
@@ -135,18 +143,29 @@ test('location data publishes only changed Turns and keeps its identity', () => 
   context = { state: apply(definition, context, result('c1')) }
 
   const first = definition.buildLocationData(context, 'turn', null)
-  // The Engine rejects Location data whose key differs from the definition kind,
-  // and that rejection fails the whole conversation assembly for the Session.
   assert.equal(definition.kind, TURN_CHANGES_KIND)
   assert.deepEqual(first, { kind: 'turn', turn: 3, key: definition.kind, value: { changed: true } })
   assert.equal(definition.buildLocationData(context, 'turn', first), first)
   assert.equal(definition.buildLocationData(context, 'step', first), null)
+
+  // A subsequent `workspace/changes` event attaches `seq` and replaces the published value.
+  context = { state: apply(definition, context, { type: 'workspace/changes', seq: 28, data: { turn: 3 } }) }
+  const withSeq = definition.buildLocationData(context, 'turn', first)
+  assert.deepEqual(withSeq, { kind: 'turn', turn: 3, key: definition.kind, value: { changed: true, seq: 28 } })
+  assert.equal(definition.buildLocationData(context, 'turn', withSeq), withSeq)
 })
 
-test('turnChangedFiles reads the published Turn value defensively', () => {
-  const data = new Map([[TURN_CHANGES_KIND, { changed: true }]])
-  assert.equal(turnChangedFiles({ data }), true)
-  assert.equal(turnChangedFiles({ data: new Map([[TURN_CHANGES_KIND, { changed: false }]]) }), false)
+test('turnChanges and turnChangedFiles read published Turn coordinates defensively', () => {
+  const withSeq = new Map([[TURN_CHANGES_KIND, { changed: true, seq: 9 }]])
+  assert.deepEqual(turnChanges({ turn: 3, data: withSeq }), { turn: 3, seq: 9 })
+  assert.equal(turnChangedFiles({ turn: 3, data: withSeq }), true)
+
+  const withoutSeq = new Map([[TURN_CHANGES_KIND, { changed: true }]])
+  assert.deepEqual(turnChanges({ data: withoutSeq }), { turn: null, seq: null })
+  assert.equal(turnChangedFiles({ data: withoutSeq }), true)
+
+  assert.equal(turnChanges({ turn: 3, data: new Map([[TURN_CHANGES_KIND, { changed: false }]]) }), null)
+  assert.equal(turnChangedFiles({ turn: 3, data: new Map([[TURN_CHANGES_KIND, { changed: false }]]) }), false)
   assert.equal(turnChangedFiles({ data: new Map() }), false)
   assert.equal(turnChangedFiles(undefined), false)
   assert.equal(turnChangedFiles({}), false)
@@ -164,207 +183,216 @@ test('pickRepository prefers the persisted path, then the enclosing repository, 
   assert.equal(pickRepository(null, '/w'), null)
 })
 
-test('workingSummary reads Git working-tree groups and Jujutsu working-copy summaries', () => {
-  assert.equal(workingSummary(null), null)
-  assert.equal(workingSummary(undefined), null)
-  assert.deepEqual(workingHead({ branch: { name: 'main', detached: false, unborn: false } }), {
-    kind: 'branch',
-    name: 'main',
+test('normalizeTurnHead and normalizeTurnSummary validate per-turn payloads', () => {
+  assert.deepEqual(normalizeTurnHead({ kind: 'branch', name: 'main' }), { kind: 'branch', name: 'main' })
+  assert.equal(normalizeTurnHead({ kind: 'branch', name: '' }), null)
+  assert.deepEqual(normalizeTurnHead({ kind: 'detached' }), { kind: 'detached' })
+  assert.deepEqual(normalizeTurnHead({ kind: 'unborn' }), { kind: 'unborn' })
+  assert.deepEqual(normalizeTurnHead({ kind: 'workingCopy', changeId: 'qpvuntsm' }), {
+    kind: 'workingCopy',
+    changeId: 'qpvuntsm',
   })
-  assert.deepEqual(workingHead({ branch: { name: null, detached: true, unborn: false } }), {
-    kind: 'detached',
+  assert.deepEqual(normalizeTurnHead({ kind: 'workingCopy', changeId: '' }), {
+    kind: 'workingCopy',
+    changeId: null,
   })
-  assert.deepEqual(workingHead({ branch: { name: 'main', detached: false, unborn: true } }), {
-    kind: 'unborn',
-  })
-  assert.deepEqual(workingSummary({
-    capabilities: { workingCopy: 'row' },
-    branch: { name: 'main', detached: false, unborn: false },
-    total: 3,
-    groups: {
-      staged: [{ path: 'a', added: 10, deleted: 2 }],
-      unstaged: [{ path: 'b', added: 4, deleted: 1 }],
-      untracked: [{ path: 'c', added: 0, deleted: 0 }],
-    },
-  }), { head: { kind: 'branch', name: 'main' }, changed: 3, added: 14, deleted: 3 })
+  assert.equal(normalizeTurnHead({ kind: 'unknown' }), null)
+  assert.equal(normalizeTurnHead(null), null)
 
-  assert.deepEqual(workingSummary({
-    capabilities: { workingCopy: 'commit' },
-    workingCopy: { changeId: 'qpvuntsm', summary: { changed: 2, added: 9, deleted: 5 } },
-    groups: {},
-    total: 2,
-  }), { head: { kind: 'workingCopy', changeId: 'qpvuntsm' }, changed: 2, added: 9, deleted: 5 })
-  assert.equal(workingSummary({ capabilities: { workingCopy: 'commit' } }), null)
+  assert.deepEqual(normalizeTurnSummary({
+    turn: 3,
+    head: { kind: 'branch', name: 'feat/a' },
+    changed: 2,
+    added: 14,
+    deleted: 3,
+  }), {
+    head: { kind: 'branch', name: 'feat/a' },
+    changed: 2,
+    added: 14,
+    deleted: 3,
+  })
+
+  // Non-repo workspace turn: counts without a repository head.
+  assert.deepEqual(normalizeTurnSummary({
+    turn: 1,
+    head: null,
+    changed: 1,
+    added: 8,
+    deleted: 0,
+  }), {
+    head: null,
+    changed: 1,
+    added: 8,
+    deleted: 0,
+  })
+
+  // Head-only fallback when change counts were not recorded.
+  assert.deepEqual(normalizeTurnSummary({
+    turn: 2,
+    head: { kind: 'workingCopy', changeId: 'abcd1234' },
+    changed: null,
+    added: null,
+    deleted: null,
+  }), {
+    head: { kind: 'workingCopy', changeId: 'abcd1234' },
+    changed: null,
+    added: null,
+    deleted: null,
+  })
+
+  assert.equal(normalizeTurnSummary({ head: null, changed: null, added: null, deleted: null }), null)
+  assert.equal(normalizeTurnSummary({ head: null, changed: -1, added: 0, deleted: 0 }), null)
+  assert.equal(normalizeTurnSummary({ head: null, changed: 1, added: 2 }), null)
+  assert.equal(normalizeTurnSummary(null), null)
 })
 
-/** Drain pending microtasks of an async store turn. */
+/** Drain pending microtasks of an async store read. */
 async function settle() {
   for (let i = 0; i < 6; i += 1) await Promise.resolve()
 }
 
-test('the working-status store coalesces concurrent banner mounts and refreshes on newer turns', async () => {
-  let clock = 1_000
-  let currentSummary = { branch: 'main', added: 12, deleted: 3 }
+test('the turn-summary store caches resolved turns, remembers missing ones, and retries transient failures', async () => {
   const calls = []
-  let persistedRepo = null
-  const store = createWorkingStatusStore({
-    now: () => clock,
-    staleMs: 30_000,
-    loadStateImpl: () => ({ repo: persistedRepo }),
+  let failNetworkOnce = true
+  const store = createTurnSummaryStore({
+    maxIdle: 2,
     createApiImpl: sessionId => ({
-      async repositories() {
-        calls.push(['repositories', sessionId])
-        return { repositories: [{ path: '/repo', enclosing: true }] }
-      },
-      async status(repo) {
-        calls.push(['status', sessionId, repo])
+      async turn(turn, seq) {
+        calls.push([sessionId, turn, seq])
+        if (turn === 1) {
+          return {
+            turn: 1,
+            head: { kind: 'branch', name: 'main' },
+            changed: 2,
+            added: 15,
+            deleted: 4,
+          }
+        }
+        if (turn === 2) {
+          const err = new Error('gone')
+          err.code = 'not-found'
+          err.status = 404
+          throw err
+        }
+        if (turn === 3 && failNetworkOnce) {
+          failNetworkOnce = false
+          const err = new Error('offline')
+          err.code = 'network'
+          err.status = 0
+          throw err
+        }
         return {
-          branch: { name: currentSummary.branch, detached: false, unborn: false },
-          total: 1,
-          groups: { unstaged: [{ path: 'a.js', added: currentSummary.added, deleted: currentSummary.deleted }] },
+          turn,
+          head: { kind: 'branch', name: `branch-${turn}` },
+          changed: 1,
+          added: turn,
+          deleted: 0,
         }
       },
     }),
   })
 
-  const notifications = []
-  const off1 = store.subscribe('s1', () => { notifications.push(store.get('s1')) })
-  const off2 = store.subscribe('s1', () => { notifications.push(store.get('s1')) })
-  store.observe('s1', { turn: 1, seq: 10 })
-  store.observe('s1', { turn: 2, seq: 25 })
+  let notified = 0
+  const off1 = store.subscribe('s1', 1, 10, () => { notified += 1 })
+  store.observe('s1', 1, 10)
+  store.observe('s1', 1, 10)
   await settle()
 
-  assert.deepEqual(calls, [['repositories', 's1'], ['status', 's1', '/repo']])
-  assert.deepEqual(store.get('s1'), {
+  assert.deepEqual(calls, [['s1', 1, 10]])
+  assert.equal(notified, 1)
+  assert.deepEqual(store.get('s1', 1, 10), {
     head: { kind: 'branch', name: 'main' },
-    changed: 1,
-    added: 12,
-    deleted: 3,
+    changed: 2,
+    added: 15,
+    deleted: 4,
   })
-  assert.equal(notifications.length, 2, 'each subscribed banner hears the resolved summary once')
+  off1()
 
-  // Remounting an already-covered turn within the freshness window makes no request.
-  store.observe('s1', { turn: 2, seq: 25 })
+  // Re-observing a cached turn makes no network request.
+  store.observe('s1', 1, 10)
+  await settle()
+  assert.equal(calls.length, 1)
+
+  // A 404 from a pre-restart turn marks the record missing and does not poll again.
+  store.observe('s1', 2, 20)
+  await settle()
+  assert.equal(store.get('s1', 2, 20), null)
+  store.observe('s1', 2, 20)
   await settle()
   assert.equal(calls.length, 2)
 
-  // A new changed turn refreshes status directly on the known repository.
-  currentSummary = { branch: 'main', added: 30, deleted: 8 }
-  store.observe('s1', { turn: 3, seq: 40 })
+  // A transient network failure retries on a later observe or connection reset.
+  const off3 = store.subscribe('s1', 3, 30, () => { notified += 1 })
+  store.observe('s1', 3, 30)
   await settle()
-  assert.deepEqual(calls, [
-    ['repositories', 's1'],
-    ['status', 's1', '/repo'],
-    ['status', 's1', '/repo'],
-  ])
-  assert.deepEqual(store.get('s1'), {
-    head: { kind: 'branch', name: 'main' },
-    changed: 1,
-    added: 30,
-    deleted: 8,
-  })
-
-  // Returning after the stale window refreshes active Sessions once, including branch switches.
-  currentSummary = { branch: 'feat', added: 0, deleted: 0 }
-  clock += 31_000
-  store.refreshStale()
+  assert.equal(store.get('s1', 3, 30), null)
+  store.reset()
   await settle()
-  assert.equal(calls.length, 4)
-  assert.deepEqual(store.get('s1'), {
-    head: { kind: 'branch', name: 'feat' },
+  assert.deepEqual(store.get('s1', 3, 30), {
+    head: { kind: 'branch', name: 'branch-3' },
     changed: 1,
-    added: 0,
+    added: 3,
     deleted: 0,
   })
+  // Settled turn 1 survived `reset()`.
+  assert.equal(store.get('s1', 1, 10)?.head?.name, 'main')
+  off3()
 
-  // Switching the persisted repository resets the summary and queries the new root.
-  persistedRepo = '/repo-b'
-  currentSummary = { branch: 'dev', added: 5, deleted: 1 }
-  store.observe('s1', { turn: 3, seq: 40 })
-  assert.equal(store.get('s1'), null)
+  // Unsubscribed entries past `maxIdle` evict in LRU order.
+  store.observe('s1', 4, 40)
   await settle()
-  assert.deepEqual(calls.at(-1), ['status', 's1', '/repo-b'])
-  assert.deepEqual(store.get('s1'), {
-    head: { kind: 'branch', name: 'dev' },
-    changed: 1,
-    added: 5,
-    deleted: 1,
-  })
+  assert.equal(store.get('s1', 1, 10), null, 'oldest idle turn evicted past maxIdle=2')
+  assert.equal(store.get('s1', 3, 30)?.head?.name, 'branch-3')
+  assert.equal(store.get('s1', 4, 40)?.head?.name, 'branch-4')
 
-  off1()
-  off2()
   store.dispose()
 })
 
-test('the working-status store accepts VcsView publications, recovers from missing repos, and aborts on unmount', async () => {
+test('the turn-summary store aborts an in-flight read when its last banner unmounts', async () => {
   let aborted = false
-  let failRepoOnce = true
-  const calls = []
-  const store = createWorkingStatusStore({
-    loadStateImpl: sessionId => ({ repo: sessionId === 's2' ? '/hang' : '/stale' }),
+  let requests = 0
+  const store = createTurnSummaryStore({
     createApiImpl: () => ({
-      async repositories() {
-        calls.push('repositories')
-        return { repositories: [{ path: '/fresh', enclosing: true }] }
-      },
-      async status(repo, signal) {
-        calls.push(`status:${repo}`)
-        if (repo === '/stale' && failRepoOnce) {
-          failRepoOnce = false
-          const err = new Error('gone')
-          err.code = 'not-a-repo'
-          throw err
-        }
-        if (repo === '/hang') {
+      turn(_turn, _seq, signal) {
+        requests += 1
+        if (requests === 1) {
           return new Promise((_, reject) => {
             signal.addEventListener('abort', () => {
               aborted = true
-              const abortErr = new Error('aborted')
-              abortErr.name = 'AbortError'
-              reject(abortErr)
+              const err = new Error('aborted')
+              err.name = 'AbortError'
+              reject(err)
             })
           })
         }
-        return {
-          capabilities: { workingCopy: 'commit' },
-          workingCopy: { changeId: 'zyxw9876', summary: { changed: 1, added: 7, deleted: 2 } },
-        }
+        return Promise.resolve({
+          turn: 5,
+          head: { kind: 'workingCopy', changeId: 'zyxw9876' },
+          changed: 1,
+          added: 6,
+          deleted: 2,
+        })
       },
     }),
   })
 
-  // Direct publication from VcsView warms the summary without a fetch.
-  store.publish('s1', '/stale', {
-    capabilities: { workingCopy: 'commit' },
-    workingCopy: { changeId: 'abcd1234', summary: { changed: 1, added: 4, deleted: 0 } },
-  })
-  assert.deepEqual(store.get('s1'), {
-    head: { kind: 'workingCopy', changeId: 'abcd1234' },
-    changed: 1,
-    added: 4,
-    deleted: 0,
-  })
-
-  // A newer turn hits `/stale`, gets `not-a-repo`, re-discovers `/fresh`, and updates.
-  const off = store.subscribe('s1', () => {})
-  store.observe('s1', { turn: 2, seq: 20 })
-  await settle()
-  assert.deepEqual(calls, ['status:/stale', 'repositories', 'status:/fresh'])
-  assert.deepEqual(store.get('s1'), {
-    head: { kind: 'workingCopy', changeId: 'zyxw9876' },
-    changed: 1,
-    added: 7,
-    deleted: 2,
-  })
-  off()
-
-  // Unsubscribing the last banner cancels an in-flight status read.
-  store.publish('s2', '/hang', { total: 0, groups: {} })
-  const offHang = store.subscribe('s2', () => {})
-  store.observe('s2', { turn: 1, seq: 5 })
+  const off = store.subscribe('s2', 5, 50, () => {})
+  store.observe('s2', 5, 50)
   await Promise.resolve()
-  offHang()
+  off()
   await settle()
   assert.equal(aborted, true)
+
+  // Mounting again starts a clean request and resolves.
+  const offAgain = store.subscribe('s2', 5, 50, () => {})
+  store.observe('s2', 5, 50)
+  await settle()
+  assert.deepEqual(store.get('s2', 5, 50), {
+    head: { kind: 'workingCopy', changeId: 'zyxw9876' },
+    changed: 1,
+    added: 6,
+    deleted: 2,
+  })
+  offAgain()
   store.dispose()
 })

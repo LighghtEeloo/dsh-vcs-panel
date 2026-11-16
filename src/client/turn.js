@@ -98,11 +98,17 @@ export function isMutationCall(name, raw) {
 
 /** Fold state of one Turn; `calls` remembers which calls may mutate. */
 function initialState(turn) {
-  return { turn, calls: new Map(), changed: false }
+  return { turn, calls: new Map(), changed: false, seq: null }
+}
+
+/** Normalize an event sequence number, or null when absent. */
+function eventSeq(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
 /**
- * Build the state-only definition that publishes whether a Turn changed files.
+ * Build the state-only definition that publishes whether a Turn changed files
+ * and the sequence of its latest `workspace/changes` announcement.
  * @returns {object} a Conversation node definition without a target.
  */
 export function createTurnChangesDefinition() {
@@ -128,7 +134,8 @@ export function createTurnChangesDefinition() {
     update(context, match) {
       const state = context.state
       if (match.event.type === 'workspace/changes') {
-        return state.changed ? state : { ...state, changed: true }
+        const seq = eventSeq(match.event.seq) ?? state.seq
+        return state.changed && seq === state.seq ? state : { ...state, changed: true, seq }
       }
       if (match.event.type === 'tool/call') {
         const { callId, name, arguments: raw } = match.event.data
@@ -145,18 +152,33 @@ export function createTurnChangesDefinition() {
     },
     buildLocationData(context, scope, previous) {
       if (scope !== 'turn' || context.state === undefined || !context.state.changed) return null
+      const seq = context.state.seq
       if (previous?.kind === 'turn'
         && previous.turn === context.state.turn
         && previous.key === TURN_CHANGES_KIND
-        && previous.value?.changed === true) return previous
+        && previous.value?.changed === true
+        && (previous.value.seq ?? null) === seq) return previous
       return {
         kind: 'turn',
         turn: context.state.turn,
         key: TURN_CHANGES_KIND,
-        value: { changed: true },
+        value: seq === null ? { changed: true } : { changed: true, seq },
       }
     },
   }
+}
+
+/**
+ * Read the published change coordinates of a Turn Location.
+ * @param {{ turn?: number, data?: { get(key: string): unknown } } | undefined} turn - turn location.
+ * @returns {{ turn: number | null, seq: number | null } | null} the coordinates, or null when unchanged.
+ */
+export function turnChanges(turn) {
+  if (turn === undefined || turn === null || typeof turn.data?.get !== 'function') return null
+  const value = turn.data.get(TURN_CHANGES_KIND)
+  if (value === null || typeof value !== 'object' || value.changed !== true) return null
+  const turnNumber = Number.isSafeInteger(turn.turn) && turn.turn >= 1 ? turn.turn : null
+  return { turn: turnNumber, seq: eventSeq(value.seq) }
 }
 
 /**
@@ -165,7 +187,5 @@ export function createTurnChangesDefinition() {
  * @returns {boolean} true when the definition published a change.
  */
 export function turnChangedFiles(turn) {
-  if (turn === undefined || turn === null || typeof turn.data?.get !== 'function') return false
-  const value = turn.data.get(TURN_CHANGES_KIND)
-  return value !== null && typeof value === 'object' && value.changed === true
+  return turnChanges(turn) !== null
 }

@@ -18,11 +18,11 @@ import {
   SHORTCUT_DEFAULTS, SHORTCUT_ID, VCS_VIEW,
   createViewRegistry, mainSessionId, resolveBackView,
 } from './shortcuts.js'
-import { createTurnChangesDefinition, turnChangedFiles } from './turn.js'
+import { createTurnChangesDefinition, turnChangedFiles, turnChanges } from './turn.js'
+import { createTurnSummaryStore } from './turn-summary.js'
 import { TurnTailChanges } from './TurnTail.jsx'
 import { VcsView } from './VcsView.jsx'
 import { ViewErrorBoundary } from './ViewErrorBoundary.jsx'
-import { createWorkingStatusStore } from './working-status.js'
 
 /** Locale namespace owned by this plugin. */
 const NS = 'vcs'
@@ -244,22 +244,16 @@ export function apply(ctx) {
 
   ctx.effect(() => ctx.uiConversation.events.register(createTurnChangesDefinition()), 'dsh-vcs-panel: turn changes')
 
-  const workingStatus = createWorkingStatusStore()
+  const turnSummaries = createTurnSummaryStore()
   ctx.effect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return
-      workingStatus.refreshStale()
-    }
-    if (typeof document.addEventListener === 'function') {
-      document.addEventListener('visibilitychange', onVisible)
-    }
+    const disposeReset = typeof ctx.on === 'function'
+      ? ctx.on('connection/reset', () => { turnSummaries.reset() })
+      : undefined
     return () => {
-      if (typeof document.removeEventListener === 'function') {
-        document.removeEventListener('visibilitychange', onVisible)
-      }
-      workingStatus.dispose()
+      if (typeof disposeReset === 'function') disposeReset()
+      turnSummaries.dispose()
     }
-  }, 'dsh-vcs-panel: working status')
+  }, 'dsh-vcs-panel: turn summaries')
 
   const t = ctx.locale.bind(NS)
 
@@ -278,7 +272,7 @@ export function apply(ctx) {
   }
 
   /**
-   * Version control view bound to the active UI locale and shared working status.
+   * Version control view bound to the active UI locale.
    * @param {object} props - standard Conversation view props.
    * @returns {object} the version control view with the active locale.
    */
@@ -286,13 +280,7 @@ export function apply(ctx) {
     const locale = useActiveLocale()
     return (
       <ViewErrorBoundary key={props.sessionId} t={t}>
-        <VcsView
-          {...props}
-          locale={locale}
-          onWorkingStatus={(repo, status) => {
-            workingStatus.publish(props.sessionId, repo, status)
-          }}
-        />
+        <VcsView {...props} locale={locale} />
       </ViewErrorBoundary>
     )
   }
@@ -307,8 +295,8 @@ export function apply(ctx) {
 
   ctx.slots.inject('conversation.chat.turnTail', () => mountWithConversationStore(ctx, (store) => {
     /**
-     * Banner for a Turn that changed files, subscribed to the Session's shared
-     * working-state line counts.
+     * Banner for a Turn that changed files, reading that Turn's recorded
+     * repository head and line-diff totals.
      *
      * `openView` also leaves a focus request for the view, so the keyboard
      * lands inside the panel after the Chat row unmounts; `setView` is the
@@ -317,17 +305,17 @@ export function apply(ctx) {
      */
     function ActiveTurnTailEntry(props) {
       const locale = useActiveLocale()
-      const [summary, setSummary] = useState(() => workingStatus.get(props.sessionId))
+      const coordinates = turnChanges(props.turn)
+      const turnNumber = coordinates?.turn ?? null
+      const seq = coordinates?.seq ?? null
+      const [, setRevision] = useState(0)
+      const summary = turnSummaries.get(props.sessionId, turnNumber, seq)
       useEffect(() => {
-        setSummary(workingStatus.get(props.sessionId))
-        return workingStatus.subscribe(props.sessionId, () => {
-          setSummary(workingStatus.get(props.sessionId))
+        const unsubscribe = turnSummaries.subscribe(props.sessionId, turnNumber, seq, () => {
+          setRevision(value => value + 1)
         })
-      }, [props.sessionId])
-      const turnNumber = props.turn?.turn
-      const seq = props.seq
-      useEffect(() => {
-        workingStatus.observe(props.sessionId, { turn: turnNumber, seq })
+        turnSummaries.observe(props.sessionId, turnNumber, seq)
+        return unsubscribe
       }, [props.sessionId, turnNumber, seq])
       const open = () => {
         try {
