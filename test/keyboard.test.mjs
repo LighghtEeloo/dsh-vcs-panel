@@ -916,6 +916,183 @@ test('ChangeTree steps hunks with j/k inside an expanded file and moves rows wit
     harness.keyDown(harness.document.activeElement, '[')
     assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|a.js')
     assert.equal(treeEl.scrollTop, 28)
+
+    // At the end of a.js, j leaves the diff level and focuses b.js's row; the
+    // next press enters b.js at its first hunk.
+    harness.keyDown(harness.document.activeElement, 'j')
+    harness.keyDown(harness.document.activeElement, 'j')
+    assert.equal(treeEl.scrollTop, 244)
+    harness.keyDown(harness.document.activeElement, 'j')
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|b.js')
+    assert.equal(treeEl.scrollTop, 244)
+    harness.keyDown(harness.document.activeElement, 'j')
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|b.js')
+    assert.equal(treeEl.scrollTop, 588)
+  } finally {
+    harness.unmount()
+    restore()
+  }
+})
+
+test('ChangeTree focuses a closed next file at the end of a diff', async () => {
+  const harness = createHarness()
+  const restore = harness.installGlobals()
+  try {
+    const { ChangeTree } = await loadClientModule('src/client/detail/ChangeTree.jsx', harness)
+    const groups = [{
+      id: 'unstaged',
+      header: true,
+      entries: [
+        { path: 'a.js', status: 'M', added: 1, deleted: 0 },
+        { path: 'b.js', status: 'M', added: 1, deleted: 0 },
+      ],
+    }]
+    const rows = buildNodeRows(groups)
+    const budget = budgetFolds(streamSections(groups, {}, null))
+    const control = { current: null }
+    const api = {
+      async diff(_repo, target) {
+        return {
+          kind: 'text',
+          path: target.path,
+          before: true,
+          after: true,
+          hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['+a'] }],
+        }
+      },
+    }
+
+    harness.mount(harness.react.createElement(ChangeTree, {
+      api,
+      repo: '/repo',
+      rev: null,
+      rows,
+      budget,
+      folds: { 'unstaged|a.js': false },
+      split: false,
+      wrap: false,
+      revision: 0,
+      cache: new Map(),
+      initialAnchor: null,
+      onReading() {},
+      onToggleRow() {},
+      onBulkFold() {},
+      onLeave() {},
+      control,
+      t,
+      locale: 'en-US',
+    }))
+    harness.intersections[0].trigger(() => true)
+    await harness.settle()
+
+    const treeEl = harness.document.body.querySelector('.vcs-tree')
+    const groupWrap = treeEl.querySelector('.vcs-tree-group')
+    const [fileASection, fileBSection] = treeEl.querySelectorAll('.vcs-tree-file')
+    const headers = treeEl.querySelectorAll('[data-diff-hunk-header]')
+    assert.equal(headers.length, 1)
+    groupWrap.offsetTop = 0
+    groupWrap.offsetParent = treeEl
+    fileASection.offsetTop = 56
+    fileASection.offsetParent = treeEl
+    fileBSection.offsetTop = 600
+    fileBSection.offsetParent = treeEl
+    headers[0].offsetTop = 44
+
+    harness.keyDown(treeEl.querySelector('.vcs-tree-group-head'), ']')
+    harness.keyDown(harness.document.activeElement, 'j')
+    assert.equal(treeEl.scrollTop, 44)
+    harness.keyDown(harness.document.activeElement, 'j')
+
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|b.js')
+    assert.equal(treeEl.scrollTop, 572)
+    assert.equal(treeEl.querySelectorAll('.vcs-tree-file-head')[1].attributes.get('aria-expanded'), 'false')
+  } finally {
+    harness.unmount()
+    restore()
+  }
+})
+
+test('ChangeTree enters the closest open diff above from a closed file row', async () => {
+  const harness = createHarness()
+  const restore = harness.installGlobals()
+  try {
+    const { ChangeTree } = await loadClientModule('src/client/detail/ChangeTree.jsx', harness)
+    const groups = [{
+      id: 'unstaged',
+      header: true,
+      entries: [
+        { path: 'a.js', status: 'M', added: 2, deleted: 0 },
+        { path: 'b.js', status: 'M', added: 1, deleted: 0 },
+      ],
+    }]
+    const rows = buildNodeRows(groups)
+    const budget = budgetFolds(streamSections(groups, {}, null))
+    const control = { current: null }
+    const hunk = line => ({ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: [line] })
+    const api = {
+      async diff(_repo, target) {
+        return {
+          kind: 'text',
+          path: target.path,
+          before: true,
+          after: true,
+          hunks: target.path === 'a.js' ? [hunk('+a1'), hunk('+a2')] : [hunk('+b1')],
+        }
+      },
+    }
+
+    harness.mount(harness.react.createElement(ChangeTree, {
+      api,
+      repo: '/repo',
+      rev: null,
+      rows,
+      budget,
+      folds: { 'unstaged|a.js': false },
+      split: false,
+      wrap: false,
+      revision: 0,
+      cache: new Map(),
+      initialAnchor: null,
+      onReading() {},
+      onToggleRow() {},
+      onBulkFold() {},
+      onLeave() {},
+      control,
+      t,
+      locale: 'en-US',
+    }))
+    harness.intersections[0].trigger(() => true)
+    await harness.settle()
+
+    const treeEl = harness.document.body.querySelector('.vcs-tree')
+    const groupWrap = treeEl.querySelector('.vcs-tree-group')
+    const [fileASection, fileBSection] = treeEl.querySelectorAll('.vcs-tree-file')
+    const headers = treeEl.querySelectorAll('[data-diff-hunk-header]')
+    assert.equal(headers.length, 2)
+    groupWrap.offsetTop = 0
+    groupWrap.offsetParent = treeEl
+    fileASection.offsetTop = 56
+    fileASection.offsetParent = treeEl
+    fileBSection.offsetTop = 600
+    fileBSection.offsetParent = treeEl
+    headers[0].offsetTop = 44
+    headers[1].offsetTop = 244
+
+    // Reach the closed b.js row, then move up through either key.
+    harness.keyDown(treeEl.querySelector('.vcs-tree-group-head'), ']')
+    harness.keyDown(harness.document.activeElement, ']')
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|b.js')
+    assert.equal(treeEl.scrollTop, 572)
+
+    harness.keyDown(harness.document.activeElement, 'ArrowUp')
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|a.js')
+    assert.equal(treeEl.scrollTop, 244)
+
+    harness.keyDown(harness.document.activeElement, ']')
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|b.js')
+    harness.keyDown(harness.document.activeElement, 'k')
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|a.js')
+    assert.equal(treeEl.scrollTop, 244)
   } finally {
     harness.unmount()
     restore()

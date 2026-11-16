@@ -503,19 +503,19 @@ export function ChangeTree({
     report()
   }, [alignmentTop, flowTop, focusRowElement, grouped, hunkOffsets, navRows, report, setCursorAt])
 
-  /** `j` / `k` inside an expanded file: step to the next or previous hunk, crossing files and skipping folded ones. */
+  /**
+   * `j` / `k` inside an expanded file: step to the next or previous hunk.
+   * At the end of a diff the next file row takes focus, even when folded, so
+   * the reader can keep moving instead of stopping on the last hunk. At the
+   * start, backward jumps enter the previous unfolded file at its last hunk.
+   */
   const jumpHunk = useCallback(direction => {
     const root = scrollRef.current
     if (root === null || navRows.length === 0) return
     lastInputRef.current = 'keyboard'
     const stickyBottom = (grouped ? ROW_HEIGHT : 0) + ROW_HEIGHT
     const line = root.scrollTop + stickyBottom
-    const tops = []
-    for (const row of navRows) {
-      const element = rowEls.current.get(row.key)
-      tops.push(element === undefined ? Number.POSITIVE_INFINITY : flowTop(element))
-    }
-    const index = rowAt(tops, line + 1)
+    const index = Math.max(0, Math.min(cursorRef.current, navRows.length - 1))
     const row = navRows[index]
     if (row !== undefined && row.kind === 'file' && !isRowFolded(row)) {
       const offsets = hunkOffsets(row)
@@ -538,9 +538,43 @@ export function ChangeTree({
         return
       }
     }
-    const targetIndex = nextFileRow(navRows, index, direction, isRowFolded)
-    if (targetIndex >= 0) scrollToFileHunk(targetIndex, direction)
-  }, [focusRowElement, flowTop, grouped, hunkOffsets, isRowFolded, navRows, report, scrollToFileHunk, setCursorAt])
+    if (direction > 0) {
+      // Leaving the diff level focuses the adjacent file row; a second press
+      // then enters that file's diff or keeps moving through the rows.
+      const targetIndex = nextFileRow(navRows, index, direction)
+      if (targetIndex >= 0) {
+        focusRowAt(targetIndex)
+        report()
+        return
+      }
+    } else {
+      // Backward hunk flow enters the previous unfolded file at its last hunk.
+      const targetIndex = nextFileRow(navRows, index, direction, isRowFolded)
+      if (targetIndex >= 0) {
+        scrollToFileHunk(targetIndex, direction)
+        return
+      }
+    }
+    move(direction)
+  }, [focusRowAt, focusRowElement, grouped, hunkOffsets, isRowFolded, move, navRows, report, scrollToFileHunk, setCursorAt])
+
+  /**
+   * `↑` / `k` from a closed file row: enter the closest unfolded file above
+   * at its last hunk, so moving up reverses the step out of a diff. Other rows
+   * keep the normal upward row movement.
+   */
+  const up = useCallback(() => {
+    const index = Math.max(0, Math.min(cursorRef.current, navRows.length - 1))
+    const row = navRows[index]
+    if (row?.kind === 'file' && isRowFolded(row)) {
+      const targetIndex = nextFileRow(navRows, index, -1, isRowFolded)
+      if (targetIndex >= 0) {
+        scrollToFileHunk(targetIndex, -1)
+        return
+      }
+    }
+    move(-1)
+  }, [isRowFolded, move, navRows, scrollToFileHunk])
 
   const onKeyDown = event => {
     if (isEditableTarget(event.target)) return
@@ -570,7 +604,7 @@ export function ChangeTree({
     }
     if (direction === UP) {
       event.preventDefault()
-      move(-1)
+      up()
       return
     }
     if (direction === FORWARD) {

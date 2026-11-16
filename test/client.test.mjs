@@ -839,7 +839,7 @@ test('a loadable directory is not compressed into the directory above it', () =>
   assert.equal(rows[1].loadable, true)
 })
 
-test('nextFileRow crosses only unfolded file rows', () => {
+test('nextFileRow finds adjacent file rows and can skip folded ones', () => {
   const rows = [
     { kind: 'group', key: 'g' },
     { kind: 'file', key: 'a' },
@@ -849,11 +849,13 @@ test('nextFileRow crosses only unfolded file rows', () => {
   ]
   const folded = new Set(['b'])
   const isFoldedRow = row => folded.has(row.key)
-  assert.equal(nextFileRow(rows, 0, 1, isFoldedRow), 1)
-  assert.equal(nextFileRow(rows, 1, 1, isFoldedRow), 4, 'a folded file is skipped')
-  assert.equal(nextFileRow(rows, 1, -1, isFoldedRow), -1)
+  assert.equal(nextFileRow(rows, 0, 1), 1)
+  assert.equal(nextFileRow(rows, 1, 1), 3, 'a folded file is still a file row')
+  assert.equal(nextFileRow(rows, 1, 1, isFoldedRow), 4, 'a folded file can be skipped')
+  assert.equal(nextFileRow(rows, 1, -1), -1)
+  assert.equal(nextFileRow(rows, 4, -1), 3)
   assert.equal(nextFileRow(rows, 4, -1, isFoldedRow), 1)
-  assert.equal(nextFileRow(rows, rows.length - 1, 1, isFoldedRow), -1)
+  assert.equal(nextFileRow(rows, rows.length - 1, 1), -1)
 })
 
 test('the split fallback width is the documented one', () => {
