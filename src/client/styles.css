@@ -27,9 +27,84 @@
   outline: none;
 }
 
+/* Focus --------------------------------------------------------------------
+   Two shapes, both in the host's focus color. The host clears that color for
+   pointer input, so rings appear only while the keyboard is in use.
+
+   A discrete control (button, select, toggle) carries the host ring just
+   outside its own edge, so the ring never covers the icon or label.
+
+   Rows are stops of the panel's one cursor: timeline rows, change-tree rows,
+   hunk headers, and branch-menu items. Each draws its state on a rounded
+   pill inset from the edges and painted under its content, so a sticky row
+   keeps its opaque band and the lane graph stays on top. The pill reads, in
+   rising order: hover; current (the selected node or the row being read),
+   in the host's selection fill; and cursor (the focused stop), tinted with
+   the focus color, plus a thin ring while the keyboard is in use. A current
+   row whose pane has lost focus keeps the neutral fill, so the tint always
+   names the one stop the keys will move. */
+
+.vcs-root {
+  --vcs-current-fill: var(--dsw-alias-interactive-bg-active, var(--dsw-alias-interactive-bg-hover));
+  --vcs-cursor-fill: color-mix(in srgb, var(--dsw-alias-state-business-primary) 14%, transparent);
+  --vcs-cursor-ring-width: 1px;
+}
+
 .vcs-root :where(button, select, [tabindex]):focus-visible {
-  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-brand-primary));
-  outline-offset: -2px;
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+.vcs-timeline-row,
+.vcs-tree-row,
+.vcs-tree .vcs-diff-hunk-header {
+  isolation: isolate;
+}
+
+.vcs-timeline-row::before,
+.vcs-tree-row::before,
+.vcs-tree .vcs-diff-hunk-header::before {
+  position: absolute;
+  inset: 1px 4px;
+  z-index: -1;
+  border-radius: var(--dsw-radius-sm, 6px);
+  content: '';
+  pointer-events: none;
+}
+
+.vcs-timeline-row::before {
+  inset: 2px 4px;
+}
+
+.vcs-timeline-row:hover::before,
+.vcs-tree-row:hover::before {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.vcs-timeline-row[aria-current='true']::before,
+.vcs-tree-row[aria-current]::before {
+  background: var(--vcs-current-fill);
+}
+
+.vcs-timeline-row:focus::before,
+.vcs-tree-row:focus::before,
+.vcs-tree .vcs-diff-hunk-header:focus::before,
+.vcs-branch-item:focus {
+  background: var(--vcs-cursor-fill);
+}
+
+.vcs-timeline-row:focus-visible,
+.vcs-tree-row:focus-visible,
+.vcs-tree .vcs-diff-hunk-header:focus-visible,
+.vcs-branch-item:focus-visible {
+  outline: none;
+}
+
+.vcs-timeline-row:focus-visible::before,
+.vcs-tree-row:focus-visible::before,
+.vcs-tree .vcs-diff-hunk-header:focus-visible::before,
+.vcs-branch-item:focus-visible {
+  box-shadow: inset 0 0 0 var(--vcs-cursor-ring-width) var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
 }
 
 /* Header ------------------------------------------------------------------ */
@@ -155,8 +230,8 @@
   cursor: pointer;
 }
 
-.vcs-branch-item:hover {
-  background: var(--dsw-alias-bg-layer-1);
+.vcs-branch-item:hover:not(:focus) {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .vcs-branch-item[aria-checked='true'] {
@@ -291,9 +366,14 @@
   background: transparent;
 }
 
-.vcs-resizer:hover,
+.vcs-resizer:hover {
+  background: var(--dsw-alias-border-l2);
+}
+
+/* The handle is itself the ring: a 5px strip has no room for one around it. */
 .vcs-resizer:focus-visible {
-  background: var(--dsw-alias-brand-primary);
+  outline: none;
+  background: var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
 }
 
 .vcs-content {
@@ -347,14 +427,6 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-}
-
-.vcs-timeline-row:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.vcs-timeline-row[aria-current='true'] {
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent);
 }
 
 .vcs-timeline-title {
@@ -696,8 +768,10 @@
   padding-bottom: 24px;
 }
 
-/* Group, directory, and file rows share one control. */
+/* Group, directory, and file rows share one control; its pill is drawn under
+   Focus at the top of this sheet. */
 .vcs-tree-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -712,15 +786,6 @@
   text-align: left;
   cursor: pointer;
   white-space: nowrap;
-}
-
-.vcs-tree-row:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-/* The row the reader is on: a group, a directory, or a file. */
-.vcs-tree-row[aria-current] {
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent);
 }
 
 .vcs-tree-group-head {
@@ -744,16 +809,18 @@
 
 /* A file head sticks under its group head and only until the comparison
    below it ends, so at most two rows hold the top of the tree. Only an open
-   head draws a rule, under itself and without layout, so a folded list reads
-   as one list and every row keeps the shared height. */
+   head takes the file-head band and draws a rule, under itself and without
+   layout, so a folded list reads as one list and every row keeps the shared
+   height. */
 .vcs-tree-file-head-wrap {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: var(--dsw-alias-bg-layer-1);
+  background: var(--dsw-alias-bg-base);
 }
 
 .vcs-tree-file-head-wrap[data-open] {
+  background: var(--dsw-alias-bg-layer-1);
   box-shadow: 0 0.5px 0 var(--dsw-alias-border-l1);
 }
 
@@ -867,8 +934,8 @@
   cursor: default;
 }
 
-.vcs-tree-loading:hover {
-  background: transparent;
+.vcs-tree-loading::before {
+  content: none;
 }
 
 .vcs-tree-file-body {
@@ -903,6 +970,16 @@
 
 .vcs-tree .vcs-diff-column {
   overflow-y: hidden;
+}
+
+/* A hunk header is a cursor stop too: its pill is drawn under Focus, and its
+   text steps up from tertiary while the cursor is on it. */
+.vcs-tree .vcs-diff-hunk-header {
+  position: relative;
+}
+
+.vcs-tree .vcs-diff-hunk-header:focus {
+  color: var(--dsw-alias-label-secondary);
 }
 
 /* Controls ---------------------------------------------------------------- */
@@ -1440,7 +1517,7 @@
 }
 
 .vcs-turn-banner:focus-visible {
-  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-brand-primary));
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 1px;
 }
 

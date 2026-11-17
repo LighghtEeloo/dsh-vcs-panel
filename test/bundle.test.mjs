@@ -508,6 +508,40 @@ test('selection styles target the classes and attributes the components set', ()
   assert.doesNotMatch(css, /aria-selected/u)
 })
 
+test('focus marks use the host focus color and leave sticky rows opaque', () => {
+  const css = readFileSync(new URL('../src/client/styles.css', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//gu, '')
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+    .map(([, selector, body]) => ({ parts: selector.split(',').map(part => part.trim()), body }))
+
+  // Every ring names the host focus color and falls back to the host's own
+  // default, which the host clears for pointer input.
+  const rings = css.match(/var\(--dsw-focus-ring-color[^;]*/gu) ?? []
+  assert.ok(rings.length >= 4)
+  for (const ring of rings) {
+    assert.match(ring, /^var\(--dsw-focus-ring-color, var\(--dsw-alias-state-business-primary\)\)/u)
+  }
+
+  // brand-primary is near black or white in the host themes; it never marks
+  // focus, the cursor, or the current row.
+  const offenders = rules
+    .filter(rule => rule.parts.some(part => /focus|aria-current/u.test(part)) && /brand-primary/u.test(rule.body))
+    .flatMap(rule => rule.parts)
+  assert.deepEqual(offenders, [])
+
+  // Row states paint a pill under the content, never the row's own
+  // background, so a stuck group or file head stays opaque while it is
+  // hovered, current, or focused.
+  const rowStates = rules.filter(rule => /(^|;|\s)background:/u.test(rule.body)
+    && rule.parts.some(part => /\.vcs-(tree|timeline)-row/u.test(part) && /:hover|:focus|\[aria-current/u.test(part)))
+  assert.ok(rowStates.length >= 3)
+  for (const rule of rowStates) {
+    for (const part of rule.parts.filter(candidate => /\.vcs-(tree|timeline)-row/u.test(candidate))) {
+      assert.match(part, /::before$/u, part)
+    }
+  }
+})
+
 test('the change tree exposes disclosure semantics and one tab stop', () => {
   const read = path => readFileSync(new URL(`../src/client/${path}`, import.meta.url), 'utf8')
   const css = read('styles.css')
