@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Versionsverwaltungs-Panel",
-    "description": "Fügt jeder Unterhaltung eine Versionsverwaltungsansicht für Git- und Jujutsu-Repositories hinzu: laufende Änderungen mit Datei-Diffs sowie Commit-Verlauf mit Lane-Graph und Commit-Details. Das Durchsehen ist schreibgeschützt bis auf zwei Aktionen: Das Branch-Menü checkt einen vorhandenen lokalen Branch aus, und „Synchronisieren“ holt den Upstream eines Git-Branches und führt dann einen Fast-Forward oder Push aus. Es wird nichts bereitgestellt, committet, gemergt, rebased, per Force-Push überschrieben, verworfen, neu angelegt oder an Commits bzw. Lesezeichen umgeschrieben. Jujutsu kann beim Lesen die Arbeitskopie als Snapshot sichern."
+    "description": "Fügt der rechten Seitenleiste einen Tab zur Versionsverwaltung für Git- und Jujutsu-Repositories hinzu: laufende Änderungen mit Datei-Diffs sowie Commit-Verlauf mit Lane-Graph und Commit-Details. Das Durchsehen ist schreibgeschützt bis auf zwei Aktionen: Das Branch-Menü checkt einen vorhandenen lokalen Branch aus, und „Synchronisieren“ holt den Upstream eines Git-Branches und führt dann einen Fast-Forward oder Push aus. Es wird nichts bereitgestellt, committet, gemergt, rebased, per Force-Push überschrieben, verworfen, neu angelegt oder an Commits bzw. Lesezeichen umgeschrieben. Jujutsu kann beim Lesen die Arbeitskopie als Snapshot sichern."
   }
 }

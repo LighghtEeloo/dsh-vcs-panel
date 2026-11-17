@@ -2,14 +2,15 @@
 
 English | [中文](README.zh.md)
 
-Version control inside DeepSeek Harness conversations. Adds a `VCS` tab to inspect working changes, syntax-highlighted diffs, and commit history with a lane graph—for both **Git** and **Jujutsu** repositories—and to sync a Git branch with its upstream or switch between local branches in one click.
+Version control in the DeepSeek Harness right Sidebar. Adds a `VCS` tab to inspect working changes, syntax-highlighted diffs, and commit history with a lane graph, for both **Git** and **Jujutsu** repositories—and to sync a Git branch with its upstream or switch between local branches in one click.
 
 ## Features
 
+- **In the Sidebar.** The panel lives in a `VCS` tab beside files and terminals, with a card on the Sidebar guide. The Turn banner and the shortcut open the same tab.
 - **Timeline & lane graph.** Working changes (`Working tree` in Git, `@` in Jujutsu) sit above topological commit history with branches, bookmarks, tags, and scope toggle (`HEAD` / `@` or all commits). Supports multi-repository workspaces.
 - **Inline change tree.** Browse changed files as a collapsible list, or expand any file to read its diff in place with sticky headers, unified or split view, and line wrapping.
 - **Git & Jujutsu native.** Shows staged and unstaged groups (`?` for untracked items) and ahead/behind in Git; shows `@`, change IDs, and bookmarks in Jujutsu.
-- **Turn banner & shortcut.** File-changing turns end with a compact VCS banner showing that turn's branch (or `@`), changed-file count, and `+` / `−` line totals in place of Chat's changed-files card. Toggle `VCS` from anywhere with `⌘⇧G` / `Ctrl+Shift+G`.
+- **Turn banner & shortcut.** File-changing turns end with a compact VCS banner showing that turn's branch (or `@`), changed-file count, and `+` / `−` line totals in place of Chat's changed-files card. Open the Sidebar tab from anywhere with `⌘⇧G` / `Ctrl+Shift+G`, and press it again to slide back to the conversation.
 - **One-click sync.** The button beside the Git branch shows ahead/behind counts; clicking it fetches the upstream, then fast-forwards or pushes. A diverged branch, a fast-forward that would overwrite local edits, or a branch without an upstream is left untouched with a note on what to do next.
 - **Branch switching.** The branch name opens the repository's local branches; picking one checks it out. Only local branches are listed—no implicit remote-tracking branches—and Git refuses when local changes would be overwritten, so nothing is stashed, discarded, or forced.
 - **Read-only otherwise.** Sync and branch switching are the only writes: the panel never stages, commits, merges, rebases, force-pushes, discards changes, or creates branches (Jujutsu only snapshots the working copy on read). Follows DSH themes and all 8 UI languages, and loads large histories and diffs on demand.
@@ -18,7 +19,7 @@ Version control inside DeepSeek Harness conversations. Adds a `VCS` tab to inspe
 
 | Keys | Action |
 | --- | --- |
-| `⌘⇧G` / `Ctrl+Shift+G` | Toggle `VCS` view and return to previous view (rebind in **Settings → Shortcuts**) |
+| `⌘⇧G` / `Ctrl+Shift+G` | Open the `VCS` tab in the right Sidebar, or collapse the Sidebar when it is showing (rebind in **Settings → Shortcuts**) |
 | `↑` `↓` or `j` `k` | Move through one vertical list of tree rows and hunk headers of open diffs |
 | `←` `→` or `h` `l` | Enter the change tree or an open file; `←` / `h` closes an open file first, then returns to the timeline |
 | `Enter`, `Space`, `Esc` | Fold/expand the focused row; `Esc` returns to the timeline |
@@ -27,7 +28,7 @@ Version control inside DeepSeek Harness conversations. Adds a `VCS` tab to inspe
 
 ## Install
 
-Requires **DSH 0.2.2-rc.1+** (Desktop or Web) and `git` or `jj` on `PATH`.
+Requires **DSH 0.2.2-rc.3+** (Desktop or Web) with the right-Sidebar tab and navigation APIs, and `git` or `jj` on `PATH`.
 
 - **In DSH:** Open **Plugins → Add plugin**, select this directory, and restart DSH.
 - **Via CLI:**

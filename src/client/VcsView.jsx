@@ -1,10 +1,12 @@
 /**
- * The version control view registered in `conversation.view`.
+ * The version control panel, drawn as a right-Sidebar tab.
  *
  * One Session, one repository chooser, one timeline (the working tree, then
  * commits) and one detail pane for the selected node. Host data is read
  * through `api.js`; this component owns request lifecycle, selection, paging,
- * layout, and the sessionStorage-backed state.
+ * layout, and the sessionStorage-backed state. `focusRequest` moves keyboard
+ * focus into the selected timeline row after the Sidebar host has focused its
+ * pane.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -58,10 +60,12 @@ function omit(record, key) {
 }
 
 /**
- * Render the version control view for one Session.
- * @param {{ sessionId: string, t: Function, locale?: string, viewRequest?: object, completeViewRequest?: Function }} props - standard Conversation view props plus the active UI locale.
+ * Render the version control panel for one Session.
+ * @param {{ sessionId: string, t: Function, locale?: string, focusRequest?: number }} props - standard Sidebar tab props plus the active UI locale and a one-shot request to land keyboard focus in the panel.
  */
-export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest }) {
+export function VcsView({
+  sessionId, t, locale, focusRequest = 0,
+}) {
   const [state, setState] = useState(() => loadState(sessionId))
   const stateRef = useRef(state)
   stateRef.current = state
@@ -89,6 +93,8 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   const [branches, setBranches] = useState({ status: 'idle', list: [], truncated: false, error: null })
   // The branch a switch is running for, which keeps the branch icon turning.
   const [switching, setSwitching] = useState(null)
+  // Bumped after the Sidebar host focuses its pane, so the settle effect retries.
+  const [focusTick, setFocusTick] = useState(0)
 
   const rootRef = useRef(null)
   const logKeyRef = useRef('')
@@ -104,6 +110,8 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   const detailControl = useRef(null)
   const pendingEntryFocusRef = useRef(false)
   const pendingDetailFocusRef = useRef(false)
+  // A focus request waits for the Sidebar host to focus its pane first.
+  const hostFocusPendingRef = useRef(false)
 
   const narrow = width > 0 && width < NARROW_WIDTH
   const missingTool = status.status === 'error' && status.error?.code === 'vcs-missing'
@@ -131,14 +139,26 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     }, 300)
   }, [persisted, sessionId])
 
-  // A Conversation View request (for example the turn-tail VCS icon) moves
-  // focus into the panel after the view switches, then acknowledges it.
+  // A Sidebar open leaves focus on the pane it focused. Wait two frames for
+  // that focus, then let the settle effect move on to the selected row.
   useEffect(() => {
-    if (viewRequest?.view !== 'vcs') return
+    if (focusRequest === 0) return undefined
     pendingEntryFocusRef.current = true
-    rootRef.current?.focus({ preventScroll: true })
-    completeViewRequest?.()
-  }, [viewRequest, completeViewRequest])
+    hostFocusPendingRef.current = true
+    let second
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => {
+        // The host's pane focus is in place by now; let the settle effect
+        // move on from it.
+        hostFocusPendingRef.current = false
+        setFocusTick(value => value + 1)
+      })
+    })
+    return () => {
+      cancelAnimationFrame(first)
+      if (second !== undefined) cancelAnimationFrame(second)
+    }
+  }, [focusRequest])
 
   useEffect(() => () => {
     if (persistTimer.current !== null) clearTimeout(persistTimer.current)
@@ -386,10 +406,12 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   const hasTimelineRows = worktreeRow || log.commits.length > 0
   const timelineSettled = hasTimelineRows || log.status === 'ready' || log.status === 'error'
 
-  // Once the timeline mounts after a view-open request, hand focus from the
-  // root shell to the active timeline row so movement keys work right away.
+  // Once the timeline mounts after an open request, hand focus from the host
+  // focused pane to the active timeline row so movement keys work right away.
   useEffect(() => {
     if (!pendingEntryFocusRef.current) return
+    // A Sidebar request waits two frames for the host to focus its pane.
+    if (hostFocusPendingRef.current) return
     if (repositories.status === 'loading') return
     if (repositories.status === 'ready' && state.repo === null && repositories.list.length > 0) return
     if (repositories.status !== 'ready' || state.repo === null || missingTool || !showTimeline) {
@@ -399,10 +421,14 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     if (!timelineSettled) return
     pendingEntryFocusRef.current = false
     const active = typeof document === 'undefined' ? null : document.activeElement
-    if (active !== null && active !== rootRef.current && active !== document.body) return
+    // The Sidebar host focuses the pane, not the panel; that is the handoff
+    // this request was waiting for, so move on from it. Any other focus is a
+    // user's own choice and is left alone.
+    const hostPane = focusRequest > 0 && active?.matches?.('[data-dockkit-pane], [data-dockkit-float]') === true
+    if (active !== null && active !== rootRef.current && active !== document.body && !hostPane) return
     const row = selectedRow >= 0 ? selectedRow : 0
     rootRef.current?.querySelector(`[data-timeline-index="${row}"]`)?.focus({ preventScroll: true })
-  }, [missingTool, repositories.list.length, repositories.status, selectedRow, showTimeline, state.repo, timelineSettled])
+  }, [focusRequest, focusTick, missingTool, repositories.list.length, repositories.status, selectedRow, showTimeline, state.repo, timelineSettled])
 
   // When the default selection moves onto HEAD after status and history arrive,
   // keep an untouched timeline focus on the newly selected row.
@@ -756,7 +782,7 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   if (repositories.status === 'error') {
     const missing = repositories.error?.code === 'vcs-missing'
     return (
-      <div className="vcs-root" data-conversation-composer-overlay="" ref={rootRef} tabIndex={-1}>
+      <div className="vcs-root" ref={rootRef} tabIndex={-1}>
         <div className="vcs-center">
           <p className="vcs-empty-title">{missing ? t('error.vcsMissing') : t('repositories.error')}</p>
           <p className="vcs-note">{missing ? t('error.vcsMissingHint') : errorMessage(t, repositories.error)}</p>
@@ -771,7 +797,6 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
       ref={rootRef}
       className="vcs-root"
       data-narrow={narrow ? 'true' : undefined}
-      data-conversation-composer-overlay=""
       tabIndex={-1}
       onKeyDown={onKeyDown}
     >

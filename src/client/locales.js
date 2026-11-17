@@ -5,7 +5,7 @@
  * in `locale/*.json`; these dictionaries are bundled into the Client half.
  * Missing locales fall back to English through the Host locale service.
  * `view.label` stays compact (`VCS`, or the short Chinese name) so the
- * conversation tab does not truncate it.
+ * right-Sidebar chip does not truncate it.
  */
 
 /** English. */
@@ -18,7 +18,8 @@ const en = {
   'turn.openSummary': 'Open VCS (+{added} −{deleted})',
   'turn.fileChanged': '1 file changed',
   'turn.filesChanged': '{count} files changed',
-  'shortcut.toggle': 'Toggle VCS view',
+  'shortcut.toggle': 'Toggle VCS panel',
+  'sidebar.guide': 'Working changes, diffs, and commit history.',
   'top.repositories': 'Repository',
   'top.noRepository': 'No repository',
   'top.unborn': 'No commits yet',
@@ -123,7 +124,8 @@ const zh = {
   'turn.openSummary': '打开版本管理（+{added} −{deleted}）',
   'turn.fileChanged': '1 个文件改动',
   'turn.filesChanged': '{count} 个文件改动',
-  'shortcut.toggle': '切换版本管理视图',
+  'shortcut.toggle': '切换版本管理面板',
+  'sidebar.guide': '工作改动、diff 与提交历史。',
   'top.repositories': '仓库',
   'top.noRepository': '没有仓库',
   'top.unborn': '尚无提交',
@@ -228,7 +230,8 @@ const ja = {
   'turn.openSummary': 'VCS を開く（+{added} −{deleted}）',
   'turn.fileChanged': '1 件のファイル変更',
   'turn.filesChanged': '{count} 件のファイル変更',
-  'shortcut.toggle': 'VCS ビューを切り替え',
+  'shortcut.toggle': 'VCS パネルを切り替え',
+  'sidebar.guide': '作業中の変更、差分、コミット履歴。',
   'top.repositories': 'リポジトリ',
   'top.noRepository': 'リポジトリなし',
   'top.unborn': 'コミットなし',
@@ -333,7 +336,8 @@ const es = {
   'turn.openSummary': 'Abrir VCS (+{added} −{deleted})',
   'turn.fileChanged': '1 archivo cambiado',
   'turn.filesChanged': '{count} archivos cambiados',
-  'shortcut.toggle': 'Alternar vista de VCS',
+  'shortcut.toggle': 'Alternar panel de VCS',
+  'sidebar.guide': 'Cambios en curso, diferencias e historial de commits.',
   'top.repositories': 'Repositorio',
   'top.noRepository': 'Sin repositorio',
   'top.unborn': 'Todavía sin commits',
@@ -438,7 +442,8 @@ const fr = {
   'turn.openSummary': 'Ouvrir VCS (+{added} −{deleted})',
   'turn.fileChanged': '1 fichier modifié',
   'turn.filesChanged': '{count} fichiers modifiés',
-  'shortcut.toggle': 'Basculer la vue VCS',
+  'shortcut.toggle': 'Basculer le panneau VCS',
+  'sidebar.guide': 'Modifications en cours, diffs et historique des commits.',
   'top.repositories': 'Dépôt',
   'top.noRepository': 'Aucun dépôt',
   'top.unborn': 'Aucun commit',
@@ -543,7 +548,8 @@ const de = {
   'turn.openSummary': 'VCS öffnen (+{added} −{deleted})',
   'turn.fileChanged': '1 Datei geändert',
   'turn.filesChanged': '{count} Dateien geändert',
-  'shortcut.toggle': 'VCS-Ansicht umschalten',
+  'shortcut.toggle': 'VCS-Panel umschalten',
+  'sidebar.guide': 'Laufende Änderungen, Diffs und Commit-Verlauf.',
   'top.repositories': 'Repository',
   'top.noRepository': 'Kein Repository',
   'top.unborn': 'Noch keine Commits',
@@ -648,7 +654,8 @@ const ru = {
   'turn.openSummary': 'Открыть VCS (+{added} −{deleted})',
   'turn.fileChanged': 'Изменён 1 файл',
   'turn.filesChanged': 'Изменено файлов: {count}',
-  'shortcut.toggle': 'Переключить вид VCS',
+  'shortcut.toggle': 'Переключить панель VCS',
+  'sidebar.guide': 'Текущие изменения, диффы и история коммитов.',
   'top.repositories': 'Репозиторий',
   'top.noRepository': 'Нет репозитория',
   'top.unborn': 'Коммитов пока нет',
@@ -753,7 +760,8 @@ const pt = {
   'turn.openSummary': 'Abrir VCS (+{added} −{deleted})',
   'turn.fileChanged': '1 arquivo alterado',
   'turn.filesChanged': '{count} arquivos alterados',
-  'shortcut.toggle': 'Alternar visão de VCS',
+  'shortcut.toggle': 'Alternar painel de VCS',
+  'sidebar.guide': 'Alterações em andamento, diffs e histórico de commits.',
   'top.repositories': 'Repositório',
   'top.noRepository': 'Sem repositório',
   'top.unborn': 'Ainda sem commits',

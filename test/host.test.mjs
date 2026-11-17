@@ -2060,7 +2060,11 @@ test('switch is refused for Jujutsu, which has no branch to check out', { skip: 
 test('a write in flight blocks both a second switch and a sync', async () => {
   const { createBackends } = await import('../lib/vcs/index.js')
   const fixtureSwitch = buildSwitchFixture('switch-lock')
-  const host = createHost()
+  const host = createHost({
+    sessions: {
+      get: id => (id === fixtureSwitch.sessionId ? { header: { cwd: fixtureSwitch.repo } } : undefined),
+    },
+  })
   const real = createBackends(host)
   let release
   let started = 0
@@ -2077,7 +2081,9 @@ test('a write in flight blocks both a second switch and a sync', async () => {
   const body = { sessionId: fixtureSwitch.sessionId, repo: realpathSync(fixtureSwitch.repo) }
 
   const first = postSwitch(gatedHandlers.switchBranch, { ...body, branch: 'topic' })
-  while (started === 0) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const deadline = Date.now() + 5_000
+  while (started === 0 && Date.now() < deadline) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.equal(started, 1, 'the first switch reached the backend')
   const second = await postSwitch(gatedHandlers.switchBranch, { ...body, branch: 'main' })
   assert.equal(second.status, 409)
   assert.equal(second.body.error.code, 'busy')

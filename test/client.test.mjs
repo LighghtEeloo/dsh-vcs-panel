@@ -2,8 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  defaultState, isNode, loadState, nodePatch, preferredNode, saveState, sanitizeState, storageKey,
-  SIDEBAR_MIN, SIDEBAR_MAX, WORKING_COPY, WORKTREE,
+  defaultState, isNode, loadState, nodePatch, preferredNode, saveState, sanitizeState,
+  SIDEBAR_MIN, SIDEBAR_MAX, storageKey, WORKING_COPY, WORKTREE,
 } from '../src/client/state.js'
 import {
   errorMessage, formatCommitTime, formatCount, formatDateTime, lineCounts, shortChangeId, shortSha, splitPath, statusKey,

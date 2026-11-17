@@ -196,16 +196,16 @@ type TurnSummary = {
 
 ### 宿主接缝
 
-Client 顶层注入 `['slots', 'locale', 'uiConversation']`，在四处与 DSH 宿主内部机制衔接，每处均设有降级或恢复边界：
+Client 顶层注入 `['slots', 'locale', 'uiConversation', 'sidebarRight', 'sidebarRightTabs']`。以下宿主接缝均设有明确的恢复或降级边界：
 
-- **视图槽位与崩溃隔离**：注册 `conversation.view`（`id: 'vcs'`，`order: 20`）。DSH 的 `SlotErrorBoundary` 捕获异常后会将条目永久标为 abdicated 并移除页签，因此视图内部包有 `ViewErrorBoundary`：捕获渲染错误后展示重试页，将时间、错误与截断至 12,000 字符的调用栈写入 `sessionStorage` 的 `vcs:last-error`，重试时保留原会话状态重新挂载。
-- **Turn 改动判定与每轮摘要缓存**：`createTurnChangesDefinition` 注册 `vcs-changes` 事件定义，聚合每轮最新的 `workspace/changes` 事件序号（`seq`）与成功的文件写入工具结果；Conversation 引擎要求 Location 数据键与定义 `kind` 完全同名，因此键固定为 `vcs-changes`。`conversation.chat.turnTail` 条目（`order: -10`）仅在该标志为真时按 `(sessionId, turn, seq)` 从 `turn-summary.js` 读取一次 `/api/vcs.turn`：已解析结果在客户端按 LRU 缓存，切回 Chat 直接同步渲染；`404`/`400`/`409` 记为 `missing` 不再重复请求（回退展示“打开版本管理”）；净改动文件数为 0 的轮次隐藏横幅；连接重置（`connection/reset`）时仅重拉未就绪条目。
+- **页签注册与崩溃隔离**：注册右侧栏页签类型 `{ id: 'dsh-vcs-panel', kind: 'vcs', guide: [...] }`，正文与标题分别注册到 `sidebar.right.pane.tab` / `sidebar.right.pane.tab.title`，key 均为 `dsh-vcs-panel`。引导卡片用 `view.label` 作标题、`sidebar.guide` 作说明、轮末横幅的 `GitBranchIcon` 作图标，并显示快捷键；`order: 15` 让卡片紧跟在文件卡片（10）之后、终端（20）之前。正文内包 `ViewErrorBoundary`：捕获渲染错误后展示重试页，将时间、错误与截断至 12,000 字符的调用栈写入 `sessionStorage` 的 `vcs:last-error`，重试时保留原会话状态重新挂载。
+- **Turn 改动判定与每轮摘要缓存**：`createTurnChangesDefinition` 注册 `vcs-changes` 事件定义，聚合每轮最新的 `workspace/changes` 事件序号（`seq`）与成功的文件写入工具结果；Conversation 引擎要求 Location 数据键与定义 `kind` 完全同名，因此键固定为 `vcs-changes`。`conversation.chat.turnTail` 条目（`order: -10`）仅在该标志为真时按 `(sessionId, turn, seq)` 从 `turn-summary.js` 读取一次 `/api/vcs.turn`：已解析结果在客户端按 LRU 缓存，切回 Chat 直接同步渲染；`404`/`400`/`409` 记为 `missing` 不再重复请求（回退展示“打开版本管理”）；净改动文件数为 0 的轮次隐藏横幅；连接重置（`connection/reset`）时仅重拉未就绪条目。点击横幅调用 `ctx.sidebarRight.openTab('vcs')`。
+- **入口与键盘焦点**：轮末横幅与全局快捷键打开同一个右侧栏页签。快捷键 `vcs.view.toggle` 在可选的 `['shortcuts', 'sessions']` 作用域注册（默认键位冲突时回退为空绑定），用 `mainSessionId` 与 `sidebar.mounted` 确认控制器作用在屏幕上的会话；右侧栏正展开且活动页签是 VCS 时 `hide(tab.id)` 收起右侧栏——页签与正文保持挂载，宿主滑走的是面板本身，避免关闭页签后先卸载内容再收起造成的跳变；否则 `openTab('vcs')` 打开或显示页签。正文通过框架注入的 `useTabInfo()` 读取 `tab`：页签可见且 `tab.navigation.revision > 0` 时递增聚焦请求；`VcsView` 等宿主聚焦面板容器后再把焦点移到时间线当前行。页面恢复的页签（revision 0）不抢焦点。
 - **隐藏宿主改动卡片**：`workspace-changes` 拒绝 `maxFiles: 0`，因此 `cordis.patch.yml` 不改动宿主配置，改由样式规则 `[data-turn-tail] [data-changed-files] { display: none !important; }` 仅隐藏文件卡片，保留改动记录器与 `present` 交付卡片。宿主 DOM 标记变更时仅退化为重新显示原卡片。
-- **会话 Store 借用与全局快捷键**：DSH 未将视图切换暴露为独立服务，当前视图保存在 `conversation.session` 槽位声明的 Store 中。Turn 横幅与 `conversation.session.header.utilities` 上的零渲染桥接条目（`dsh-vcs-panel:view-bridge`）通过声明同一 Store handle 拿到 `actions`（槽位未就绪时订阅等待，缺失时不挂载）。快捷键 `vcs.view.toggle` 在可选的 `['shortcuts', 'sessions']` 作用域注册（默认键位冲突时回退为空绑定）：进入 VCS 调用 `activate('vcs')` + `openView('vcs', source)` 留下聚焦请求；返回上一非 VCS 视图调用 `activate(view)` + `setView(view)` + `completeViewRequest()`，清除可能尚未消费的聚焦请求。模态框打开或无活跃主视图会话（`retainedBy.mainView > 0`）时返回 `pass`。
 
 ### 状态持久化与锚点恢复
 
-会话状态保存在 `sessionStorage` 的 `vcs:<sessionId>`，包含 `repo`、`node`、`nodeChosen`、`ref`、`dirs`、`collapsed`、`folds`、`anchor`（`{ key, offset }`）、`split`、`wrap`、`sidebarWidth` 与 `timelineScroll`；内存另外按仓库记住切换前的选中节点、目录折叠与历史范围。
+会话状态保存在 `sessionStorage` 的 `vcs:<sessionId>`，包含 `repo`、`node`、`nodeChosen`、`ref`、`dirs`、`collapsed`、`folds`、`anchor`（`{ key, offset }`）、`split`、`wrap`、`sidebarWidth` 与 `timelineScroll`；内存另外按仓库记住切换前的选中节点、目录折叠与历史范围。页签身份与右侧栏布局由宿主的 `sidebarRight` 存储按会话保存，应用重启后恢复；面板自己的阅读状态（含时间线宽度）单独保存。
 
 `folds` 只为用户显式操作过的文件保存布尔值：空记录表示文件全部收起，也就是详情的默认形态。行键前缀白名单为 `staged|`、`unstaged|`、`commit|`；`sanitizeState` 在读取时丢弃未知字段与旧版遗留的 `untracked|` 键。数据刷新、折叠全部文件或收起吸顶文件头时，统一先记录锚点行与行内像素偏移，重排后恢复；锚点行未渲染时沿“文件行 → 父目录链 → 分组行”降级。
 
@@ -215,6 +215,7 @@ Client 顶层注入 `['slots', 'locale', 'uiConversation']`，在四处与 DSH �
 
 - **时间线图布局**：`buildGraph` 接收拓扑序节点，按 `pass / goto / end` 遍历活动 lane（第一父延续当前 lane，其余父节点分配或复用侧 lane，lane 结束时回收颜色；Git 工作区虚节点以虚线连向 `HEAD`），输出路径与圆点坐标，与虚拟列表共用滚动容器渲染；分页追加时 O(n) 重算整图并按提交锚点恢复位置。
 - **变更树与请求调度**：客户端将 Git 的 `untracked` 条目并入 `unstaged` 分组（可按需展开的未跟踪目录不参与单子目录链压缩），生成单一扁平行列表供渲染、roving tabindex 键盘导航与滚动锚点共用；文件默认收起，只有展开的行才请求 `vcs.diff`。发起请求时仍按条目自身状态还原 `scope`（`?` 走 `untracked`，重命名带 `oldPath`）。变更树窄于 640 px（`SPLIT_MIN_WIDTH`）时将 `FileDiff` 的 `split` 置为 `false` 单栏渲染。展开文件由 `IntersectionObserver` 入队请求，离开视口时经 `AbortController` 取消。`↑` / `↓` 或 `j` / `k` 沿一条纵向列表移动：分组、目录、文件行与展开文件的 hunk header 共用同一光标，hunk header 设 `tabIndex=-1` 以便程序聚焦但仍沿用行的 roving tabindex；`[` / `]` 只按树行移动。滚动时按当前阅读位置把光标同步到所在行或 hunk，并保持阅读行、焦点和吸顶标题指向同一位置；`←` / `h` 在当前行是展开文件时先收起它，已收起时才回到时间线，`Esc` 保留为直接返回。键盘匹配排除 `AltGraph`，保证需要 AltGr 输入 `[` / `]` 的键盘布局可用。
+- **右侧栏布局**：`VcsView` 的根节点只按自身宽度决定单栏或双栏，不为对话输入框预留底部空间。窄栏（`< 760px`）顶部栏可换行、高度自适应，避免只读标识与刷新按钮被裁掉；时间线与详情沿用已有的单栏切换。
 
 ## 复用与来源
 

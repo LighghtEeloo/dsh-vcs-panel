@@ -93,7 +93,7 @@ test('every literal t(key) and every dynamic key resolves in every dictionary', 
   assert.deepEqual(missing, [])
 })
 
-test('view labels stay short enough for the conversation tab', () => {
+test('view labels stay short enough for the Sidebar chip', () => {
   for (const locale of LOCALES) {
     const label = DICTIONARIES[locale]['view.label']
     assert.ok(displayWidth(label) <= 12, `${locale} view.label is ${displayWidth(label)} columns: ${label}`)

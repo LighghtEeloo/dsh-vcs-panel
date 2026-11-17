@@ -1215,7 +1215,6 @@ test('VcsView lands keyboard focus on the timeline and completes deferred detail
       const sha1 = 'a'.repeat(40)
       const sha2 = 'b'.repeat(40)
       let resolveCommit2 = null
-      let completedRequests = 0
 
       const fetchImpl = async url => {
         const parsed = new URL(url, 'http://127.0.0.1')
@@ -1309,12 +1308,10 @@ test('VcsView lands keyboard focus on the timeline and completes deferred detail
           sessionId: `session-kbd-${width}`,
           t,
           locale: 'en-US',
-          viewRequest: { view: 'vcs', source: 'shortcut' },
-          completeViewRequest: () => { completedRequests += 1 },
+          focusRequest: 1,
         }))
         await harness.settle()
 
-        assert.equal(completedRequests, 1)
         // Clean working tree defaults to HEAD (timeline index 1), and focus followed it.
         assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
 
@@ -1478,8 +1475,7 @@ test('rapid keyboard commit switching while commit and diff bodies abort never t
         sessionId: 'session-rapid',
         t,
         locale: 'en-US',
-        viewRequest: { view: 'vcs', source: 'shortcut' },
-        completeViewRequest() {},
+        focusRequest: 1,
       }))
       await harness.settle()
 

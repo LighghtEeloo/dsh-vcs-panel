@@ -1,8 +1,8 @@
 {
   "name": "dsh-vcs-panel",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
-  "description": "Version control panel for DeepSeek Harness: working changes, their diffs, and history with a lane graph, for Git and Jujutsu repositories, plus switching Git branches and one-click fast-forward-or-push sync.",
+  "description": "Version control panel for DeepSeek Harness, in the right sidebar: working changes, their diffs, and history with a lane graph, for Git and Jujutsu repositories, plus switching Git branches and one-click fast-forward-or-push sync.",
   "icon": "./icon.svg",
   "type": "module",
   "keywords": [
@@ -18,7 +18,7 @@
     "jj"
   ],
   "engines": {
-    "dsh": ">=0.2.2-rc.1"
+    "dsh": ">=0.2.2-rc.3"
   },
   "exports": {
     ".": "./index.js",
@@ -52,6 +52,7 @@
       "inject": [
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
         "@deepseek-ai/dsh-client-shortcuts"
       ]
     }

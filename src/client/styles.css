@@ -15,7 +15,6 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  padding-bottom: calc(var(--dsh-composer-height, 152px) + 8px);
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-bg-base);
   font-family: var(--dsw-font-family);
@@ -1285,6 +1284,20 @@
 }
 
 /* Narrow single-column layout -------------------------------------------- */
+
+/* A narrow Sidebar keeps every header control reachable by wrapping instead of
+   clipping the right end of the bar. */
+.vcs-root[data-narrow] .vcs-topbar {
+  height: auto;
+  min-height: 42px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  padding-block: 6px;
+}
+
+.vcs-root[data-narrow] .vcs-notice {
+  flex: 1 1 120px;
+}
 
 .vcs-root[data-narrow] .vcs-sidebar {
   flex: 1;

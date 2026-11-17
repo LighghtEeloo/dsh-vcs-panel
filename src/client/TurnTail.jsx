@@ -2,20 +2,26 @@
  * Turn-tail banner for a completed Turn that changed files.
  *
  * Replaces DSH's per-turn changed-files card with one full-width banner whose
- * target is the version control view: the branch glyph, the branch or `@` on
- * which that turn ran, and that turn's changed-file count on the left; that
- * turn's `+added` / `−deleted` pair and a popout icon on the right. The
- * definition in `turn.js` decides whether the banner appears, and
+ * target is the version control panel in the right Sidebar: the branch glyph,
+ * the branch or `@` on which that turn ran, and that turn's changed-file count
+ * on the left; that turn's `+added` / `−deleted` pair and a popout icon on the
+ * right. The definition in `turn.js` decides whether the banner appears, and
  * `turn-summary.js` reads the recorded per-turn summary once.
  */
 
 import { formatCount, shortChangeId } from './format.js'
 import { turnChangedFiles } from './turn.js'
 
-/** The git-branch glyph; drawn inline so the bundle needs no icon package. */
-function GitBranchIcon() {
+/**
+ * The git-branch glyph, drawn inline so the bundle needs no icon package. The
+ * Sidebar guide entry draws the same glyph; `size` and `className` let each
+ * surface supply its own box.
+ * @param {{ size?: number, className?: string }} [props] - drawn size and class.
+ * @returns {object} the glyph.
+ */
+export function GitBranchIcon({ size = 16, className }) {
   return (
-    <svg className="vcs-turn-glyph" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"
+    <svg className={className} viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" focusable="false"
       fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="4.5" cy="3.5" r="1.55" />
       <circle cx="4.5" cy="12.5" r="1.55" />
@@ -26,7 +32,7 @@ function GitBranchIcon() {
   )
 }
 
-/** Popout glyph indicating that activating the banner switches to the VCS view. */
+/** Popout glyph indicating that activating the banner opens the Sidebar panel. */
 function PopoutIcon() {
   return (
     <svg className="vcs-turn-popout" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"
@@ -79,7 +85,7 @@ function filesChangedText(changed, locale, t) {
  * @param {{ head?: object | null, changed: number | null, added: number | null, deleted: number | null } | null} [props.summary] - recorded turn state.
  * @param {string} [props.locale] - active BCP 47 locale for number grouping.
  * @param {(key: string, vars?: Record<string, string>) => string} props.t - this plugin's translator.
- * @param {() => void} props.onOpen - selects the version control view.
+ * @param {() => void} props.onOpen - opens the version control panel in the Sidebar.
  * @returns {object | null} the banner, or null when the Turn made no net changes.
  */
 export function TurnTailChanges({ turn, summary = null, locale, t, onOpen }) {
@@ -103,7 +109,7 @@ export function TurnTailChanges({ turn, summary = null, locale, t, onOpen }) {
     <div className="vcs-turn-tail">
       <button type="button" className="vcs-turn-banner" title={hint} aria-label={label} onClick={onOpen}>
         <span className="vcs-turn-left" aria-hidden="true">
-          <GitBranchIcon />
+          <GitBranchIcon className="vcs-turn-glyph" />
           {head.node === null ? null : (
             <>
               {head.node}

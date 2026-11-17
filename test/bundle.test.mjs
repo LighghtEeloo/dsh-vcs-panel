@@ -36,14 +36,27 @@ function loadBundle({ onEffect } = {}) {
   return { plugin, registered }
 }
 
+/** A locale service stub that reports one active language. */
+function localeStub(active = 'zh', calls = []) {
+  return {
+    register(ns, dicts) {
+      calls.push({ ns, dicts })
+      return () => undefined
+    },
+    bind(ns) { return key => `${ns}:${key}` },
+    getLocale() { return { active, locales: [], revision: 0 } },
+    subscribe() { return () => undefined },
+  }
+}
+
 test('client.js registers the expected module id and exports apply/inject', () => {
   const { plugin, registered } = loadBundle()
   assert.equal(registered.id, 'dsh-vcs-panel')
-  assert.deepEqual(plugin.inject, ['slots', 'locale', 'uiConversation'])
+  assert.deepEqual(plugin.inject, ['slots', 'locale', 'uiConversation', 'sidebarRight', 'sidebarRightTabs'])
   assert.equal(typeof plugin.apply, 'function')
 })
 
-test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-tail entry', async () => {
+test('apply registers the dictionaries, stylesheet, Sidebar page, Turn fold, and Turn-tail entry', async () => {
   const pendingEffects = []
   let capturingEffects = false
   const { plugin } = loadBundle({
@@ -53,13 +66,15 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
   })
   const effects = []
   const localeCalls = []
-  const injections = []
+  const optionalInjections = []
+  const commands = []
   const registrations = []
   const definitions = []
-  const activations = []
   const styles = []
-  const setViews = []
   const fetchCalls = []
+  const sidebarOpened = []
+  const tabDefinitions = []
+  let sessionSnapshot = { byId: { s1: { id: 's1', retainedBy: { mainView: 1 } } } }
   const document = {
     visibilityState: 'visible',
     head: {
@@ -72,10 +87,6 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
         remove() { this.removed = true },
       }
     },
-  }
-  const store = {
-    create() { throw new Error('the test never mounts the store') },
-    spec: { actions: { setView() {} } },
   }
   const previousDocument = globalThis.document
   const previousFetch = globalThis.fetch
@@ -98,27 +109,21 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
   }
   try {
     const ctx = {
-      inject() { return () => undefined },
+      inject(deps, callback) {
+        optionalInjections.push(deps)
+        callback({
+          effect: fn => fn(),
+          shortcuts: { register(command) { commands.push(command); return () => undefined } },
+          sessions: { list: { getSnapshot: () => sessionSnapshot } },
+        })
+        return () => undefined
+      },
       effect(fn, label) {
         const disposer = fn()
         effects.push({ label, disposer })
         return disposer
       },
-      locale: {
-        register(ns, dicts) {
-          localeCalls.push({ ns, dicts })
-          return () => undefined
-        },
-        bind(ns) {
-          return key => `${ns}:${key}`
-        },
-        getLocale() {
-          return { active: 'zh', locales: [], revision: 0 }
-        },
-        subscribe() {
-          return () => undefined
-        },
-      },
+      locale: localeStub('zh', localeCalls),
       uiConversation: {
         events: {
           register(definition) {
@@ -126,19 +131,22 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
             return () => undefined
           },
         },
-        binding(sessionId) {
-          return { activate: view => activations.push({ sessionId, view }) }
+      },
+      sidebarRight: {
+        mounted: { getSnapshot: () => 's1' },
+        isExpanded: () => false,
+        active: () => undefined,
+        openTab(kind) { sidebarOpened.push(kind) },
+      },
+      sidebarRightTabs: {
+        register(definition) {
+          tabDefinitions.push(definition)
+          return () => undefined
         },
       },
       slots: {
-        entries(key) {
-          assert.equal(key, 'conversation.session')
-          return [{ options: { id: 'session' }, store }]
-        },
         inject(key, callback) {
-          injections.push(key)
-          callback()
-          return () => undefined
+          return callback()
         },
         register(options, component) {
           registrations.push({ options, component })
@@ -158,7 +166,13 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
       assert.equal(typeof entries['turn.openSummary'], 'string')
       assert.equal(typeof entries['turn.fileChanged'], 'string')
       assert.equal(typeof entries['turn.filesChanged'], 'string')
+      assert.equal(typeof entries['sidebar.guide'], 'string')
+      assert.equal('surface.openSidebar' in entries, false)
+      assert.equal('surface.unavailable' in entries, false)
     }
+    assert.deepEqual(optionalInjections, [['shortcuts', 'sessions']])
+    assert.equal(commands.length, 1)
+    assert.equal(commands[0].id, 'vcs.view.toggle')
 
     assert.equal(styles.length, 1)
     assert.match(styles[0].textContent, /\.vcs-root/)
@@ -167,38 +181,58 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     assert.match(styles[0].textContent, /\.vcs-turn-banner/)
     assert.match(styles[0].textContent, /\.vcs-turn-stat/)
     assert.match(styles[0].textContent, /\.vcs-turn-popout/)
+    assert.doesNotMatch(styles[0].textContent, /data-surface/u)
 
     // The fold that publishes "this Turn changed files" has no view target.
     assert.equal(definitions.length, 1)
     assert.equal(definitions[0].kind, 'vcs-changes')
     assert.equal(definitions[0].target, undefined)
 
-    assert.deepEqual(injections, ['conversation.view', 'conversation.chat.turnTail'])
-    assert.equal(registrations.length, 2)
+    // The page type carries one guide card, and the card draws the Turn
+    // banner's branch glyph at the host's icon size.
+    assert.equal(tabDefinitions.length, 1)
+    const definition = tabDefinitions[0]
+    assert.equal(definition.id, 'dsh-vcs-panel')
+    assert.equal(definition.kind, 'vcs')
+    assert.equal(definition.title(), 'vcs:view.label')
+    assert.equal(definition.guide.length, 1)
+    const guide = definition.guide[0]
+    assert.equal(guide.id, 'vcs')
+    assert.equal(guide.order, 15, 'the card sits right after Files (10) and before Terminal (20)')
+    assert.equal(guide.commandId, 'vcs.view.toggle')
+    assert.equal(guide.title(), 'vcs:view.label')
+    assert.equal(guide.description(), 'vcs:sidebar.guide')
+    assert.equal(typeof guide.icon, 'function')
+    const drawnGuideIcon = guide.icon({ size: 22 })
+    assert.equal(drawnGuideIcon.props.width, 22)
+    assert.equal(drawnGuideIcon.props.height, 22)
+    assert.equal(drawnGuideIcon.props.className, undefined)
 
-    const view = registrations[0]
-    assert.equal(view.options.name, 'conversation.view')
-    assert.equal(view.options.id, 'vcs')
-    assert.equal(view.options.order, 20)
-    assert.equal(view.options.locale, 'vcs')
-    assert.equal(view.options.label(), 'vcs:view.label')
-    assert.equal(typeof view.component, 'function')
-
-    // The registered wrapper passes the active locale to the view so dates and
-    // numbers follow the DSH language rather than the browser's.
-    const tree = view.component({ sessionId: 'session-1', t: key => `vcs:${key}` })
-    const viewTree = tree.props?.children ?? tree.children?.[0]
-    assert.equal(viewTree.props.locale, 'zh')
-
-    // The Turn-tail entry reuses the Conversation shell's store handle, which
-    // is what exposes `setView` to a non-header entry.
-    const tail = registrations[1]
-    assert.equal(tail.options.name, 'conversation.chat.turnTail')
+    assert.deepEqual(
+      registrations.map(entry => entry.options.name),
+      ['sidebar.right.pane.tab', 'sidebar.right.pane.tab.title', 'conversation.chat.turnTail'],
+    )
+    const body = registrations[0]
+    assert.equal(body.options.key, 'dsh-vcs-panel')
+    assert.equal(body.options.locale, 'vcs')
+    assert.equal(typeof body.component, 'function')
+    const title = registrations[1]
+    assert.equal(title.options.key, 'dsh-vcs-panel')
+    assert.equal(title.options.locale, 'vcs')
+    assert.equal(title.component(), 'vcs:view.label')
+    // The body follows the active language and passes the one-shot focus
+    // request through to the panel.
+    const bodyTree = body.component({
+      sessionId: 'session-1',
+      useTabInfo: () => ({ tab: { visible: false, navigation: { revision: 0 } } }),
+    })
+    assert.equal(bodyTree.props.children.props.locale, 'zh')
+    assert.equal(bodyTree.props.children.props.focusRequest, 0)
+    const tail = registrations[2]
     assert.equal(tail.options.id, 'dsh-vcs-panel')
     assert.equal(tail.options.order, -10)
     assert.equal(tail.options.locale, 'vcs')
-    assert.equal(tail.options.store, store)
-    assert.equal(typeof tail.component, 'function')
+    assert.equal('store' in tail.options, false)
 
     const makeTurn = (turnNumber, seq) => ({
       turn: turnNumber,
@@ -233,7 +267,6 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
         if ('count' in vars) return `vcs:${key}:${vars.count}`
         return `vcs:${key}:${vars.added}:${vars.deleted}`
       },
-      actions: { setView: view => setViews.push(view) },
     }
     capturingEffects = true
     const rendered = renderBanner(props)
@@ -245,14 +278,14 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     assert.equal(button.props.title, 'vcs:turn.openHint')
     const [initialLeft, initialRight] = button.props.children
     assert.equal(initialLeft.props.className, 'vcs-turn-left')
+    assert.equal(initialLeft.props.children[0].type, guide.icon, 'the guide reuses the banner branch glyph')
     assert.equal(initialLeft.props.children[2].props.children, 'vcs:turn.openHint')
     assert.equal(initialRight.props.className, 'vcs-turn-right')
     assert.equal(initialRight.props.children[0], null, 'no line counts before turn summary resolves')
     const initialPopout = initialRight.props.children[1].type()
     assert.equal(initialPopout.props.className, 'vcs-turn-popout')
     button.props.onClick()
-    assert.deepEqual(activations, [{ sessionId: 'session-1', view: 'vcs' }])
-    assert.deepEqual(setViews, ['vcs'])
+    assert.deepEqual(sidebarOpened, ['vcs'], 'the banner opens the Sidebar page')
 
     // Flush the turn-1 effect and mount turn 2 in the same Session: each turn
     // keeps its own recorded branch / `@` and line-diff counts.
@@ -298,16 +331,6 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
     cleanupTurn4()
     capturingEffects = false
 
-    // A store with `openView` leaves a focus request for the view instead.
-    const opened = []
-    const withOpenView = renderBanner({
-      ...props,
-      actions: { openView: (view, focus) => opened.push([view, focus]), setView: view => setViews.push(view) },
-    })
-    withOpenView.props.children.props.onClick()
-    assert.deepEqual(opened, [['vcs', 'turn-tail']])
-    assert.deepEqual(setViews, ['vcs'], 'setView is not also called when openView exists')
-
     // A Turn without mutation evidence contributes nothing and mounts no hooks.
     const unchanged = tail.component({ ...props, turn: { data: { get: () => undefined } } })
     assert.equal(unchanged, null)
@@ -332,141 +355,27 @@ test('apply registers the dictionaries, stylesheet, view, Turn fold, and Turn-ta
   }
 })
 
-test('the Turn-tail entry waits for the Conversation store when the Chat view declares first', () => {
+test('the panel shortcut opens the page, collapses the Sidebar, and reveals it again', () => {
   const { plugin } = loadBundle()
-  const registrations = []
-  const store = {
-    create() { throw new Error('the test never mounts the store') },
-    spec: { actions: { setView() {} } },
-  }
-  let entries = []
-  let watcher
-  let watchDisposed = false
-  let tailDisposer
-  const document = {
-    head: { appendChild() {} },
-    createElement() { return { dataset: {}, textContent: '', remove() {} } },
-  }
-  const previousDocument = globalThis.document
-  globalThis.document = document
-  try {
-    plugin.apply({
-      inject() { return () => undefined },
-      effect(fn) { return fn() },
-      locale: {
-        register() { return () => undefined },
-        bind(ns) { return key => `${ns}:${key}` },
-        getLocale() { return { active: 'en', locales: [], revision: 0 } },
-        subscribe() { return () => undefined },
-      },
-      uiConversation: {
-        events: { register() { return () => undefined } },
-        binding() { return { activate() {} } },
-      },
-      slots: {
-        entries(key) {
-          assert.equal(key, 'conversation.session')
-          return entries
-        },
-        subscribe(key, listener) {
-          assert.equal(key, 'conversation.session')
-          watcher = listener
-          return () => { watchDisposed = true }
-        },
-        inject(key, callback) {
-          const dispose = callback()
-          if (key === 'conversation.chat.turnTail') tailDisposer = dispose
-          return () => undefined
-        },
-        register(options, component) {
-          registrations.push({ options, component })
-          return () => undefined
-        },
-      },
-    })
-
-    // Only the view exists; the store appears after the Chat view declared its slot.
-    assert.deepEqual(registrations.map(entry => entry.options.name), ['conversation.view'])
-    assert.equal(typeof watcher, 'function')
-
-    entries = [{ options: { id: 'session' }, store }]
-    watcher()
-    assert.deepEqual(registrations.map(entry => entry.options.name), ['conversation.view', 'conversation.chat.turnTail'])
-    assert.equal(registrations[1].options.store, store)
-    assert.equal(watchDisposed, true)
-
-    // Disposing the injection removes the entry; the watcher is already gone.
-    assert.equal(typeof tailDisposer, 'function')
-    tailDisposer()
-  } finally {
-    globalThis.document = previousDocument
-  }
-})
-
-test('the Turn-tail entry stays absent when no Conversation store ever appears', () => {
-  const { plugin } = loadBundle()
-  const registrations = []
-  let watcher
-  const document = {
-    head: { appendChild() {} },
-    createElement() { return { dataset: {}, textContent: '', remove() {} } },
-  }
-  const previousDocument = globalThis.document
-  globalThis.document = document
-  try {
-    plugin.apply({
-      inject() { return () => undefined },
-      effect(fn) { return fn() },
-      locale: {
-        register() { return () => undefined },
-        bind(ns) { return key => `${ns}:${key}` },
-        getLocale() { return { active: 'en', locales: [], revision: 0 } },
-        subscribe() { return () => undefined },
-      },
-      uiConversation: {
-        events: { register() { return () => undefined } },
-        binding() { return { activate() {} } },
-      },
-      slots: {
-        entries() { return [] },
-        subscribe(key, listener) { watcher = listener; return () => undefined },
-        inject(key, callback) { callback(); return () => undefined },
-        register(options) { registrations.push(options) },
-      },
-    })
-    watcher()
-    assert.deepEqual(registrations.map(entry => entry.name), ['conversation.view'])
-  } finally {
-    globalThis.document = previousDocument
-  }
-})
-
-test('the view shortcut registers and toggles through the invisible Session bridge', () => {
-  const { plugin } = loadBundle()
-  const registrations = []
   const commands = []
-  const activations = []
   const opened = []
-  const views = []
-  let bridgeDisposer
-  let sessionSnapshot = { byId: { s1: { id: 's1', retainedBy: { mainView: 1 } } } }
-  const store = {
-    create() { throw new Error('the test never mounts the store') },
-    spec: { actions: { setView() {} } },
-  }
-  const scope = {
-    effect(fn) {
-      const disposer = fn()
-      assert.equal(typeof disposer, 'function')
-      return disposer
+  const hidden = []
+  let expanded = false
+  let active
+  let snapshot = { byId: { s1: { id: 's1', retainedBy: { mainView: 1 } } } }
+  const sidebar = {
+    mounted: { getSnapshot: () => 's1' },
+    isExpanded: () => expanded,
+    active: () => active,
+    openTab(kind) {
+      opened.push(kind)
+      expanded = true
+      active = { id: 'tab-vcs', kind }
     },
-    shortcuts: {
-      register(command) {
-        commands.push(command)
-        return () => undefined
-      },
+    hide(id) {
+      hidden.push(id)
+      expanded = false
     },
-    sessions: { list: { getSnapshot: () => sessionSnapshot } },
   }
   const document = {
     head: { appendChild() {} },
@@ -478,40 +387,25 @@ test('the view shortcut registers and toggles through the invisible Session brid
     plugin.apply({
       inject(deps, callback) {
         assert.deepEqual(deps, ['shortcuts', 'sessions'])
-        callback(scope)
+        callback({
+          effect(fn) {
+            const disposer = fn()
+            assert.equal(typeof disposer, 'function')
+            return disposer
+          },
+          shortcuts: { register(command) { commands.push(command); return () => undefined } },
+          sessions: { list: { getSnapshot: () => snapshot } },
+        })
         return () => undefined
       },
       effect(fn) { return fn() },
-      locale: {
-        register() { return () => undefined },
-        bind(ns) { return key => `${ns}:${key}` },
-        getLocale() { return { active: 'en', locales: [], revision: 0 } },
-        subscribe() { return () => undefined },
-      },
-      uiConversation: {
-        events: { register() { return () => undefined } },
-        binding(sessionId) {
-          return { activate(view) { activations.push({ sessionId, view }) } }
-        },
-      },
+      locale: localeStub('en'),
+      uiConversation: { events: { register() { return () => undefined } } },
+      sidebarRight: sidebar,
+      sidebarRightTabs: { register() { return () => undefined } },
       slots: {
-        entries(key) {
-          if (key === 'conversation.session') return [{ options: { id: 'session' }, store }]
-          if (key === 'conversation.view') {
-            return [{ options: { id: 'vcs' } }, { options: { id: 'chat' } }, { options: { id: 'trajectory' } }]
-          }
-          return []
-        },
-        subscribe() { return () => undefined },
-        inject(key, callback) {
-          const disposer = callback()
-          if (key === 'conversation.session.header.utilities') bridgeDisposer = disposer
-          return disposer
-        },
-        register(options, component) {
-          registrations.push({ options, component })
-          return () => undefined
-        },
+        inject(key, callback) { return callback() },
+        register() { return () => undefined },
       },
     })
 
@@ -526,43 +420,43 @@ test('the view shortcut registers and toggles through the invisible Session brid
     assert.deepEqual(command.defaults['web:windows'], { code: 'KeyG', modifiers: ['primary', 'shift'] })
     assert.equal(command.defaults['web:linux'], undefined)
 
-    const bridge = registrations.find(entry => entry.options.name === 'conversation.session.header.utilities')
-    assert.notEqual(bridge, undefined)
-    assert.equal(bridge.options.store, store)
-    const requestsCompleted = []
-    const actions = {
-      openView(view, focus) { opened.push([view, focus]) },
-      setView(view) { views.push(view) },
-      completeViewRequest() { requestsCompleted.push(true) },
-    }
-    const show = view => ({ sessionId: 's1', useStore: selector => selector({ view }), actions })
-
-    // Chat -> VCS: the command activates the target and leaves a focus request.
-    assert.equal(bridge.component(show('chat')), null)
-    const enter = command.resolve({ modal: null, region: 'page', target: null })
-    assert.equal(enter.status, 'handled')
-    enter.run()
-    assert.deepEqual(activations, [{ sessionId: 's1', view: 'vcs' }])
-    assert.deepEqual(opened, [['vcs', 'shortcut']])
-
-    // VCS -> the last non-VCS view: setView avoids a second focus request.
-    bridge.component(show('vcs'))
-    const back = command.resolve({ modal: null, region: 'page', target: null })
-    assert.equal(back.status, 'handled')
-    back.run()
-    assert.deepEqual(activations.at(-1), { sessionId: 's1', view: 'chat' })
-    assert.deepEqual(views, ['chat'])
-    assert.deepEqual(requestsCompleted, [true], 'leaving clears a request the view never consumed')
-
     // No current Session and a modal both decline without consuming the key.
-    sessionSnapshot = { byId: {} }
+    snapshot = { byId: {} }
     assert.equal(command.resolve({ modal: null, region: 'page', target: null }).status, 'pass')
-    sessionSnapshot = { byId: { s1: { id: 's1', retainedBy: { mainView: 1 } } } }
+    snapshot = { byId: { s1: { id: 's1', retainedBy: { mainView: 1 } } } }
     assert.equal(command.resolve({ modal: 'settings', region: 'page', target: null }).status, 'pass')
 
-    // The bridge injection owns the registration and can be disposed.
-    assert.equal(typeof bridgeDisposer, 'function')
-    bridgeDisposer()
+    // The first press opens the page; the next press collapses the Sidebar and
+    // keeps the tab mounted so the slide-out shows the panel itself.
+    const open = command.resolve({ modal: null, region: 'page', target: null })
+    assert.equal(open.status, 'handled')
+    open.run()
+    assert.deepEqual(opened, ['vcs'])
+    assert.equal(expanded, true)
+    const collapse = command.resolve({ modal: null, region: 'page', target: null })
+    assert.equal(collapse.status, 'handled')
+    collapse.run()
+    assert.deepEqual(hidden, ['tab-vcs'])
+    assert.equal(expanded, false)
+    assert.equal(active?.kind, 'vcs', 'collapsing keeps the VCS tab')
+
+    // While collapsed, the next press reveals the kept page again.
+    const reopen = command.resolve({ modal: null, region: 'page', target: null })
+    assert.equal(reopen.status, 'handled')
+    reopen.run()
+    assert.deepEqual(opened, ['vcs', 'vcs'])
+
+    // Another tab on screen is revealed rather than hiding the Sidebar.
+    expanded = true
+    active = { id: 'tab-files', kind: 'files' }
+    const reveal = command.resolve({ modal: null, region: 'page', target: null })
+    assert.equal(reveal.status, 'handled')
+    reveal.run()
+    assert.deepEqual(opened, ['vcs', 'vcs', 'vcs'])
+
+    // A retained background Session is not the controller's target.
+    sidebar.mounted = { getSnapshot: () => 's2' }
+    assert.equal(command.resolve({ modal: null, region: 'page', target: null }).status, 'pass')
   } finally {
     globalThis.document = previousDocument
   }

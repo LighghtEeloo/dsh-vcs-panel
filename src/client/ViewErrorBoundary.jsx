@@ -52,7 +52,7 @@ export class ViewErrorBoundary extends Component {
     if (!this.state.failed) return this.props.children
     const t = this.props.t
     return (
-      <div className="vcs-root" data-vcs-crash="" data-conversation-composer-overlay="" tabIndex={-1}>
+      <div className="vcs-root" data-vcs-crash="" tabIndex={-1}>
         <div className="vcs-center">
           <p className="vcs-empty-title">{t('view.crashed')}</p>
           <p className="vcs-note">{t('view.crashedHint')}</p>
