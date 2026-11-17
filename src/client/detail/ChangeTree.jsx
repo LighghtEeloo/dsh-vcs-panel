@@ -970,7 +970,6 @@ export function ChangeTree({
               <strong>{row.name}</strong>
               {expanded && parts.dir !== '' ? <span className="vcs-tree-parent vcs-dim">{parts.dir}</span> : null}
             </span>
-            <span className="vcs-tree-spacer" />
             {fileStat(row.entry)}
           </button>
         </div>

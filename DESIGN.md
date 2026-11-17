@@ -56,15 +56,15 @@ staging、commit、push、分支、stash、rebase 全部堆进一个面板，看
 │ ┊ 4 changed  +20 −6    ├───────────────────────────────────────────────┤
 │ ◉ incr: rename the vi… │ ▾ Staged · vs HEAD             2 files +18 −5 │
 │ │ HEAD → main · 9e4d7… │   ▾ src/client                                │
-│ ● incr: default to hi… │     ▾ M view.jsx  src/client           +12 −3 │
+│ ● incr: default to hi… │     ▾ M view.jsx  src/client  +12 −3          │
 │ │ 2f8acea · 15 min     │ @@ -40,6 +40,9 @@                             │
 │ ● feat: add read-only… │  40  40    const ...                          │
 │ │ 4cdb773 · 31 min     │  41      - old                                │
 │ ● repo: add gitignore… │      42  + new                                │
-│                        │     ▸ M state.js                        +6 −2 │
+│                        │     ▸ M state.js  +6 −2                       │
 │                        │ ▾ Unstaged · vs index           2 files +2 −1 │
 │                        │   ▸ ? notes/                                  │
-│                        │   ▸ M README.md                         +2 −1 │
+│                        │   ▸ M README.md  +2 −1                        │
 └────────────────────────┴───────────────────────────────────────────────┘
   timeline                 change tree
 ```
@@ -77,11 +77,11 @@ staging、commit、push、分支、stash、rebase 全部堆进一个面板，看
 ├───────────────────────────────────────────────┤
 │ ▾ Staged · vs HEAD             2 files +18 −5 │
 │   ▾ src/client                                │
-│     ▸ M view.jsx                       +12 −3 │
-│     ▸ M state.js                        +6 −2 │
+│     ▸ M view.jsx  +12 −3                      │
+│     ▸ M state.js  +6 −2                       │
 │ ▾ Unstaged · vs index           2 files +2 −1 │
 │   ▸ ? notes/                                  │
-│   ▸ M README.md                         +2 −1 │
+│   ▸ M README.md  +2 −1                        │
 └───────────────────────────────────────────────┘
 ```
 
@@ -138,7 +138,8 @@ staging、commit、push、分支、stash、rebase 全部堆进一个面板，看
   文件数包含未跟踪的文件与目录，增删行数只统计已知行数的文件。
 - **目录行**：只含一个子目录的目录链压成一行（`src/client/detail`），减少层级与缩进。
   Git 整体报告的未跟踪目录（只有目录本身，子项尚未读取）带 `?` 标记，不参与压缩，默认收起，展开时按需读取直接子项。
-- **文件行**：状态字母（M、A、D、R、U、?）、文件名与增删行数；重命名显示旧 → 新名字。
+- **文件行**：状态字母（M、A、D、R、U、?）、文件名与紧邻的增删行数；重命名显示旧 → 新名字。
+  增删行数贴着文件名，不推到行尾。展开的文件头在名字与行数之间补上父路径；行宽不足时先省略父路径、再省略文件名，优先保留行数。
   是否被跟踪是文件行的属性：未跟踪文件以 `?` 标出，与同目录的已跟踪改动排在一起，不显示增删行数。
   文件行展开时，它就是下方 diff 的文件头：补上父目录路径、换成文件头底色，并在这段 diff 可见时吸顶。
   同一文件同时有已暂存和未暂存改动时，在两组各出现一次，也是两段 diff。
