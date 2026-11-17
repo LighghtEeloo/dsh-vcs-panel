@@ -1,5 +1,6 @@
 /**
- * Browser data layer for the Host routes: the reads and the two writes.
+ * Browser data layer for the Host routes: the reads and the writes behind
+ * sync, branch switching, and the branch actions menu.
  *
  * One instance serves one Session: every request carries the Session identity
  * and the repository the panel currently shows. Requests are cancellable with
@@ -242,6 +243,25 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
      */
     switchBranch(repo, branch) {
       return post('/api/vcs.switch', { repo, branch })
+    },
+
+    /**
+     * Run one branch action on an existing local branch. The Host validates
+     * the action, the branch, and the new name; merge and rebase undo
+     * themselves when they conflict.
+     * @param {string} repo - repository root.
+     * @param {'rename'|'delete'|'merge'|'rebase'|'push'} action - the action.
+     * @param {{ branch: string, name?: string, force?: boolean }} target - target branch and options.
+     * @returns {Promise<object>} what the action did.
+     */
+    branchOp(repo, action, target) {
+      return post('/api/vcs.branch', {
+        repo,
+        action,
+        branch: target.branch,
+        name: target.name,
+        force: target.force === true ? true : undefined,
+      })
     },
   }
 }

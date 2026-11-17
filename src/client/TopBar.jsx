@@ -6,11 +6,12 @@
  * A backend with a separate working tree shows its branch; when it can sync,
  * the ahead/behind counts sit on the sync button beside the branch, so the
  * numbers and the action that settles them are one control. When it can
- * switch, the branch name itself opens the local-branch menu. The message
- * (a sync or switch outcome, or a failure) follows them, so it reads next to
- * what it reports on. A backend whose working copy is a commit shows `@`, its
- * change id, and the refs pointing at it. The range options come from the
- * backend's capabilities, so a future backend only supplies labels.
+ * switch, the branch name itself opens the local-branch menu, and a right-click
+ * hands the branch to the panel's shared actions menu. The message (a sync,
+ * switch, or branch-action outcome, or a failure) follows them, so it reads
+ * next to what it reports on. A backend whose working copy is a commit shows
+ * `@`, its change id, and the refs pointing at it. The range options come from
+ * the backend's capabilities, so a future backend only supplies labels.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -18,6 +19,7 @@ import {
   Arrow, BranchIcon, CheckIcon, Chevron, IconButton, LockIcon, RefreshIcon, RefBadge, Segmented, SyncIcon, Turning,
 } from './ui.jsx'
 import { errorMessage, formatCount, shortChangeId } from './format.js'
+import { BRANCH_BUSY_KEYS } from './branch.js'
 
 /** Range choices when no backend has answered yet. */
 const FALLBACK_RANGES = [
@@ -47,23 +49,29 @@ function AheadBehind({ ahead, behind }) {
 const MENU_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'])
 
 /**
- * The branch control: a button that opens the repository's local branches.
+ * The branch control: a button that opens the repository's local branches,
+ * with a right-click actions menu on the current branch and on each listed
+ * branch. The actions menu itself lives at the panel root so the timeline's
+ * branch ref badges can open the same menu.
  *
- * The header clips its children, so the menu is positioned `fixed` under the
- * button rather than inside its flow. It closes on Escape, an outside press,
- * a resize, or a scroll, and gives focus back to the button. Arrow keys, Home,
- * and End move between items, and the checked-out branch is marked.
+ * The header clips its children, so the branch menu is positioned `fixed`
+ * rather than inside its flow. It closes on Escape, an outside press, a
+ * resize, or a scroll, and gives focus back to the button. Arrow keys, Home,
+ * and End move between items, and the checked-out branch is marked. Right-click
+ * and Shift+F10 hand the branch to `onOpenActions`.
  *
- * @param {{ branch: object, branchText: string, branches: object[], branchesStatus: string, branchesError: object | null, branchesTruncated: boolean, onOpen: Function, onSwitch: Function, switching: boolean, syncable: boolean, t: Function, locale?: string }} props - branch facts and menu state.
+ * @param {{ branch: object, branchText: string, branches: object[], branchesStatus: string, branchesError: object | null, branchesTruncated: boolean, onOpen: Function, onSwitch: Function, onOpenActions: Function, switching: boolean, busy: boolean, canOps: boolean, syncable: boolean, t: Function, locale?: string }} props - branch facts and menu state.
  */
 function BranchSwitcher({
   branch, branchText, branches, branchesStatus, branchesError, branchesTruncated,
-  onOpen, onSwitch, switching, syncable, t, locale,
+  onOpen, onSwitch, onOpenActions, switching, busy, canOps, syncable, t, locale,
 }) {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState(null)
   const triggerRef = useRef(null)
   const menuRef = useRef(null)
+  // The checked-out branch's name, or null on a detached HEAD.
+  const currentName = branch?.detached === true || typeof branch?.name !== 'string' ? null : branch.name
 
   const close = useCallback(returnFocus => {
     setOpen(false)
@@ -86,6 +94,12 @@ function BranchSwitcher({
     }
     setOpen(true)
     onOpen()
+  }
+
+  const openActions = (entry, point, returnElement) => {
+    if (!canOps) return
+    close(false)
+    onOpenActions(entry, { clientX: point.clientX, clientY: point.clientY }, returnElement)
   }
 
   // Dismissal: anything outside the trigger and the menu.
@@ -155,15 +169,34 @@ function BranchSwitcher({
         aria-expanded={open ? 'true' : undefined}
         aria-label={t('top.switchBranchLabel', { branch: branchText })}
         title={t('top.switchBranchHint')}
-        aria-busy={switching ? 'true' : undefined}
+        aria-busy={switching || busy ? 'true' : undefined}
         onClick={toggle}
+        onContextMenu={event => {
+          if (!canOps || currentName === null) return
+          event.preventDefault()
+          openActions({ name: currentName, current: true }, event, triggerRef.current)
+        }}
         onKeyDown={event => {
+          if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+            event.preventDefault()
+            if (currentName !== null) {
+              const rect = triggerRef.current?.getBoundingClientRect()
+              if (rect !== undefined) {
+                openActions(
+                  { name: currentName, current: true },
+                  { clientX: rect.left + 12, clientY: rect.bottom },
+                  triggerRef.current,
+                )
+              }
+            }
+            return
+          }
           if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
           event.preventDefault()
           if (!open) toggle()
         }}
       >
-        <Turning turning={switching}><BranchIcon /></Turning>
+        <Turning turning={switching || busy}><BranchIcon /></Turning>
         <span className="vcs-branch-name">{branchText}</span>
         {syncable ? null : <AheadBehind ahead={branch?.ahead ?? 0} behind={branch?.behind ?? 0} />}
         <Chevron open={open} />
@@ -201,6 +234,19 @@ function BranchSwitcher({
               onClick={() => {
                 if (!entry.current) onSwitch(entry.name)
                 close(true)
+              }}
+              onContextMenu={event => {
+                if (!canOps) return
+                event.preventDefault()
+                event.stopPropagation()
+                openActions(entry, event, event.currentTarget)
+              }}
+              onKeyDown={event => {
+                if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
+                event.preventDefault()
+                event.stopPropagation()
+                const rect = event.currentTarget.getBoundingClientRect()
+                openActions(entry, { clientX: rect.left + 12, clientY: rect.bottom }, event.currentTarget)
               }}
             >
               <span className="vcs-branch-item-name">{entry.name}</span>
@@ -256,19 +302,20 @@ function SyncButton({ branch, syncing, onSync, t, locale }) {
  * Render the header bar. `refreshing` is a refresh the refresh button
  * started; `syncing` covers a sync and the refresh it starts afterwards, so
  * one icon turns from the click until the counts it settles are back;
- * `switching` is a branch switch in flight.
- * @param {{ repositories: object[], repo: string | null, onRepoChange: Function, status: object | null, capabilities: object | null, refMode: string, onRefMode: (ref: string) => void, onRefresh: Function, refreshing: boolean, revalidating?: boolean, onSync: Function, syncing: boolean, branches?: object[], branchesStatus?: string, branchesError?: object | null, branchesTruncated?: boolean, onLoadBranches?: Function, onSwitchBranch?: Function, switching?: boolean, notice?: { tone: 'error' | 'info', text: string } | null, t: Function, locale?: string }} props - panel header state.
+ * `switching` is a branch switch and `branchBusy` one of the other branch
+ * actions in flight.
+ * @param {{ repositories: object[], repo: string | null, onRepoChange: Function, status: object | null, capabilities: object | null, refMode: string, onRefMode: (ref: string) => void, onRefresh: Function, refreshing: boolean, revalidating?: boolean, onSync: Function, syncing: boolean, branches?: object[], branchesStatus?: string, branchesError?: object | null, branchesTruncated?: boolean, onLoadBranches?: Function, onSwitchBranch?: Function, onBranchActions?: Function, switching?: boolean, branchBusy?: string | null, notice?: { tone: 'error' | 'info', text: string } | null, t: Function, locale?: string }} props - panel header state.
  */
 export function TopBar({
   repositories, repo, onRepoChange, status, capabilities, refMode, onRefMode, onRefresh, refreshing,
   revalidating = false, onSync, syncing, branches = [], branchesStatus = 'idle', branchesError = null,
-  branchesTruncated = false, onLoadBranches = () => {}, onSwitchBranch = () => {}, switching = false,
-  notice, t, locale,
+  branchesTruncated = false, onLoadBranches = () => {}, onSwitchBranch = () => {}, onBranchActions = () => {},
+  switching = false, branchBusy = null, notice, t, locale,
 }) {
   // Work on data already on screen shows as one thin bar under the header,
-  // whether the user asked for it (refresh, sync, switch) or the panel did (a
-  // refresh on becoming visible); the content stays put meanwhile.
-  const busy = refreshing || syncing || switching || revalidating
+  // whether the user asked for it (refresh, sync, switch, a branch action) or
+  // the panel did (a refresh on becoming visible); the content stays put.
+  const busy = refreshing || syncing || switching || branchBusy !== null || revalidating
   const branch = status?.branch
   const workingCopy = status?.workingCopy
   const showsWorkingCopy = capabilities?.workingCopy === 'commit'
@@ -288,14 +335,22 @@ export function TopBar({
     && branch !== undefined && branch !== null
     && branch.unborn !== true
   const ranges = capabilities?.ranges ?? FALLBACK_RANGES
+  const capacity = capabilities
+  const branchOps = capacity?.branchOps === true
   let readonlyLabel = t('top.readonly')
   let readonlyHint = t('top.readonlyHint')
-  if (capabilities?.sync === true) {
-    readonlyLabel = capabilities.branchSwitch === true ? t('top.readonlySyncSwitch') : t('top.readonlySync')
-    readonlyHint = capabilities.branchSwitch === true
-      ? t('top.readonlyHintSyncSwitch')
-      : t('top.readonlyHintSync')
-  } else if (capabilities?.snapshots === true) {
+  if (capacity?.sync === true) {
+    if (branchOps) {
+      readonlyLabel = t('top.readonlySyncBranch')
+      readonlyHint = t('top.readonlyHintSyncBranch')
+    } else if (capacity.branchSwitch === true) {
+      readonlyLabel = t('top.readonlySyncSwitch')
+      readonlyHint = t('top.readonlyHintSyncSwitch')
+    } else {
+      readonlyLabel = t('top.readonlySync')
+      readonlyHint = t('top.readonlyHintSync')
+    }
+  } else if (capacity?.snapshots === true) {
     readonlyHint = t('top.readonlyHintSnapshots')
   }
   return (
@@ -345,7 +400,10 @@ export function TopBar({
           branchesTruncated={branchesTruncated}
           onOpen={onLoadBranches}
           onSwitch={onSwitchBranch}
+          onOpenActions={onBranchActions}
           switching={switching}
+          busy={branchBusy !== null}
+          canOps={branchOps}
           syncable={syncable}
           t={t}
           locale={locale}
@@ -381,7 +439,13 @@ export function TopBar({
       </IconButton>
       <ProgressLine
         busy={busy}
-        label={syncing ? t('top.syncing') : switching ? t('top.switching') : t('top.refreshing')}
+        label={syncing
+          ? t('top.syncing')
+          : switching
+            ? t('top.switching')
+            : branchBusy !== null && BRANCH_BUSY_KEYS[branchBusy] !== undefined
+              ? t(BRANCH_BUSY_KEYS[branchBusy])
+              : t('top.refreshing')}
       />
     </div>
   )

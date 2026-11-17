@@ -6,9 +6,10 @@ import {
   SIDEBAR_MIN, SIDEBAR_MAX, storageKey, WORKING_COPY, WORKTREE,
 } from '../src/client/state.js'
 import {
-  errorMessage, formatCommitTime, formatCount, formatDateTime, lineCounts, shortChangeId, shortSha, splitPath, statusKey,
-  switchMessage, syncMessage,
+  branchOpMessage, errorMessage, formatCommitTime, formatCount, formatDateTime, lineCounts, shortChangeId, shortSha,
+  splitPath, statusKey, switchMessage, syncMessage,
 } from '../src/client/format.js'
+import { branchActions, isDestructiveAction } from '../src/client/branch.js'
 import {
   buildNodeRows, buildRows, dirKey, isRowKey, rowBodyId, sectionKey, summarizeEntries,
 } from '../src/client/detail/tree.js'
@@ -485,6 +486,113 @@ test('syncMessage names what moved, preferring the push, and reports a level bra
   assert.equal(syncMessage(t, { upstream: 'up/x', pulled: 3, pushed: 0 }, 'en-US'), 'sync.pulledMany:{"upstream":"up/x","count":"3"}')
   assert.equal(syncMessage(t, { upstream: 'up/x', pulled: 0, pushed: 0 }), 'sync.level:{"upstream":"up/x"}')
   assert.equal(syncMessage(t, { pushed: -1, pulled: 'many' }), 'sync.level:{"upstream":""}', 'a malformed answer reads as level')
+})
+
+test('createApi sends branch actions as a same-origin JSON POST', async () => {
+  const calls = []
+  const api = createApi('session 1', {
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init })
+      return { ok: true, async json() { return { from: 'old', branch: 'new' } } }
+    },
+  })
+  assert.deepEqual(
+    await api.branchOp('/repo', 'rename', { branch: 'old', name: 'new' }),
+    { from: 'old', branch: 'new' },
+  )
+  const [{ url, init }] = calls
+  assert.equal(url, '/api/vcs.branch', 'the session, repository, action, and target travel in the body')
+  assert.equal(init.method, 'POST')
+  assert.equal(init.credentials, 'same-origin')
+  assert.equal(init.headers['content-type'], 'application/json')
+  assert.deepEqual(JSON.parse(init.body), {
+    sessionId: 'session 1', repo: '/repo', action: 'rename', branch: 'old', name: 'new',
+  })
+  assert.equal(init.signal, undefined, 'leaving the panel does not cut a branch action short')
+
+  assert.deepEqual(await api.branchOp('/repo', 'delete', { branch: 'old', force: true }), { from: 'old', branch: 'new' })
+  assert.deepEqual(JSON.parse(calls[1].init.body), {
+    sessionId: 'session 1', repo: '/repo', action: 'delete', branch: 'old', force: true,
+  })
+
+  await api.branchOp('/repo', 'push', { branch: 'old' })
+  assert.deepEqual(JSON.parse(calls[2].init.body), {
+    sessionId: 'session 1', repo: '/repo', action: 'push', branch: 'old',
+  })
+
+  const unmerged = createApi('s', {
+    fetchImpl: async () => ({
+      ok: false,
+      status: 409,
+      async json() { return { error: { code: 'branch-unmerged', message: 'This branch is not fully merged.' } } },
+    }),
+  })
+  await assert.rejects(unmerged.branchOp('/r', 'delete', { branch: 'topic' }), error => {
+    assert.ok(error instanceof ApiError)
+    assert.equal(error.code, 'branch-unmerged')
+    assert.equal(error.status, 409)
+    return true
+  })
+})
+
+test('branchActions keeps merge and rebase on a named current branch only', () => {
+  assert.deepEqual(branchActions({ current: true, currentBranch: 'main' }), ['rename', 'push'])
+  assert.deepEqual(
+    branchActions({ current: false, currentBranch: 'main' }),
+    ['checkout', 'rename', 'delete', 'merge', 'rebase', 'push'],
+  )
+  assert.deepEqual(
+    branchActions({ current: false, currentBranch: null }),
+    ['checkout', 'rename', 'delete', 'push'],
+    'a detached HEAD has no current branch to merge or rebase',
+  )
+  assert.equal(isDestructiveAction('delete'), true)
+  assert.equal(isDestructiveAction('merge'), false)
+})
+
+test('branchOpMessage names the ref each branch action moved', () => {
+  const t = (key, vars) => `${key}:${JSON.stringify(vars ?? {})}`
+  assert.equal(
+    branchOpMessage(t, 'rename', 'old', { from: 'old', branch: 'new' }),
+    'branch.renamed:{"from":"old","branch":"new"}',
+  )
+  assert.equal(branchOpMessage(t, 'delete', 'old', { branch: 'old' }), 'branch.deleted:{"branch":"old"}')
+  assert.equal(
+    branchOpMessage(t, 'merge', 'topic', { branch: 'topic', current: 'main', result: 'merged' }),
+    'branch.merged:{"current":"main","branch":"topic"}',
+  )
+  assert.equal(
+    branchOpMessage(t, 'merge', 'topic', { branch: 'topic', current: 'main', result: 'fast-forward' }),
+    'branch.fastForwarded:{"current":"main","branch":"topic"}',
+  )
+  assert.equal(
+    branchOpMessage(t, 'merge', 'topic', { branch: 'topic', current: 'main', result: 'up-to-date' }),
+    'branch.upToDate:{"current":"main","branch":"topic"}',
+  )
+  assert.equal(
+    branchOpMessage(t, 'rebase', 'topic', { branch: 'topic', current: 'main' }),
+    'branch.rebased:{"current":"main","branch":"topic"}',
+  )
+  assert.equal(
+    branchOpMessage(t, 'push', 'topic', { branch: 'topic', upstream: 'origin/topic', pushed: true }),
+    'branch.pushed:{"branch":"topic","upstream":"origin/topic"}',
+  )
+  assert.equal(
+    branchOpMessage(t, 'push', 'topic', { branch: 'topic', upstream: 'origin/topic', pushed: false }),
+    'branch.pushLevel:{"branch":"topic","upstream":"origin/topic"}',
+  )
+  assert.equal(
+    branchOpMessage(t, 'rename', 'old', null),
+    'branch.renamed:{"from":"old","branch":"old"}',
+    'a malformed answer falls back to the pick',
+  )
+})
+
+test('errorMessage maps every branch action refusal to localized copy', () => {
+  const t = key => key
+  for (const code of ['branch-invalid', 'branch-exists', 'branch-unmerged', 'branch-in-use', 'merge-blocked', 'rebase-blocked', 'branch-failed']) {
+    assert.notEqual(errorMessage(t, { code }), 'error.internal', code)
+  }
 })
 
 test('createApi maps failure bodies and transport failures', async () => {

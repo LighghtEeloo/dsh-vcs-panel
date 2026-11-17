@@ -8,6 +8,7 @@
    code use the host code font, which follows the user's font settings. */
 
 .vcs-root {
+  position: relative;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -31,7 +32,7 @@
    Two shapes, both in the host's focus color. The host clears that color for
    pointer input, so rings appear only while the keyboard is in use.
 
-   A discrete control (button, select, toggle) carries the host ring just
+   A discrete control (button, select, input, toggle) carries the host ring just
    outside its own edge, so the ring never covers the icon or label.
 
    Rows are stops of the panel's one cursor: timeline rows, change-tree rows,
@@ -50,7 +51,7 @@
   --vcs-cursor-ring-width: 1px;
 }
 
-.vcs-root :where(button, select, [tabindex]):focus-visible {
+.vcs-root :where(button, select, input, [tabindex]):focus-visible {
   outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 1px;
 }
@@ -157,6 +158,7 @@
    the header clips its children, so it can hang below the bar. */
 .vcs-branch-wrap {
   display: inline-flex;
+  flex: none;
   min-width: 0;
 }
 
@@ -249,6 +251,185 @@
 .vcs-branch-item .vcs-icon {
   width: 12px;
   height: 12px;
+}
+
+.vcs-ref[data-branch-actions] {
+  cursor: context-menu;
+}
+
+/* Branch actions menu ----------------------------------------------------- */
+
+.vcs-branch-ops {
+  position: fixed;
+  z-index: 1001;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 252px;
+  max-height: min(420px, calc(100vh - 16px));
+  padding: 6px;
+  overflow-y: auto;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: 0 8px 24px var(--dsw-alias-shadow, rgb(0 0 0 / 18%));
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+
+.vcs-branch-ops:focus {
+  outline: none;
+}
+
+.vcs-branch-ops-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 6px 6px;
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary));
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.vcs-branch-ops-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcs-branch-ops-current {
+  flex: none;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.vcs-branch-ops-sep {
+  margin: 4px 6px;
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+.vcs-branch-ops-item {
+  height: 28px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcs-branch-ops-danger {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.vcs-branch-ops-danger:hover:not(:focus) {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+}
+
+/* Branch action dialogs --------------------------------------------------- */
+
+.vcs-dialog-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 16px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-base) 62%, transparent);
+}
+
+.vcs-dialog {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: min(360px, 100%);
+  max-height: 100%;
+  padding: 16px;
+  overflow-y: auto;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md, 10px);
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: 0 12px 32px var(--dsw-alias-shadow, rgb(0 0 0 / 22%));
+}
+
+.vcs-dialog-title {
+  margin: 0 0 8px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.vcs-dialog-text {
+  margin: 0 0 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.vcs-dialog-label {
+  margin: 0 0 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.vcs-dialog-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  margin: 0 0 8px;
+  padding: 0 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.vcs-dialog-input:disabled {
+  opacity: 0.55;
+}
+
+.vcs-dialog-error,
+.vcs-dialog-warning {
+  margin: 0 0 12px;
+  padding: 6px 8px;
+  border-radius: var(--dsw-radius-sm, 6px);
+  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.vcs-dialog-busy {
+  margin: 0 0 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+.vcs-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.vcs-button.vcs-button-danger {
+  color: var(--dsw-alias-state-error-primary);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, var(--dsw-alias-border-l2));
+}
+
+.vcs-button.vcs-button-danger:hover {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
 }
 
 .vcs-icon {
@@ -1005,9 +1186,14 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.vcs-button:disabled {
+.vcs-button:disabled,
+.vcs-button[aria-disabled='true'] {
   cursor: default;
   opacity: 0.55;
+}
+
+.vcs-button[aria-disabled='true']:hover {
+  background: transparent;
 }
 
 .vcs-button[aria-pressed='true'] {
@@ -1378,10 +1564,6 @@
 .vcs-root[data-narrow] .vcs-sidebar {
   flex: 1;
   width: auto;
-}
-
-.vcs-root[data-narrow] .vcs-branch-name {
-  display: none;
 }
 
 .vcs-root[data-narrow] .vcs-repo-select {

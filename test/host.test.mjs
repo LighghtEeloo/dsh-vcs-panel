@@ -491,6 +491,7 @@ test('repositories lists the enclosing repository and one-level children only', 
   assert.equal(body.repositories[1].path, nestedPath)
   assert.equal(body.repositories[0].vcs, 'git')
   assert.equal(body.repositories[0].capabilities.workingCopy, 'row')
+  assert.equal(body.repositories[0].capabilities.branchOps, true)
   assert.deepEqual(body.repositories[0].capabilities.ranges.map(range => range.value), ['HEAD', 'all'])
 })
 
@@ -1244,6 +1245,7 @@ test('repositories identifies a Jujutsu workspace and exposes its capabilities',
   assert.equal(repo.vcs, 'jujutsu')
   assert.equal(repo.capabilities.workingCopy, 'commit')
   assert.equal(repo.capabilities.branchSwitch, false)
+  assert.equal(repo.capabilities.branchOps, false)
   assert.deepEqual(repo.capabilities.ranges.map(range => range.value), ['@', 'all'])
   assert.equal(repo.capabilities.defaultRange, '@')
 })
@@ -1530,7 +1532,7 @@ test('Jujutsu shared snapshot survives one caller aborting and cancels when all 
   assert.equal(snapshotAborted, 1)
 })
 
-test('apply registers eight GET routes and both write routes inside the fence and honors enabled: false', async () => {
+test('apply registers eight GET routes and every write route inside the fence and honors enabled: false', async () => {
   const routes = []
   const ctx = {
     sessions: { get: id => sessions.get(id) },
@@ -1563,12 +1565,11 @@ test('apply registers eight GET routes and both write routes inside the fence an
     '/api/vcs.turn',
     '/api/vcs.sync',
     '/api/vcs.switch',
+    '/api/vcs.branch',
   ])
+  const writePaths = new Set(['/api/vcs.sync', '/api/vcs.switch', '/api/vcs.branch'])
   for (const registered of routes) {
-    assert.deepEqual(
-      registered.methods,
-      registered.path === '/api/vcs.sync' || registered.path === '/api/vcs.switch' ? ['POST'] : ['GET'],
-    )
+    assert.deepEqual(registered.methods, writePaths.has(registered.path) ? ['POST'] : ['GET'])
     assert.equal(registered.requestBody, 'buffered')
   }
 
@@ -2054,6 +2055,9 @@ test('switch is refused for Jujutsu, which has no branch to check out', { skip: 
   const answer = await postSwitch(handlers.switchBranch, { sessionId: 's-jj', repo: jjPath, branch: 'main' })
   assert.equal(answer.status, 400)
   assert.equal(answer.body.error.code, 'bad-request')
+  const op = await postBranchOp(handlers.branchOp, { sessionId: 's-jj', repo: jjPath, action: 'push', branch: 'main' })
+  assert.equal(op.status, 400)
+  assert.equal(op.body.error.code, 'bad-request')
   assert.equal(jj(fixture.jj, ['op', 'log', '--no-graph', '-T', 'id', '--limit', '1']), before)
 })
 
@@ -2090,6 +2094,9 @@ test('a write in flight blocks both a second switch and a sync', async () => {
   const sync = await postSync(gatedHandlers.sync, body)
   assert.equal(sync.status, 409)
   assert.equal(sync.body.error.code, 'busy')
+  const branch = await postBranchOp(gatedHandlers.branchOp, { ...body, action: 'rename', branch: 'topic', name: 'renamed' })
+  assert.equal(branch.status, 409)
+  assert.equal(branch.body.error.code, 'busy')
   release()
   assert.equal((await first).status, 200)
 
@@ -2097,6 +2104,343 @@ test('a write in flight blocks both a second switch and a sync', async () => {
   const next = await postSwitch(gatedHandlers.switchBranch, { ...body, branch: 'main' })
   assert.equal(next.status, 200)
   assert.equal(started, 2)
+})
+
+// Branch actions -------------------------------------------------------------
+
+/**
+ * Build one repository with the branches the actions menu can address: a
+ * checked-out `main`, a merged branch, an unmerged branch, a conflicting
+ * branch, and a branch tracking a bare remote.
+ * @param {string} name - scratch subdirectory.
+ * @returns {object} the fixture paths, commits, repository, session, and handlers.
+ */
+function buildActionFixture(name) {
+  const base = join(fixture.scratch, name)
+  const repo = join(base, 'repo')
+  const bare = join(base, 'remote.git')
+  mkdirSync(base, { recursive: true })
+  initRepo(repo)
+  writeFileSync(join(repo, 'base.txt'), 'base\n')
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-qm', 'base'])
+  const baseSha = git(repo, ['rev-parse', 'HEAD'])
+
+  git(repo, ['branch', 'merged'])
+
+  git(repo, ['checkout', '-qb', 'unmerged'])
+  writeFileSync(join(repo, 'unmerged.txt'), 'unmerged\n')
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-qm', 'unmerged work'])
+  const unmergedSha = git(repo, ['rev-parse', 'HEAD'])
+
+  git(repo, ['checkout', '-qb', 'topic', baseSha])
+  writeFileSync(join(repo, 'topic.txt'), 'topic\n')
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-qm', 'topic work'])
+  const topicSha = git(repo, ['rev-parse', 'HEAD'])
+
+  git(repo, ['checkout', '-q', 'main'])
+  writeFileSync(join(repo, 'base.txt'), 'main\n')
+  writeFileSync(join(repo, 'main.txt'), 'main\n')
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-qm', 'main work'])
+  const mainSha = git(repo, ['rev-parse', 'HEAD'])
+
+  git(repo, ['checkout', '-qb', 'conflict', baseSha])
+  writeFileSync(join(repo, 'base.txt'), 'conflict\n')
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-qm', 'conflicting work'])
+  git(repo, ['checkout', '-q', 'main'])
+
+  git(base, ['init', '-q', '--bare', '-b', 'main', bare])
+  git(repo, ['remote', 'add', 'origin', bare])
+  git(repo, ['push', '-q', 'origin', 'main'])
+  git(repo, ['config', 'branch.main.remote', 'origin'])
+  git(repo, ['config', 'branch.main.merge', 'refs/heads/main'])
+
+  git(repo, ['branch', 'tracking', 'main'])
+  git(repo, ['config', 'branch.tracking.remote', 'origin'])
+  git(repo, ['config', 'branch.tracking.merge', 'refs/heads/tracking'])
+  git(repo, ['push', '-q', 'origin', 'tracking'])
+  git(repo, ['checkout', '-q', 'tracking'])
+  writeFileSync(join(repo, 'tracking.txt'), 'tracking\n')
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-qm', 'tracking work'])
+  const trackingSha = git(repo, ['rev-parse', 'HEAD'])
+  git(repo, ['checkout', '-q', 'main'])
+
+  git(repo, ['branch', 'plain', 'main'])
+
+  const sessionId = `s-branch-${name}`
+  const branchSessions = new Map([[sessionId, { header: { cwd: repo } }]])
+  return {
+    repo,
+    bare,
+    baseSha,
+    unmergedSha,
+    topicSha,
+    mainSha,
+    trackingSha,
+    sessionId,
+    handlers: createHandlers(createHost({ sessions: { get: id => branchSessions.get(id) } })),
+  }
+}
+
+/**
+ * POST one branch action.
+ * @param {Function} handler - the branchOp handler.
+ * @param {object} body - JSON body.
+ * @param {Record<string, string>} [headers] - request headers.
+ * @param {string} [method] - HTTP method.
+ * @returns {Promise<{ status: number, body: object }>} the decoded answer.
+ */
+async function postBranchOp(handler, body, headers = { 'content-type': 'application/json' }, method = 'POST') {
+  const response = await handler(new Request('http://127.0.0.1/api/vcs.branch', {
+    method,
+    headers,
+    body: method === 'GET' ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)),
+  }))
+  return { status: response.status, body: await response.json() }
+}
+
+test('branch actions rename a branch and refuse invalid or existing names', async () => {
+  const action = buildActionFixture('branch-rename')
+  const body = { sessionId: action.sessionId, repo: realpathSync(action.repo) }
+
+  const renamed = await postBranchOp(action.handlers.branchOp, { ...body, action: 'rename', branch: 'topic', name: 'renamed' })
+  assert.equal(renamed.status, 200)
+  assert.deepEqual(renamed.body, { from: 'topic', branch: 'renamed' })
+  assert.equal(
+    git(action.repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
+    ['main', 'merged', 'renamed', 'plain', 'conflict', 'tracking', 'unmerged'].sort().join('\n'),
+  )
+
+  const exists = await postBranchOp(action.handlers.branchOp, { ...body, action: 'rename', branch: 'renamed', name: 'main' })
+  assert.equal(exists.status, 409)
+  assert.equal(exists.body.error.code, 'branch-exists')
+
+  const invalid = await postBranchOp(action.handlers.branchOp, { ...body, action: 'rename', branch: 'renamed', name: 'bad..name' })
+  assert.equal(invalid.status, 400)
+  assert.equal(invalid.body.error.code, 'branch-invalid')
+
+  const missing = await postBranchOp(action.handlers.branchOp, { ...body, action: 'rename', branch: 'nope', name: 'other' })
+  assert.equal(missing.status, 400)
+  assert.equal(missing.body.error.code, 'bad-request')
+
+  // Renaming the checked-out branch moves HEAD with it.
+  const current = await postBranchOp(action.handlers.branchOp, { ...body, action: 'rename', branch: 'main', name: 'trunk' })
+  assert.equal(current.status, 200)
+  assert.deepEqual(current.body, { from: 'main', branch: 'trunk' })
+  assert.equal(git(action.repo, ['symbolic-ref', '--short', 'HEAD']), 'trunk')
+  assert.equal(git(action.repo, ['config', '--get', 'branch.trunk.remote']), 'origin')
+  assert.equal(git(action.repo, ['config', '--get', 'branch.trunk.merge']), 'refs/heads/main')
+  let oldRemote = null
+  try {
+    oldRemote = git(action.repo, ['config', '--get', 'branch.main.remote'])
+  } catch {
+    // The old section is gone, which is the point.
+  }
+  assert.equal(oldRemote, null)
+  const status = await call(action.handlers.status, route('/api/vcs.status', body))
+  assert.equal(status.body.branch.name, 'trunk')
+})
+
+test('branch actions delete merged branches, force unmerged ones, and protect the checked-out branch', async () => {
+  const action = buildActionFixture('branch-delete')
+  const body = { sessionId: action.sessionId, repo: realpathSync(action.repo) }
+
+  const merged = await postBranchOp(action.handlers.branchOp, { ...body, action: 'delete', branch: 'merged' })
+  assert.equal(merged.status, 200)
+  assert.deepEqual(merged.body, { branch: 'merged' })
+  assert.equal(git(action.repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/merged']), '')
+
+  const unmerged = await postBranchOp(action.handlers.branchOp, { ...body, action: 'delete', branch: 'unmerged' })
+  assert.equal(unmerged.status, 409)
+  assert.equal(unmerged.body.error.code, 'branch-unmerged')
+  assert.equal(git(action.repo, ['rev-parse', 'refs/heads/unmerged']), action.unmergedSha)
+
+  const forced = await postBranchOp(action.handlers.branchOp, { ...body, action: 'delete', branch: 'unmerged', force: true })
+  assert.equal(forced.status, 200)
+  assert.equal(git(action.repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/unmerged']), '')
+
+  const current = await postBranchOp(action.handlers.branchOp, { ...body, action: 'delete', branch: 'main' })
+  assert.equal(current.status, 409)
+  assert.equal(current.body.error.code, 'branch-in-use')
+  assert.equal(git(action.repo, ['symbolic-ref', '--short', 'HEAD']), 'main')
+})
+
+test('branch actions merge into the current branch and abort a conflict', async () => {
+  const action = buildActionFixture('branch-merge')
+  const body = { sessionId: action.sessionId, repo: realpathSync(action.repo) }
+
+  git(action.repo, ['checkout', '-qb', 'ff', 'main'])
+  writeFileSync(join(action.repo, 'ff.txt'), 'ff\n')
+  git(action.repo, ['add', '-A'])
+  git(action.repo, ['commit', '-qm', 'ff work'])
+  const ffSha = git(action.repo, ['rev-parse', 'HEAD'])
+  git(action.repo, ['checkout', '-q', 'main'])
+
+  const fastForward = await postBranchOp(action.handlers.branchOp, { ...body, action: 'merge', branch: 'ff' })
+  assert.equal(fastForward.status, 200)
+  assert.deepEqual(fastForward.body, { branch: 'ff', current: 'main', result: 'fast-forward' })
+  assert.equal(git(action.repo, ['rev-parse', 'HEAD']), ffSha)
+  assert.equal(await readFile(join(action.repo, 'ff.txt'), 'utf8'), 'ff\n')
+
+  git(action.repo, ['checkout', '-qb', 'side', 'main'])
+  writeFileSync(join(action.repo, 'side.txt'), 'side\n')
+  git(action.repo, ['add', '-A'])
+  git(action.repo, ['commit', '-qm', 'side work'])
+  git(action.repo, ['checkout', '-q', 'main'])
+  writeFileSync(join(action.repo, 'main-side.txt'), 'main\n')
+  git(action.repo, ['add', '-A'])
+  git(action.repo, ['commit', '-qm', 'main moves on'])
+
+  const merged = await postBranchOp(action.handlers.branchOp, { ...body, action: 'merge', branch: 'side' })
+  assert.equal(merged.status, 200)
+  assert.deepEqual(merged.body, { branch: 'side', current: 'main', result: 'merged' })
+  assert.equal(
+    git(action.repo, ['rev-list', '--parents', '-n', '1', 'HEAD']).split(' ').length,
+    3,
+    'the merge has two parents',
+  )
+
+  const level = await postBranchOp(action.handlers.branchOp, { ...body, action: 'merge', branch: 'side' })
+  assert.equal(level.status, 200)
+  assert.equal(level.body.result, 'up-to-date')
+
+  const headBefore = git(action.repo, ['rev-parse', 'HEAD'])
+  const reached = await postBranchOp(action.handlers.branchOp, { ...body, action: 'merge', branch: 'conflict' })
+  assert.equal(reached.status, 409)
+  assert.equal(reached.body.error.code, 'merge-blocked')
+  assert.equal(git(action.repo, ['rev-parse', 'HEAD']), headBefore)
+  let mergeHead = ''
+  try {
+    mergeHead = git(action.repo, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
+  } catch {
+    // No merge in progress: the abort restored the pre-merge state.
+  }
+  assert.equal(mergeHead, '')
+  assert.equal(git(action.repo, ['status', '--porcelain']), '')
+  assert.equal(await readFile(join(action.repo, 'base.txt'), 'utf8'), 'main\n')
+})
+
+test('branch actions rebase onto another branch and abort a conflict', async () => {
+  const action = buildActionFixture('branch-rebase')
+  const body = { sessionId: action.sessionId, repo: realpathSync(action.repo) }
+  const topicBefore = git(action.repo, ['rev-parse', 'refs/heads/topic'])
+
+  const rebased = await postBranchOp(action.handlers.branchOp, { ...body, action: 'rebase', branch: 'topic' })
+  assert.equal(rebased.status, 200)
+  assert.deepEqual(rebased.body, { branch: 'topic', current: 'main' })
+  assert.equal(git(action.repo, ['rev-parse', 'HEAD^']), topicBefore)
+  assert.equal(git(action.repo, ['symbolic-ref', '--short', 'HEAD']), 'main')
+  assert.equal(git(action.repo, ['rev-parse', 'refs/heads/topic']), topicBefore)
+
+  const conflicted = buildActionFixture('branch-rebase-conflict')
+  const conflictBody = { sessionId: conflicted.sessionId, repo: realpathSync(conflicted.repo) }
+  const mainBefore = git(conflicted.repo, ['rev-parse', 'HEAD'])
+  const conflict = await postBranchOp(conflicted.handlers.branchOp, { ...conflictBody, action: 'rebase', branch: 'conflict' })
+  assert.equal(conflict.status, 409)
+  assert.equal(conflict.body.error.code, 'rebase-blocked')
+  assert.equal(git(conflicted.repo, ['symbolic-ref', '--short', 'HEAD']), 'main')
+  assert.equal(git(conflicted.repo, ['rev-parse', 'HEAD']), mainBefore)
+  assert.equal(git(conflicted.repo, ['status', '--porcelain']), '')
+})
+
+test('branch actions push to the configured upstream and report a refusal', async () => {
+  const action = buildActionFixture('branch-push')
+  const body = { sessionId: action.sessionId, repo: realpathSync(action.repo) }
+
+  const pushed = await postBranchOp(action.handlers.branchOp, { ...body, action: 'push', branch: 'tracking' })
+  assert.equal(pushed.status, 200)
+  assert.deepEqual(pushed.body, { branch: 'tracking', upstream: 'origin/tracking', pushed: true })
+  assert.equal(git(action.bare, ['rev-parse', 'refs/heads/tracking']), action.trackingSha)
+
+  const level = await postBranchOp(action.handlers.branchOp, { ...body, action: 'push', branch: 'tracking' })
+  assert.equal(level.status, 200)
+  assert.deepEqual(level.body, { branch: 'tracking', upstream: 'origin/tracking', pushed: false })
+
+  const plain = await postBranchOp(action.handlers.branchOp, { ...body, action: 'push', branch: 'plain' })
+  assert.equal(plain.status, 409)
+  assert.equal(plain.body.error.code, 'no-upstream')
+
+  // Move the remote to a commit the local branch does not contain: the push is
+  // refused and the local ref stays where it was.
+  git(action.repo, ['checkout', '-qb', 'remote-ahead', action.baseSha])
+  writeFileSync(join(action.repo, 'remote.txt'), 'remote\n')
+  git(action.repo, ['add', '-A'])
+  git(action.repo, ['commit', '-qm', 'remote work'])
+  git(action.repo, ['checkout', '-q', 'main'])
+  git(action.bare, ['fetch', '--force', '-q', action.repo, 'remote-ahead:refs/heads/tracking'])
+  const rejected = await postBranchOp(action.handlers.branchOp, { ...body, action: 'push', branch: 'tracking' })
+  assert.equal(rejected.status, 502)
+  assert.equal(rejected.body.error.code, 'remote-failed')
+  assert.equal(git(action.repo, ['rev-parse', 'refs/heads/tracking']), action.trackingSha)
+})
+
+test('branch actions accept only valid actions and trusted same-origin JSON POSTs', async () => {
+  const action = buildActionFixture('branch-request')
+  const body = { sessionId: action.sessionId, repo: realpathSync(action.repo) }
+  const headsBefore = git(action.repo, ['for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads'])
+
+  const cases = [
+    [await postBranchOp(action.handlers.branchOp, body, { 'content-type': 'application/json' }, 'GET'), 400, 'bad-request'],
+    [await postBranchOp(action.handlers.branchOp, { ...body, action: 'push', branch: 'tracking' }, { 'content-type': 'text/plain' }), 400, 'bad-request'],
+    [await postBranchOp(action.handlers.branchOp, { ...body, action: 'push', branch: 'tracking' }, { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' }), 403, 'forbidden'],
+    [await postBranchOp(action.handlers.branchOp, '{not json'), 400, 'bad-request'],
+    [await postBranchOp(action.handlers.branchOp, [body]), 400, 'bad-request'],
+    [await postBranchOp(action.handlers.branchOp, { ...body }), 400, 'bad-request'],
+    [await postBranchOp(action.handlers.branchOp, { ...body, action: 'checkout', branch: 'topic' }), 400, 'bad-request'],
+    [await postBranchOp(action.handlers.branchOp, { ...body, action: 'rename', branch: 'topic' }), 400, 'bad-request'],
+    [await postBranchOp(action.handlers.branchOp, { ...body, action: 'rename', branch: 'topic', name: '-bad' }), 400, 'bad-request'],
+    [await postBranchOp(action.handlers.branchOp, { ...body, action: 'delete', branch: 'merged', force: 'yes' }), 400, 'bad-request'],
+    [await postBranchOp(action.handlers.branchOp, { ...body, action: 'push', branch: null }), 400, 'bad-request'],
+    [await postBranchOp(action.handlers.branchOp, { sessionId: action.sessionId, action: 'push', branch: 'tracking' }), 400, 'bad-request'],
+    [await postBranchOp(action.handlers.branchOp, { ...body, action: 'push', branch: 'tracking', sessionId: 's-missing' }), 409, 'no-session'],
+    [await postBranchOp(action.handlers.branchOp, { ...body, action: 'push', branch: 'tracking', repo: plainPath }), 400, 'not-a-repo'],
+  ]
+  for (const [answer, status, code] of cases) {
+    assert.equal(answer.status, status, code)
+    assert.equal(answer.body.error.code, code)
+  }
+  assert.equal(git(action.repo, ['for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads']), headsBefore)
+})
+
+test('branch actions leave an in-progress merge or rebase untouched', async () => {
+  const action = buildActionFixture('branch-in-progress')
+  const body = { sessionId: action.sessionId, repo: realpathSync(action.repo) }
+
+  // A user's conflicted merge is already in progress. Our merge must refuse
+  // without aborting it.
+  try {
+    git(action.repo, ['merge', 'conflict'])
+  } catch {
+    // The conflict is the setup.
+  }
+  const mergeHead = git(action.repo, ['rev-parse', 'MERGE_HEAD'])
+  const headBefore = git(action.repo, ['rev-parse', 'HEAD'])
+  const inProgress = await postBranchOp(action.handlers.branchOp, { ...body, action: 'merge', branch: 'topic' })
+  assert.equal(inProgress.status, 409)
+  assert.equal(inProgress.body.error.code, 'merge-blocked')
+  assert.equal(git(action.repo, ['rev-parse', 'MERGE_HEAD']), mergeHead)
+  assert.equal(git(action.repo, ['rev-parse', 'HEAD']), headBefore)
+  assert.match(git(action.repo, ['status', '--porcelain']), /^UU /mu)
+
+  git(action.repo, ['merge', '--abort'])
+
+  // The same for a rebase left by the user.
+  try {
+    git(action.repo, ['rebase', 'conflict'])
+  } catch {
+    // The conflict is the setup.
+  }
+  const rebaseHead = git(action.repo, ['rev-parse', 'REBASE_HEAD'])
+  const rebasing = await postBranchOp(action.handlers.branchOp, { ...body, action: 'rebase', branch: 'topic' })
+  assert.equal(rebasing.status, 409)
+  assert.equal(rebasing.body.error.code, 'rebase-blocked')
+  assert.equal(git(action.repo, ['rev-parse', 'REBASE_HEAD']), rebaseHead)
+  assert.match(git(action.repo, ['status', '--porcelain']), /^UU /mu)
 })
 
 // Sync ----------------------------------------------------------------------
@@ -2325,7 +2669,7 @@ test('a second sync of the same repository is refused while the first runs', asy
 })
 
 test('sync diagnostics keep the last stderr lines and drop URL credentials', async () => {
-  const { redactDetail } = await import('../lib/sync.js')
+  const { redactDetail } = await import('../lib/git-utils.js')
   assert.equal(
     redactDetail('hint: one\n\nfatal: unable to access \'https://user:token@example.com/repo.git/\'\nfatal: two\nfatal: three\n'),
     "fatal: unable to access 'https://***@example.com/repo.git/' | fatal: two | fatal: three",

@@ -14,7 +14,7 @@ import { createApi } from './api.js'
 import {
   loadState, nodePatch, preferredNode, saveState, SIDEBAR_MAX, SIDEBAR_MIN, WORKTREE,
 } from './state.js'
-import { errorMessage, formatCount, switchMessage, syncMessage } from './format.js'
+import { branchOpMessage, errorMessage, formatCount, switchMessage, syncMessage } from './format.js'
 import { isEditableTarget } from './keys.js'
 import { dirKey } from './detail/tree.js'
 import { buildGraph } from './history/layout.js'
@@ -23,6 +23,9 @@ import { graphInput, headOf, nodeAt, pickRepository, rowOf } from './history/tim
 import { ROW_HEIGHT, Timeline } from './history/Timeline.jsx'
 import { DetailPane } from './detail/DetailPane.jsx'
 import { TopBar } from './TopBar.jsx'
+import { BranchActionsMenu } from './BranchActionsMenu.jsx'
+import { BranchDialog } from './BranchDialogs.jsx'
+import { branchActions } from './branch.js'
 import { TimelineSkeleton, TreeSkeleton } from './skeleton.jsx'
 
 /** Rows per history page. */
@@ -93,6 +96,17 @@ export function VcsView({
   const [branches, setBranches] = useState({ status: 'idle', list: [], truncated: false, error: null })
   // The branch a switch is running for, which keeps the branch icon turning.
   const [switching, setSwitching] = useState(null)
+  // The branch action a dialog or the menu is asking for: rename, delete,
+  // merge, rebase, or push. Its own state keeps the icon turning and the
+  // dialog disabled while the Host works.
+  const [branchBusy, setBranchBusy] = useState(null)
+  // The open branch dialog and the failure it shows; a refused rename keeps
+  // the input, and an unmerged delete escalates to "delete anyway".
+  const [branchDialog, setBranchDialog] = useState(null)
+  const [branchDialogError, setBranchDialogError] = useState(null)
+  // The open branch actions menu: `{ branch, current, actions, x, y }`. It is
+  // owned here so the header and the timeline ref badges share one menu.
+  const [branchMenu, setBranchMenu] = useState(null)
   // Bumped after the Sidebar host focuses its pane, so the settle effect retries.
   const [focusTick, setFocusTick] = useState(0)
 
@@ -106,6 +120,10 @@ export function VcsView({
   const branchesControllerRef = useRef(null)
   const loadingBranchesRef = useRef(false)
   const switchingRef = useRef(false)
+  const branchBusyRef = useRef(false)
+  // The control the branch actions menu is acting for, focused again after
+  // the menu or its dialog closes.
+  const branchMenuReturnRef = useRef(null)
   const diffCacheRef = useRef(new Map())
   const detailControl = useRef(null)
   const pendingEntryFocusRef = useRef(false)
@@ -211,6 +229,11 @@ export function VcsView({
     branchesControllerRef.current = null
     loadingBranchesRef.current = false
     setBranches({ status: 'idle', list: [], truncated: false, error: null })
+    setBranchBusy(null)
+    setBranchDialog(null)
+    setBranchDialogError(null)
+    setBranchMenu(null)
+    branchMenuReturnRef.current = null
     setStatus(idleStatus())
     anchorRef.current = null
     timelineScrollRef.current = 0
@@ -378,6 +401,11 @@ export function VcsView({
     setNotice(null)
     setBranches({ status: 'idle', list: [], truncated: false, error: null })
     setSwitching(null)
+    setBranchBusy(null)
+    setBranchDialog(null)
+    setBranchDialogError(null)
+    setBranchMenu(null)
+    branchMenuReturnRef.current = null
     loadingBranchesRef.current = false
     branchesControllerRef.current?.abort()
     branchesControllerRef.current = null
@@ -466,7 +494,7 @@ export function VcsView({
   const syncingRef = useRef(false)
   const sync = useCallback(async () => {
     const repo = stateRef.current.repo
-    if (repo === null || syncingRef.current) return
+    if (repo === null || syncingRef.current || branchBusyRef.current || switchingRef.current) return
     syncingRef.current = true
     setSyncingRepo(repo)
     setNotice(null)
@@ -537,7 +565,7 @@ export function VcsView({
    */
   const switchBranch = useCallback(async branch => {
     const repo = stateRef.current.repo
-    if (repo === null || switchingRef.current) return
+    if (repo === null || switchingRef.current || branchBusyRef.current || syncingRef.current) return
     switchingRef.current = true
     setSwitching(branch)
     setNotice(null)
@@ -572,6 +600,151 @@ export function VcsView({
     refresh('switch')
     setNotice(outcome)
   }, [api, refresh, t, update])
+
+  /** Put keyboard focus back on the branch control after a dialog. */
+  const focusBranchControl = useCallback(() => {
+    requestAnimationFrame(() => {
+      rootRef.current?.querySelector('.vcs-branch-button')?.focus()
+    })
+  }, [])
+
+  /**
+   * Return focus to the row, badge, or header button that opened the branch
+   * menu. A timeline row may have been re-rendered or removed by the action;
+   * the panel's branch control is the fallback.
+   */
+  const restoreBranchFocus = useCallback(() => {
+    const element = branchMenuReturnRef.current
+    branchMenuReturnRef.current = null
+    requestAnimationFrame(() => {
+      if (element !== null && element?.isConnected === true) element.focus()
+      else focusBranchControl()
+    })
+  }, [focusBranchControl])
+
+  /**
+   * Open the branch actions menu for one branch. `entry` is a branch listing
+   * row or a timeline ref; the point is where the menu opens, and the return
+   * element gets focus when the menu or its dialog closes.
+   */
+  const openBranchActions = useCallback((entry, point, returnElement) => {
+    const info = status.data?.branch
+    const currentBranch = info !== undefined && info !== null
+      && info.detached !== true && info.unborn !== true && typeof info.name === 'string'
+      ? info.name
+      : null
+    branchMenuReturnRef.current = returnElement ?? null
+    setBranchMenu({
+      branch: entry.name,
+      current: entry.current === true,
+      actions: branchActions({ current: entry.current === true, currentBranch }),
+      x: point.clientX,
+      y: point.clientY,
+    })
+  }, [status.data])
+
+  /** Close the shared branch actions menu. */
+  const closeBranchActions = useCallback(restoreFocus => {
+    setBranchMenu(null)
+    if (restoreFocus) restoreBranchFocus()
+    else branchMenuReturnRef.current = null
+  }, [restoreBranchFocus])
+
+  /**
+   * Open the confirmation for one branch action. Rename asks for a name;
+   * delete, merge, and rebase state what will happen first. The current branch
+   * is read here so merge and rebase name it without a second request.
+   */
+  const openBranchDialog = useCallback((kind, branch) => {
+    const info = status.data?.branch
+    const current = info !== undefined && info !== null
+      && info.detached !== true && info.unborn !== true && typeof info.name === 'string'
+      ? info.name
+      : null
+    setBranchDialog({ kind, branch, current })
+    setBranchDialogError(null)
+  }, [status.data])
+
+  /**
+   * Run one branch action, then refresh. Merge, rebase, delete, and push can
+   * change refs or the working tree, so the timeline and status are read
+   * again; a refused action leaves the dialog open with its error, while a
+   * refused push reports in the header because it starts from the menu.
+   */
+  const runBranchAction = useCallback(async (action, branch, options = {}) => {
+    const repo = stateRef.current.repo
+    if (repo === null || branchBusyRef.current || switchingRef.current || syncingRef.current) return
+    branchBusyRef.current = true
+    setBranchBusy(action)
+    setBranchDialogError(null)
+    setNotice(null)
+    let outcome
+    let failed = false
+    try {
+      const answer = await api.branchOp(repo, action, { branch, ...options })
+      outcome = { tone: 'info', text: branchOpMessage(t, action, branch, answer) }
+    } catch (error) {
+      failed = true
+      outcome = { tone: 'error', text: errorMessage(t, error) }
+      if (stateRef.current.repo === repo) setBranchDialogError(error)
+    } finally {
+      branchBusyRef.current = false
+      setBranchBusy(null)
+    }
+    if (stateRef.current.repo !== repo) return
+    if (failed) {
+      if (action === 'push') setNotice(outcome)
+      return
+    }
+    setBranchDialog(null)
+    setBranchDialogError(null)
+    // The branch list names and marks may be stale; the menu reloads on open.
+    setBranches({ status: 'idle', list: [], truncated: false, error: null })
+    refresh('branch')
+    setNotice(outcome)
+    // Checkout and push already restored focus when their menu closed; a
+    // dialog keeps it until the write is finished.
+    if (action !== 'push') restoreBranchFocus()
+  }, [api, refresh, t, restoreBranchFocus])
+
+  /**
+   * Dispatch one action chosen from the shared menu. A dialog keeps the
+   * opener's focus until it closes; a direct action returns focus right away.
+   */
+  const chooseBranchAction = useCallback(action => {
+    const target = branchMenu
+    if (target === null) return
+    setBranchMenu(null)
+    if (action === 'checkout' || action === 'push') {
+      restoreBranchFocus()
+      if (action === 'checkout') void switchBranch(target.branch)
+      else void runBranchAction('push', target.branch)
+      return
+    }
+    openBranchDialog(action, target.branch)
+  }, [branchMenu, openBranchDialog, restoreBranchFocus, runBranchAction, switchBranch])
+
+  /** Right-click on a branch ref in the timeline hands it to the same menu. */
+  const onTimelineBranchActions = useCallback((reference, event, returnElement) => {
+    event.preventDefault()
+    event.stopPropagation()
+    openBranchActions(reference, event, returnElement)
+  }, [openBranchActions])
+
+  /** Submit the open dialog. */
+  /** Submit the open dialog. */
+  const confirmBranchDialog = useCallback(values => {
+    if (branchDialog === null) return
+    void runBranchAction(branchDialog.kind, branchDialog.branch, values)
+  }, [branchDialog, runBranchAction])
+
+  /** Close the dialog without writing anything. */
+  const cancelBranchDialog = useCallback(() => {
+    if (branchBusyRef.current) return
+    setBranchDialog(null)
+    setBranchDialogError(null)
+    restoreBranchFocus()
+  }, [restoreBranchFocus])
 
   /** Load the direct children of one untracked directory. */
   const expandUntracked = useCallback(async (key, path) => {
@@ -822,7 +995,9 @@ export function VcsView({
         branchesTruncated={branches.truncated}
         onLoadBranches={loadBranches}
         onSwitchBranch={branch => { void switchBranch(branch) }}
+        onBranchActions={openBranchActions}
         switching={switching !== null}
+        branchBusy={branchBusy}
         notice={notice}
         t={t}
         locale={locale}
@@ -875,6 +1050,7 @@ export function VcsView({
                 truncated={log.truncated}
                 onLoadMore={() => { void loadMore() }}
                 onRetry={refresh}
+                onBranchActions={onTimelineBranchActions}
                 initialScrollTop={timelineScrollRef.current}
                 onScrollOffset={top => {
                   timelineScrollRef.current = top
@@ -950,6 +1126,24 @@ export function VcsView({
             </section>
           ) : null}
         </div>
+      )}
+      <BranchActionsMenu
+        target={branchMenu}
+        busy={branchBusy !== null}
+        t={t}
+        onChoose={chooseBranchAction}
+        onClose={closeBranchActions}
+      />
+      {branchDialog === null ? null : (
+        <BranchDialog
+          key={`${branchDialog.kind}:${branchDialog.branch}`}
+          request={branchDialog}
+          error={branchDialogError}
+          busy={branchBusy !== null}
+          onCancel={cancelBranchDialog}
+          onConfirm={confirmBranchDialog}
+          t={t}
+        />
       )}
     </div>
   )

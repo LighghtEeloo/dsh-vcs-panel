@@ -60,10 +60,11 @@ function WorktreeMeta({ status, statusState, t, locale }) {
 
 /**
  * Render the timeline.
- * @param {{ commits: object[], layout: object, status: object | null, statusState: string, worktreeRow?: boolean, selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
+ * @param {{ commits: object[], layout: object, status: object | null, statusState: string, worktreeRow?: boolean, selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, onBranchActions?: Function, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
  */
 export function Timeline({
-  commits, layout, status, statusState, worktreeRow = true, selectedRow, onSelectRow, onMove, onOpen, t, locale,
+  commits, layout, status, statusState, worktreeRow = true, selectedRow, onSelectRow, onMove, onOpen,
+  onBranchActions, t, locale,
   loading, loadingMore, error, hasMore, truncated, onLoadMore, onRetry,
   initialScrollTop = 0, onScrollOffset,
 }) {
@@ -151,7 +152,21 @@ export function Timeline({
         <span className="vcs-timeline-title">{subject}</span>
         <span className="vcs-timeline-meta">
           {workingCopy ? <span className="vcs-working-badge" title={t('timeline.workingCopy')}>@</span> : null}
-          {commit.refs.slice(0, ROW_REFS).map(reference => <RefBadge key={`${reference.kind}:${reference.name}`} reference={reference} />)}
+          {commit.refs.slice(0, ROW_REFS).map(reference => (
+            <RefBadge
+              key={`${reference.kind}:${reference.name}`}
+              reference={reference}
+              onBranchContextMenu={onBranchActions === undefined
+                ? undefined
+                : (target, event) => {
+                  onBranchActions(
+                    target,
+                    event,
+                    event.currentTarget.closest('.vcs-timeline-row') ?? event.currentTarget,
+                  )
+                }}
+            />
+          ))}
           <code className="vcs-timeline-sha" title={commit.sha}>{shortId}</code>
           {workingCopy && workingSummary !== null && workingSummary.changed > 0 ? (
             <>

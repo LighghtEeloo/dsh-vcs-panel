@@ -150,6 +150,13 @@ const ERROR_KEYS = {
   'remote-failed': 'error.remoteFailed',
   'switch-blocked': 'error.switchBlocked',
   'switch-failed': 'error.switchFailed',
+  'branch-invalid': 'error.branchInvalid',
+  'branch-exists': 'error.branchExists',
+  'branch-unmerged': 'error.branchUnmerged',
+  'branch-in-use': 'error.branchInUse',
+  'merge-blocked': 'error.mergeBlocked',
+  'rebase-blocked': 'error.rebaseBlocked',
+  'branch-failed': 'error.branchFailed',
 }
 
 /**
@@ -192,4 +199,32 @@ export function syncMessage(t, result, locale) {
 export function switchMessage(t, result, requested) {
   const branch = typeof result?.branch === 'string' && result.branch !== '' ? result.branch : requested
   return t('switch.done', { branch })
+}
+
+/**
+ * Localized outcome of one branch action: what changed and where.
+ * @param {Function} t - the panel's translate function.
+ * @param {'rename'|'delete'|'merge'|'rebase'|'push'} action - the action that ran.
+ * @param {string} branch - the branch the user chose.
+ * @param {object | null} result - the Host answer.
+ * @returns {string} browser-facing copy.
+ */
+export function branchOpMessage(t, action, branch, result) {
+  const current = typeof result?.current === 'string' && result.current !== '' ? result.current : branch
+  if (action === 'rename') {
+    const from = typeof result?.from === 'string' && result.from !== '' ? result.from : branch
+    const to = typeof result?.branch === 'string' && result.branch !== '' ? result.branch : branch
+    return t('branch.renamed', { from, branch: to })
+  }
+  if (action === 'delete') return t('branch.deleted', { branch })
+  if (action === 'merge') {
+    if (result?.result === 'fast-forward') return t('branch.fastForwarded', { current, branch })
+    if (result?.result === 'up-to-date') return t('branch.upToDate', { current, branch })
+    return t('branch.merged', { current, branch })
+  }
+  if (action === 'rebase') return t('branch.rebased', { current, branch })
+  const upstream = typeof result?.upstream === 'string' && result.upstream !== '' ? result.upstream : branch
+  return result?.pushed === false
+    ? t('branch.pushLevel', { branch, upstream })
+    : t('branch.pushed', { branch, upstream })
 }
