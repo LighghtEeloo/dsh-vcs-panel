@@ -261,27 +261,6 @@ export function rowAt(tops, offset) {
 }
 
 /**
- * The next or previous file row, starting after `from`.
- * Hunk jumps use the unfiltered form to leave a diff at its end and focus the
- * adjacent file row. The optional filter skips files whose comparison is
- * collapsed, so backward hunk jumps never land on content that is not rendered.
- * @param {object[]} rows - the visible rows.
- * @param {number} from - the index to start from (exclusive).
- * @param {number} step - 1 for forward, -1 for backward.
- * @param {(row: object) => boolean} [folded] - folded file rows to skip.
- * @returns {number} the row index, or -1 when no such row exists.
- */
-export function nextFileRow(rows, from, step, folded) {
-  for (let index = from + step; index >= 0 && index < rows.length; index += step) {
-    const row = rows[index]
-    if (row.kind !== 'file') continue
-    if (folded !== undefined && folded(row)) continue
-    return index
-  }
-  return -1
-}
-
-/**
  * What one commit's toolbar says about the work behind it.
  * @param {object[] | null | undefined} files - the commit's changed files.
  * @returns {{ count: number, added: number, deleted: number }} the summary.

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { BACK, DOWN, FORWARD, hunkStep, isEditableTarget, movement, rowStep, unmodified, UP } from '../src/client/keys.js'
+import { BACK, DOWN, FORWARD, isEditableTarget, movement, rowStep, unmodified, UP } from '../src/client/keys.js'
 
 test('movement maps arrows and vim keys to one direction', () => {
   assert.equal(movement({ key: 'ArrowUp' }), UP)
@@ -30,14 +30,6 @@ test('unmodified reports the command modifiers', () => {
   assert.equal(unmodified({ key: 'x', metaKey: true }), false)
 })
 
-test('hunkStep maps j/k to a hunk step inside an expanded file', () => {
-  assert.equal(hunkStep({ key: 'j' }), 1)
-  assert.equal(hunkStep({ key: 'k' }), -1)
-  assert.equal(hunkStep({ key: ']' }), 0)
-  assert.equal(hunkStep({ key: 'j', ctrlKey: true }), 0)
-  assert.equal(hunkStep({ key: 'J' }), 0)
-})
-
 test('rowStep maps the bracket keys to a row step', () => {
   assert.equal(rowStep({ key: ']' }), 1)
   assert.equal(rowStep({ key: '[' }), -1)
@@ -51,7 +43,6 @@ test('AltGr is a character modifier, not a command modifier', () => {
   const altGraph = { altKey: true, getModifierState: key => key === 'AltGraph' }
   assert.equal(unmodified(altGraph), true)
   assert.equal(movement({ ...altGraph, key: 'j' }), DOWN)
-  assert.equal(hunkStep({ ...altGraph, key: 'j' }), 1)
   assert.equal(rowStep({ ...altGraph, key: ']' }), 1, 'German and French layouts type brackets with AltGr')
   assert.equal(unmodified({ altKey: true, getModifierState: () => false }), false)
   assert.equal(unmodified({ altKey: true }), false, 'an event without modifier state keeps Alt as a command key')

@@ -826,7 +826,7 @@ test('ChangeTree measures static row containers rather than sticky-displaced hea
   }
 })
 
-test('ChangeTree steps hunks with j/k inside an expanded file and moves rows with brackets', async () => {
+test('ChangeTree moves through rows and hunk headers as one vertical list', async () => {
   const harness = createHarness()
   const restore = harness.installGlobals()
   try {
@@ -896,38 +896,55 @@ test('ChangeTree steps hunks with j/k inside an expanded file and moves rows wit
     headers[1].offsetTop = 244
     headers[2].offsetTop = 44
 
-    // `]` reaches the first file row; `j` then steps to its hunks, while `k`
-    // walks back. The brackets keep moving rows past the diff level.
+    const fileHeads = treeEl.querySelectorAll('.vcs-tree-file-head')
+
+    // `]` reaches the first file row. Vertical movement from here walks the
+    // row, then its hunk headers, then the next row.
     harness.keyDown(treeEl.querySelector('.vcs-tree-group-head'), ']')
     assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|a.js')
     assert.equal(treeEl.scrollTop, 0)
 
     harness.keyDown(harness.document.activeElement, 'j')
+    assert.equal(harness.document.activeElement, headers[0])
     assert.equal(treeEl.scrollTop, 44)
-    harness.keyDown(harness.document.activeElement, 'j')
+    harness.keyDown(harness.document.activeElement, 'ArrowDown')
+    assert.equal(harness.document.activeElement, headers[1])
     assert.equal(treeEl.scrollTop, 244)
     harness.keyDown(harness.document.activeElement, 'k')
+    assert.equal(harness.document.activeElement, headers[0])
     assert.equal(treeEl.scrollTop, 44)
 
+    // Brackets skip the hunk level and move one tree row.
     harness.keyDown(harness.document.activeElement, ']')
     assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|b.js')
     assert.equal(treeEl.scrollTop, 572)
+    assert.equal(fileHeads[1].attributes.get('aria-current'), 'location')
 
     harness.keyDown(harness.document.activeElement, '[')
     assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|a.js')
     assert.equal(treeEl.scrollTop, 28)
 
-    // At the end of a.js, j leaves the diff level and focuses b.js's row; the
-    // next press enters b.js at its first hunk.
+    // The same list crosses file boundaries: the last hunk's next stop is the
+    // next file row, and its next stop is that file's first hunk.
     harness.keyDown(harness.document.activeElement, 'j')
     harness.keyDown(harness.document.activeElement, 'j')
+    assert.equal(harness.document.activeElement, headers[1])
     assert.equal(treeEl.scrollTop, 244)
     harness.keyDown(harness.document.activeElement, 'j')
     assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|b.js')
-    assert.equal(treeEl.scrollTop, 244)
+    assert.equal(treeEl.scrollTop, 572)
+    assert.equal(fileHeads[1].attributes.get('aria-current'), 'location')
     harness.keyDown(harness.document.activeElement, 'j')
-    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|b.js')
+    assert.equal(harness.document.activeElement, headers[2])
     assert.equal(treeEl.scrollTop, 588)
+
+    // Clicking a hunk header adopts it as the same stop; the next key continues
+    // from there rather than from the previous file.
+    treeEl.props.onClick({ target: headers[0], currentTarget: treeEl })
+    assert.equal(harness.document.activeElement, headers[0])
+    harness.keyDown(harness.document.activeElement, 'j')
+    assert.equal(harness.document.activeElement, headers[1])
+    assert.equal(treeEl.scrollTop, 244)
   } finally {
     harness.unmount()
     restore()
@@ -1012,7 +1029,7 @@ test('ChangeTree focuses a closed next file at the end of a diff', async () => {
   }
 })
 
-test('ChangeTree enters the closest open diff above from a closed file row', async () => {
+test('ChangeTree moves from a closed file row into the previous open diff', async () => {
   const harness = createHarness()
   const restore = harness.installGlobals()
   try {
@@ -1078,6 +1095,8 @@ test('ChangeTree enters the closest open diff above from a closed file row', asy
     headers[0].offsetTop = 44
     headers[1].offsetTop = 244
 
+    const fileHeads = treeEl.querySelectorAll('.vcs-tree-file-head')
+
     // Reach the closed b.js row, then move up through either key.
     harness.keyDown(treeEl.querySelector('.vcs-tree-group-head'), ']')
     harness.keyDown(harness.document.activeElement, ']')
@@ -1085,13 +1104,14 @@ test('ChangeTree enters the closest open diff above from a closed file row', asy
     assert.equal(treeEl.scrollTop, 572)
 
     harness.keyDown(harness.document.activeElement, 'ArrowUp')
-    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|a.js')
+    assert.equal(harness.document.activeElement, headers[1])
     assert.equal(treeEl.scrollTop, 244)
+    assert.equal(fileHeads[0].attributes.get('aria-current'), 'location')
 
     harness.keyDown(harness.document.activeElement, ']')
     assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|b.js')
     harness.keyDown(harness.document.activeElement, 'k')
-    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|a.js')
+    assert.equal(harness.document.activeElement, headers[1])
     assert.equal(treeEl.scrollTop, 244)
   } finally {
     harness.unmount()

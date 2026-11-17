@@ -2,10 +2,9 @@
  * The panel's movement keys.
  *
  * The timeline and the change tree share one vocabulary: up/down or `k`/`j`
- * move within a list, left/right or `h`/`l` move between panes or into a row,
- * and inside an expanded file `j`/`k` step across hunks while brackets move
- * between list rows. Each zone decides what a direction means; command
- * modifiers keep the key's usual meaning.
+ * move through one vertical list, left/right or `h`/`l` move between panes or
+ * into a row, and brackets move between tree rows. Each zone decides what a
+ * direction means; command modifiers keep the key's usual meaning.
  */
 
 /** Directions a movement key can ask for. */
@@ -25,10 +24,6 @@ const DIRECTIONS = new Map([
   ['ArrowRight', FORWARD],
   ['l', FORWARD],
 ])
-
-/** Keys that step to the next or previous hunk inside an expanded file. */
-const HUNK_NEXT = 'j'
-const HUNK_PREV = 'k'
 
 /** Keys that move to the next or previous row of the change tree. */
 const ROW_NEXT = ']'
@@ -55,18 +50,6 @@ export function unmodified(event) {
 export function movement(event) {
   if (!unmodified(event)) return null
   return DIRECTIONS.get(event.key) ?? null
-}
-
-/**
- * The hunk step a key event asks for: 1 forward, -1 backward, 0 none.
- * @param {{ key: string, altKey?: boolean, ctrlKey?: boolean, metaKey?: boolean }} event - the key event.
- * @returns {number} the step.
- */
-export function hunkStep(event) {
-  if (!unmodified(event)) return 0
-  if (event.key === HUNK_NEXT) return 1
-  if (event.key === HUNK_PREV) return -1
-  return 0
 }
 
 /**

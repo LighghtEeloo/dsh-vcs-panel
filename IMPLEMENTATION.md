@@ -193,7 +193,7 @@ Client 顶层注入 `['slots', 'locale', 'uiConversation']`，在四处与 DSH �
 ### 图布局与变更树管线
 
 - **时间线图布局**：`buildGraph` 接收拓扑序节点，按 `pass / goto / end` 遍历活动 lane（第一父延续当前 lane，其余父节点分配或复用侧 lane，lane 结束时回收颜色；Git 工作区虚节点以虚线连向 `HEAD`），输出路径与圆点坐标，与虚拟列表共用滚动容器渲染；分页追加时 O(n) 重算整图并按提交锚点恢复位置。
-- **变更树与请求调度**：客户端将 Git 的 `untracked` 条目并入 `unstaged` 分组（可按需展开的未跟踪目录不参与单子目录链压缩），生成单一扁平行列表供渲染、roving tabindex 键盘导航与滚动锚点共用；文件默认收起，只有展开的行才请求 `vcs.diff`。发起请求时仍按条目自身状态还原 `scope`（`?` 走 `untracked`，重命名带 `oldPath`）。变更树窄于 640 px（`SPLIT_MIN_WIDTH`）时将 `FileDiff` 的 `split` 置为 `false` 单栏渲染。展开文件由 `IntersectionObserver` 入队请求，离开视口时经 `AbortController` 取消。当前行是收起文件时，`↑` / `k` 进入上方最近的展开文件的最后一个 hunk，`↓` / `j` 仍按行移动；当前行是展开文件时，`j` / `k` 跳到下一个/上一个 hunk；到文件末尾后 `j` 改为聚焦下一个文件行（包括收起的文件），再按一次才进入其 diff 或继续移动，`k` 仍进入上一个未收起文件的最后一个 hunk；分组或目录行按方向移动光标。`[` / `]` 始终在行之间移动；`←` / `h` 在当前行是展开文件时先收起它，已收起时才回到时间线，`Esc` 保留为直接返回。键盘匹配排除 `AltGraph`，保证需要 AltGr 输入 `[` / `]` 的键盘布局可用。
+- **变更树与请求调度**：客户端将 Git 的 `untracked` 条目并入 `unstaged` 分组（可按需展开的未跟踪目录不参与单子目录链压缩），生成单一扁平行列表供渲染、roving tabindex 键盘导航与滚动锚点共用；文件默认收起，只有展开的行才请求 `vcs.diff`。发起请求时仍按条目自身状态还原 `scope`（`?` 走 `untracked`，重命名带 `oldPath`）。变更树窄于 640 px（`SPLIT_MIN_WIDTH`）时将 `FileDiff` 的 `split` 置为 `false` 单栏渲染。展开文件由 `IntersectionObserver` 入队请求，离开视口时经 `AbortController` 取消。`↑` / `↓` 或 `j` / `k` 沿一条纵向列表移动：分组、目录、文件行与展开文件的 hunk header 共用同一光标，hunk header 设 `tabIndex=-1` 以便程序聚焦但仍沿用行的 roving tabindex；`[` / `]` 只按树行移动。滚动时按当前阅读位置把光标同步到所在行或 hunk，并保持阅读行、焦点和吸顶标题指向同一位置；`←` / `h` 在当前行是展开文件时先收起它，已收起时才回到时间线，`Esc` 保留为直接返回。键盘匹配排除 `AltGraph`，保证需要 AltGr 输入 `[` / `]` 的键盘布局可用。
 
 ## 复用与来源
 

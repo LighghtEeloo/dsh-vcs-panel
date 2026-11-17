@@ -9,20 +9,19 @@
  * the expanded file row stick above the body they belong to, so the reader
  * always knows which group and file own the next hunk.
  *
- * Keyboard and scroll share one cursor: moving the cursor scrolls the row into
- * view, while the wheel, the trackpad or paging move the cursor to the row
- * being read. Neither overrides the other. Keys follow the same levels as the
- * layout: arrows and brackets move between rows, while inside an expanded file
- * `j`/`k` step across its hunks.
+ * Keyboard and scroll share one cursor over a single vertical list: tree rows
+ * and the hunk headers of open comparisons. Up/down or `j`/`k` move this list,
+ * brackets move rows, and the wheel, trackpad or paging move the cursor to the
+ * stop being read. Neither input overrides the other.
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { FileDiff, isValidDiff } from '../diff/FileDiff.jsx'
 import { formatCount, lineCounts, splitPath, statusKey } from '../format.js'
-import { BACK, DOWN, FORWARD, hunkStep, isEditableTarget, movement, rowStep, UP } from '../keys.js'
+import { BACK, DOWN, FORWARD, isEditableTarget, movement, rowStep, UP } from '../keys.js'
 import { Chevron, Spinner } from '../ui.jsx'
 import {
-  MAX_PARALLEL, changedLines, diffTarget, estimateHeight, isFolded, nextFileRow, rowAt,
+  MAX_PARALLEL, changedLines, diffTarget, estimateHeight, isFolded, rowAt,
 } from './detail.js'
 import { createQueue } from './queue.js'
 import { rowBodyId } from './tree.js'
@@ -77,6 +76,13 @@ function ancestorKeys(key) {
   return candidates
 }
 
+/** Whether an element is a focusable hunk header of an open comparison. */
+function isHunkHeader(element) {
+  if (element === null || element === undefined) return false
+  if (element.attributes?.has?.('data-diff-hunk-header') === true) return true
+  return typeof element.hasAttribute === 'function' && element.hasAttribute('data-diff-hunk-header')
+}
+
 /**
  * One file's comparison, or the reason it is folded.
  *
@@ -85,8 +91,8 @@ function ancestorKeys(key) {
  * do not jump when the answer arrives.
  */
 const FileBody = memo(function FileBody({
-  fileKey, group, entry, rev, near, folded, foldReason, request, revision,
-  split, wrap, onLoaded, t, locale,
+  group, entry, rev, near, folded, foldReason, request, revision,
+  split, wrap, t, locale,
 }) {
   const [answer, setAnswer] = useState(null)
   const [attempt, setAttempt] = useState(0)
@@ -102,11 +108,10 @@ const FileBody = memo(function FileBody({
     // The previous answer stays on screen until the new one arrives.
     return request(target, revision, result => {
       setAnswer({ ...result, revision, attempt, targetKey: currentTargetKey })
-      onLoaded(fileKey, result)
     })
     // `answer` and `target` are keyed by `revision`, `attempt`, and `currentTargetKey`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folded, near, revision, attempt, request, onLoaded, fileKey, currentTargetKey])
+  }, [folded, near, revision, attempt, request, currentTargetKey])
 
   if (folded) {
     if (foldReason === undefined) return null
@@ -144,7 +149,6 @@ export function ChangeTree({
   const rowEls = useRef(new Map())
   const bodyEls = useRef(new Map())
   const sectionEls = useRef(new Map())
-  const loadedRef = useRef(new Map())
   const observerRef = useRef(null)
   const frameRef = useRef(0)
   const pendingPreserve = useRef(null)
@@ -155,8 +159,8 @@ export function ChangeTree({
   const queue = useMemo(() => createQueue(MAX_PARALLEL), [])
   const [near, setNear] = useState(() => new Map())
   const [everyNear, setEveryNear] = useState(false)
-  const [cursor, setCursor] = useState(0)
-  const cursorRef = useRef(0)
+  const [cursor, setCursor] = useState({ row: 0, hunk: -1 })
+  const cursorRef = useRef({ row: 0, hunk: -1 })
   const readingRef = useRef(initialAnchor?.key ?? null)
   const [readingKey, setReadingKey] = useState(initialAnchor?.key ?? null)
 
@@ -167,7 +171,7 @@ export function ChangeTree({
     navRows.forEach((row, at) => index.set(row.key, at))
     return index
   }, [navRows])
-  const cursorKey = navRows[Math.max(0, Math.min(cursor, navRows.length - 1))]?.key ?? null
+  const cursorKey = navRows[Math.max(0, Math.min(cursor.row, navRows.length - 1))]?.key ?? null
 
   /** Whether one file row is folded under the current rules. */
   const isRowFolded = useCallback(row => isFolded(row.key, folds), [folds])
@@ -179,9 +183,10 @@ export function ChangeTree({
     [isRowFolded, rows],
   )
 
-  const setCursorAt = useCallback(index => {
-    cursorRef.current = index
-    setCursor(index)
+  const setCursorAt = useCallback((row, hunk = -1) => {
+    const next = { row, hunk }
+    cursorRef.current = next
+    setCursor(next)
   }, [])
 
   /** The top offset of one element inside the scrolling tree, ignoring sticky displacement. */
@@ -299,13 +304,6 @@ export function ChangeTree({
     }
   }, [api, cache, queue, repo])
 
-  const onLoaded = useCallback((key, result) => {
-    loadedRef.current.set(key, result)
-  }, [])
-
-  // A new revision invalidates which comparisons the tree considers loaded.
-  useEffect(() => { loadedRef.current.clear() }, [revision])
-
   // Files near the viewport, as the browser reports them.
   useEffect(() => {
     const root = scrollRef.current
@@ -332,15 +330,6 @@ export function ChangeTree({
       observerRef.current = null
     }
   }, [])
-
-  // The cursor stays inside the rendered rows.
-  useEffect(() => {
-    if (navRows.length === 0) {
-      if (cursorRef.current !== 0) setCursorAt(0)
-      return
-    }
-    if (cursorRef.current > navRows.length - 1) setCursorAt(navRows.length - 1)
-  }, [navRows, setCursorAt])
 
   /** The row index of one key, falling back to its nearest rendered ancestor. */
   const indexOfKey = useCallback(key => {
@@ -405,21 +394,28 @@ export function ChangeTree({
     rowEls.current.get(key)?.focus({ preventScroll: true })
   }, [])
 
-  /** Move the keyboard cursor to one row. */
+  /** Focus one hunk header without letting the browser scroll it again. */
+  const focusHunkElement = useCallback((key, hunk) => {
+    const header = bodyEls.current.get(key)?.querySelectorAll('[data-diff-hunk-header]')[hunk]
+    header?.focus?.({ preventScroll: true })
+  }, [])
+
+  /** Report a row as the reading position while leaving the scroll offset explicit. */
+  const markReading = useCallback((row, offset = 0) => {
+    readingRef.current = row.key
+    setReadingKey(previous => (previous === row.key ? previous : row.key))
+    onReading({ key: row.key, offset })
+  }, [onReading])
+
+  /** Move the keyboard cursor to one row, without entering its diff. */
   const focusRowAt = useCallback(index => {
     const row = navRows[index]
     if (row === undefined) return
-    setCursorAt(index)
+    setCursorAt(index, -1)
     scrollRowIntoView(index)
     focusRowElement(row.key)
-  }, [focusRowElement, navRows, scrollRowIntoView, setCursorAt])
-
-  const move = useCallback(delta => {
-    if (navRows.length === 0) return
-    lastInputRef.current = 'keyboard'
-    const base = Math.max(0, Math.min(cursorRef.current, navRows.length - 1))
-    focusRowAt(Math.max(0, Math.min(base + delta, navRows.length - 1)))
-  }, [focusRowAt, navRows.length])
+    markReading(row, 0)
+  }, [focusRowElement, markReading, navRows, scrollRowIntoView, setCursorAt])
 
   /** Whether one row currently shows the content below it. */
   const isExpanded = useCallback(row => (row.kind === 'file' ? !isRowFolded(row) : row.expanded), [isRowFolded])
@@ -443,7 +439,7 @@ export function ChangeTree({
 
   /** `→` / `l`: expand a collapsed row, or step into an expanded group or directory. */
   const forward = useCallback(() => {
-    const index = Math.max(0, Math.min(cursorRef.current, navRows.length - 1))
+    const index = Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))
     const row = navRows[index]
     if (row === undefined) return
     lastInputRef.current = 'keyboard'
@@ -464,14 +460,17 @@ export function ChangeTree({
    * same key then leaves the tree.
    */
   const back = useCallback(() => {
-    const index = Math.max(0, Math.min(cursorRef.current, navRows.length - 1))
+    const index = Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))
     const row = navRows[index]
     if (row?.kind === 'file' && isExpanded(row)) {
+      setCursorAt(index, -1)
       toggle(row, true)
+      focusRowElement(row.key)
+      markReading(row, 0)
       return
     }
     onLeave()
-  }, [isExpanded, navRows, onLeave, toggle])
+  }, [focusRowElement, isExpanded, markReading, navRows, onLeave, setCursorAt, toggle])
 
   /** Top offsets of the hunk headers inside one file's comparison. */
   const hunkOffsets = useCallback(row => {
@@ -484,127 +483,171 @@ export function ChangeTree({
     return [...tops].sort((a, b) => a - b)
   }, [flowTop])
 
-  /** Scroll to one hunk of a file; stop on the file row when it has no hunks yet. */
-  const scrollToFileHunk = useCallback((index, direction) => {
+  /** Align one row directly below the sticky rows. */
+  const alignRow = useCallback(index => {
     const root = scrollRef.current
     const row = navRows[index]
     if (root === null || row === undefined) return
     const element = rowEls.current.get(row.key)
     if (element === undefined) return
-    const stickyBottom = (grouped ? ROW_HEIGHT : 0) + ROW_HEIGHT
+    root.scrollTop = Math.max(0, flowTop(element) - alignmentTop(row))
+  }, [alignmentTop, flowTop, navRows])
+
+  /** The hunk stop a scroll line is reading inside one row, or -1 for the row itself. */
+  const hunkAtLine = useCallback((row, line) => {
+    if (row.kind !== 'file' || isRowFolded(row)) return -1
     const offsets = hunkOffsets(row)
-    setCursorAt(index)
-    focusRowElement(row.key)
-    lastInputRef.current = 'keyboard'
-    const target = offsets.length === 0
-      ? flowTop(element) - alignmentTop(row)
-      : (direction > 0 ? offsets[0] : offsets[offsets.length - 1]) - stickyBottom
-    root.scrollTop = Math.max(0, target)
-    report()
-  }, [alignmentTop, flowTop, focusRowElement, grouped, hunkOffsets, navRows, report, setCursorAt])
+    let found = -1
+    for (let at = 0; at < offsets.length; at += 1) {
+      if (offsets[at] <= line) found = at
+      else break
+    }
+    return found
+  }, [hunkOffsets, isRowFolded])
+
+  // The cursor stays inside the rendered rows and their loaded hunks.
+  useEffect(() => {
+    if (navRows.length === 0) {
+      const current = cursorRef.current
+      if (current.row !== 0 || current.hunk !== -1) setCursorAt(0, -1)
+      return
+    }
+    const row = Math.min(cursorRef.current.row, navRows.length - 1)
+    if (row !== cursorRef.current.row) {
+      setCursorAt(row, -1)
+      return
+    }
+    if (cursorRef.current.hunk < 0) return
+    const target = navRows[row]
+    const offsets = target.kind === 'file' && !isRowFolded(target) ? hunkOffsets(target) : []
+    if (cursorRef.current.hunk >= offsets.length) setCursorAt(row, -1)
+  }, [hunkOffsets, isRowFolded, navRows, setCursorAt])
 
   /**
-   * `j` / `k` inside an expanded file: step to the next or previous hunk.
-   * At the end of a diff the next file row takes focus, even when folded, so
-   * the reader can keep moving instead of stopping on the last hunk. At the
-   * start, backward jumps enter the previous unfolded file at its last hunk.
+   * Focus one vertical stop: a tree row or one hunk header of an open file.
+   * A cross-row row stop is aligned under the sticky headers so focus, reading
+   * state, and the visible position describe the same place.
    */
-  const jumpHunk = useCallback(direction => {
+  const focusStop = useCallback((index, hunk = -1, align = false) => {
     const root = scrollRef.current
-    if (root === null || navRows.length === 0) return
-    lastInputRef.current = 'keyboard'
-    const stickyBottom = (grouped ? ROW_HEIGHT : 0) + ROW_HEIGHT
-    const line = root.scrollTop + stickyBottom
-    const index = Math.max(0, Math.min(cursorRef.current, navRows.length - 1))
     const row = navRows[index]
-    if (row !== undefined && row.kind === 'file' && !isRowFolded(row)) {
-      const offsets = hunkOffsets(row)
-      let current = -1
-      for (let at = 0; at < offsets.length; at += 1) {
-        if (offsets[at] <= line) current = at
-        else break
-      }
-      const target = offsets[current + direction]
-      if (target !== undefined) {
-        setCursorAt(index)
-        focusRowElement(row.key)
-        root.scrollTop = Math.max(0, target - stickyBottom)
-        report()
+    if (row === undefined) return
+    const stickyBottom = (grouped ? ROW_HEIGHT : 0) + ROW_HEIGHT
+    const offsets = hunk >= 0 && row.kind === 'file' && !isRowFolded(row) ? hunkOffsets(row) : []
+    const target = hunk >= 0 && hunk < offsets.length ? hunk : -1
+    setCursorAt(index, target)
+    lastInputRef.current = 'keyboard'
+    if (target >= 0) {
+      if (root !== null) root.scrollTop = Math.max(0, offsets[target] - stickyBottom)
+      focusHunkElement(row.key, target)
+      const element = rowEls.current.get(row.key)
+      const offset = root !== null && element !== undefined ? Math.max(0, root.scrollTop - flowTop(element)) : 0
+      markReading(row, offset)
+      return
+    }
+    if (align) alignRow(index)
+    else scrollRowIntoView(index)
+    focusRowElement(row.key)
+    markReading(row, 0)
+  }, [alignRow, focusHunkElement, flowTop, focusRowElement, grouped, hunkOffsets, isRowFolded, markReading, navRows, scrollRowIntoView, setCursorAt])
+
+  /** Move the cursor through rows and the hunk headers of open files as one list. */
+  const moveStop = useCallback(direction => {
+    if (navRows.length === 0) return
+    const rowIndex = Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))
+    const row = navRows[rowIndex]
+    if (row === undefined) return
+    const offsets = row.kind === 'file' && !isRowFolded(row) ? hunkOffsets(row) : []
+    const hunk = cursorRef.current.hunk >= 0 && cursorRef.current.hunk < offsets.length ? cursorRef.current.hunk : -1
+    if (hunk >= 0) {
+      const next = hunk + direction
+      if (next >= 0 && next < offsets.length) {
+        focusStop(rowIndex, next)
         return
       }
-      // Hunks inside an unloaded comparison are unknown; stay on its header.
-      if (!loadedRef.current.has(row.key)) {
-        scrollToFileHunk(index, direction)
+      if (direction < 0) {
+        focusStop(rowIndex, -1)
         return
       }
+      if (rowIndex + 1 < navRows.length) focusStop(rowIndex + 1, -1, true)
+      return
     }
     if (direction > 0) {
-      // Leaving the diff level focuses the adjacent file row; a second press
-      // then enters that file's diff or keeps moving through the rows.
-      const targetIndex = nextFileRow(navRows, index, direction)
-      if (targetIndex >= 0) {
-        focusRowAt(targetIndex)
-        report()
+      if (offsets.length > 0) {
+        focusStop(rowIndex, 0)
         return
       }
-    } else {
-      // Backward hunk flow enters the previous unfolded file at its last hunk.
-      const targetIndex = nextFileRow(navRows, index, direction, isRowFolded)
-      if (targetIndex >= 0) {
-        scrollToFileHunk(targetIndex, direction)
-        return
-      }
+      if (rowIndex + 1 < navRows.length) focusStop(rowIndex + 1, -1)
+      return
     }
-    move(direction)
-  }, [focusRowAt, focusRowElement, grouped, hunkOffsets, isRowFolded, move, navRows, report, scrollToFileHunk, setCursorAt])
+    if (rowIndex > 0) {
+      const previous = navRows[rowIndex - 1]
+      const previousOffsets = previous.kind === 'file' && !isRowFolded(previous) ? hunkOffsets(previous) : []
+      focusStop(rowIndex - 1, previousOffsets.length > 0 ? previousOffsets.length - 1 : -1)
+    }
+  }, [focusStop, hunkOffsets, isRowFolded, navRows])
 
-  /**
-   * `↑` / `k` from a closed file row: enter the closest unfolded file above
-   * at its last hunk, so moving up reverses the step out of a diff. Other rows
-   * keep the normal upward row movement.
-   */
-  const up = useCallback(() => {
-    const index = Math.max(0, Math.min(cursorRef.current, navRows.length - 1))
-    const row = navRows[index]
-    if (row?.kind === 'file' && isRowFolded(row)) {
-      const targetIndex = nextFileRow(navRows, index, -1, isRowFolded)
-      if (targetIndex >= 0) {
-        scrollToFileHunk(targetIndex, -1)
-        return
-      }
+  /** Move one tree row, skipping the hunk level. */
+  const moveRow = useCallback(direction => {
+    if (navRows.length === 0) return
+    const current = Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))
+    const target = Math.max(0, Math.min(current + direction, navRows.length - 1))
+    if (target === current) return
+    focusStop(target, -1, cursorRef.current.hunk >= 0)
+  }, [focusStop, navRows.length])
+
+  /** A click on a hunk header moves the same cursor as the keyboard. */
+  const onTreeClick = event => {
+    let node = event.target
+    while (node !== null && node !== undefined && node !== event.currentTarget) {
+      if (isHunkHeader(node)) break
+      node = node.parentElement
     }
-    move(-1)
-  }, [isRowFolded, move, navRows, scrollToFileHunk])
+    if (!isHunkHeader(node)) return
+    let file = node
+    while (file !== null && file !== undefined && file !== event.currentTarget) {
+      if (file.dataset?.fileKey !== undefined) break
+      file = file.parentElement
+    }
+    const key = file?.dataset?.fileKey
+    const index = key === undefined ? undefined : navIndexByKey.get(key)
+    if (index === undefined) return
+    const row = navRows[index]
+    const hunk = hunkOffsets(row).indexOf(flowTop(node))
+    if (hunk < 0) return
+    setCursorAt(index, hunk)
+    lastInputRef.current = 'keyboard'
+    node.focus?.({ preventScroll: true })
+    const element = rowEls.current.get(key)
+    const root = scrollRef.current
+    const offset = root === null || element === undefined ? 0 : Math.max(0, root.scrollTop - flowTop(element))
+    markReading(row, offset)
+  }
 
   const onKeyDown = event => {
     if (isEditableTarget(event.target)) return
     if (event.isComposing === true) return
-    // An expanded file adds the hunk level below its row: j/k read within the
-    // diff, while brackets keep moving the row cursor at the tree level.
-    const activeRow = navRows[Math.max(0, Math.min(cursorRef.current, navRows.length - 1))]
-    if (activeRow?.kind === 'file' && !isRowFolded(activeRow)) {
-      const hunk = hunkStep(event)
-      if (hunk !== 0) {
-        event.preventDefault()
-        jumpHunk(hunk)
-        return
-      }
+    // Hunk headers are not buttons, so Space/Enter act on their owning file.
+    if (cursorRef.current.hunk >= 0 && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault()
+      back()
+      return
     }
     const row = rowStep(event)
     if (row !== 0) {
       event.preventDefault()
-      move(row)
+      moveRow(row)
       return
     }
     const direction = movement(event)
     if (direction === DOWN) {
       event.preventDefault()
-      move(1)
+      moveStop(1)
       return
     }
     if (direction === UP) {
       event.preventDefault()
-      up()
+      moveStop(-1)
       return
     }
     if (direction === FORWARD) {
@@ -648,16 +691,25 @@ export function ChangeTree({
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = 0
       report()
-      if (lastInputRef.current !== 'scroll') return
+      const root = scrollRef.current
+      if (lastInputRef.current !== 'scroll' || root === null) return
       const key = readingRef.current
       if (key === null) return
       const index = navIndexByKey.get(key)
-      if (index === undefined || index === cursorRef.current) return
-      setCursorAt(index)
+      if (index === undefined) return
+      const row = navRows[index]
+      if (row === undefined) return
+      const line = root.scrollTop + (grouped ? ROW_HEIGHT : 0) + ROW_HEIGHT
+      const hunk = hunkAtLine(row, line)
+      if (index === cursorRef.current.row && hunk === cursorRef.current.hunk) return
+      setCursorAt(index, hunk)
       const active = typeof document === 'undefined' ? null : document.activeElement
-      if (active !== null && scrollRef.current?.contains(active) && active.classList?.contains('vcs-tree-row')) {
-        focusRowElement(key)
-      }
+      const focusInside = active !== null
+        && root.contains(active)
+        && (active.classList?.contains('vcs-tree-row') || isHunkHeader(active))
+      if (!focusInside) return
+      if (hunk >= 0) focusHunkElement(key, hunk)
+      else focusRowElement(key)
     })
   }
 
@@ -689,7 +741,10 @@ export function ChangeTree({
       root.scrollTop = Math.max(0, flowTop(element) + (row.key === pending.key ? pending.offset : 0))
     }
     report()
-  }, [flowTop, indexOfKey, navRows, report, rows])
+    const line = root.scrollTop + (grouped ? ROW_HEIGHT : 0) + ROW_HEIGHT
+    const hunk = row === undefined ? -1 : hunkAtLine(row, line)
+    setCursorAt(index >= 0 ? index : 0, hunk)
+  }, [flowTop, grouped, hunkAtLine, indexOfKey, navRows, report, rows, setCursorAt])
 
   // Restore the reading position once the rows exist.
   useLayoutEffect(() => {
@@ -707,9 +762,11 @@ export function ChangeTree({
       const exact = row.key === initialAnchor.key
       root.scrollTop = flowTop(element) + (exact ? initialAnchor.offset : 0)
     }
-    setCursorAt(index >= 0 ? index : 0)
+    const line = root.scrollTop + (grouped ? ROW_HEIGHT : 0) + ROW_HEIGHT
+    const hunk = row === undefined ? -1 : hunkAtLine(row, line)
+    setCursorAt(index >= 0 ? index : 0, hunk)
     report()
-  }, [flowTop, indexOfKey, initialAnchor, navRows, report])
+  }, [flowTop, grouped, hunkAtLine, indexOfKey, initialAnchor, navRows, report, setCursorAt])
 
   // Rows changed: re-report the reading row so folding never leaves it stale.
   useLayoutEffect(() => {
@@ -730,7 +787,7 @@ export function ChangeTree({
   /** Save the cursor row's screen position, run one change, then restore it. */
   const preserve = useCallback(callback => {
     const root = scrollRef.current
-    const row = navRows[Math.max(0, Math.min(cursorRef.current, navRows.length - 1))]
+    const row = navRows[Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))]
     const element = row === undefined ? undefined : rowEls.current.get(row.key)
     if (root === null || element === undefined) {
       pendingPreserve.current = null
@@ -770,9 +827,8 @@ export function ChangeTree({
     control.current = {
       focusReading() {
         if (navRows.length === 0) return false
-        const index = indexOfKey(readingRef.current)
-        const target = index >= 0 ? index : Math.max(0, Math.min(cursorRef.current, navRows.length - 1))
-        focusRowAt(target)
+        const row = Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))
+        focusStop(row, cursorRef.current.hunk)
         return true
       },
       bulkFold(mode) {
@@ -780,7 +836,7 @@ export function ChangeTree({
       },
     }
     return () => { control.current = null }
-  }, [control, focusRowAt, indexOfKey, navRows.length, onBulkFold, preserve])
+  }, [control, focusStop, navRows.length, onBulkFold, preserve])
 
   /** The click handler every row shares: move the cursor and flip the row. */
   const activateRow = (row, expanded) => {
@@ -917,7 +973,6 @@ export function ChangeTree({
         </div>
         <div className="vcs-tree-file-body" id={bodyId} ref={bindBody(row.key)}>
           <FileBody
-            fileKey={row.key}
             group={row.group}
             entry={row.entry}
             rev={rev}
@@ -928,7 +983,6 @@ export function ChangeTree({
             revision={revision}
             split={split}
             wrap={wrap}
-            onLoaded={onLoaded}
             t={t}
             locale={locale}
           />
@@ -977,6 +1031,7 @@ export function ChangeTree({
       role="region"
       aria-label={t('tree.label')}
       data-zone="tree"
+      onClick={onTreeClick}
       onKeyDown={onKeyDown}
       onScroll={onScroll}
     >

@@ -206,7 +206,7 @@ function SplitColumns({ hunks, highlights }) {
       onScroll: follow(side),
     },
     paired.map((hunk, position) => h('section', { key: position, className: 'vcs-diff-hunk' },
-      h('div', { className: 'vcs-diff-hunk-header', 'data-diff-hunk-header': '' }, hunk.header),
+      h('div', { className: 'vcs-diff-hunk-header', 'data-diff-hunk-header': '', tabIndex: -1 }, hunk.header),
       hunk.rows.map((row, at) => {
         const cell = row[side]
         const spans = cell === undefined ? undefined : highlights[position]?.[side === 'left' ? 'old' : 'new']?.get(cell.no)
@@ -279,7 +279,7 @@ function TextDiff({ diff, split, wrap, t, locale }) {
           spans: row.kind === 'add' ? highlighted?.new?.get(row.new) : highlighted?.old?.get(row.old),
         })))
       children.push(h('section', { key: position, className: 'vcs-diff-hunk' },
-        h('div', { className: 'vcs-diff-hunk-header', 'data-diff-hunk-header': '' }, hunkHeader(hunk)),
+        h('div', { className: 'vcs-diff-hunk-header', 'data-diff-hunk-header': '', tabIndex: -1 }, hunkHeader(hunk)),
         rows))
     })
   }

@@ -347,6 +347,7 @@ test('FileDiff unified view renders hunk header, numbers, signs, and token spans
 
   const header = findByAttribute(tree, 'data-diff-hunk-header')
   assert.equal(textOf(header), '@@ -10,3 +20,3 @@')
+  assert.equal(header.props.tabIndex, -1, 'a hunk header is focusable as a navigation stop')
 
   const rows = elements(tree).filter(element => Object.hasOwn(element.props ?? {}, 'data-diff-line'))
   assert.deepEqual(rows.map(row => row.props['data-diff-line']), ['context', 'del', 'add'])
