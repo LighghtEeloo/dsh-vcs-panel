@@ -60,11 +60,11 @@ function WorktreeMeta({ status, statusState, t, locale }) {
 
 /**
  * Render the timeline.
- * @param {{ commits: object[], layout: object, status: object | null, statusState: string, worktreeRow?: boolean, selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, onBranchActions?: Function, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
+ * @param {{ commits: object[], layout: object, status: object | null, statusState: string, worktreeRow?: boolean, selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, onRefActions?: Function, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
  */
 export function Timeline({
   commits, layout, status, statusState, worktreeRow = true, selectedRow, onSelectRow, onMove, onOpen,
-  onBranchActions, t, locale,
+  onRefActions, t, locale,
   loading, loadingMore, error, hasMore, truncated, onLoadMore, onRetry,
   initialScrollTop = 0, onScrollOffset,
 }) {
@@ -156,10 +156,10 @@ export function Timeline({
             <RefBadge
               key={`${reference.kind}:${reference.name}`}
               reference={reference}
-              onBranchContextMenu={onBranchActions === undefined
+              onRefContextMenu={onRefActions === undefined
                 ? undefined
                 : (target, event) => {
-                  onBranchActions(
+                  onRefActions(
                     target,
                     event,
                     event.currentTarget.closest('.vcs-timeline-row') ?? event.currentTarget,

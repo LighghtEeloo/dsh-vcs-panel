@@ -20,6 +20,7 @@ import {
 } from './ui.jsx'
 import { errorMessage, formatCount, shortChangeId } from './format.js'
 import { BRANCH_BUSY_KEYS } from './branch.js'
+import { TAG_BUSY_KEYS } from './tag.js'
 
 /** Range choices when no backend has answered yet. */
 const FALLBACK_RANGES = [
@@ -227,7 +228,7 @@ function BranchSwitcher({
               type="button"
               role="menuitemradio"
               aria-checked={entry.current ? 'true' : 'false'}
-              className="vcs-branch-item"
+              className="vcs-menu-item"
               data-branch-item=""
               data-branch-current={entry.current ? 'true' : undefined}
               title={entry.name}
@@ -249,7 +250,7 @@ function BranchSwitcher({
                 openActions(entry, { clientX: rect.left + 12, clientY: rect.bottom }, event.currentTarget)
               }}
             >
-              <span className="vcs-branch-item-name">{entry.name}</span>
+              <span className="vcs-menu-item-name">{entry.name}</span>
               {entry.current ? <CheckIcon /> : null}
             </button>
           ))}
@@ -302,20 +303,21 @@ function SyncButton({ branch, syncing, onSync, t, locale }) {
  * Render the header bar. `refreshing` is a refresh the refresh button
  * started; `syncing` covers a sync and the refresh it starts afterwards, so
  * one icon turns from the click until the counts it settles are back;
- * `switching` is a branch switch and `branchBusy` one of the other branch
- * actions in flight.
- * @param {{ repositories: object[], repo: string | null, onRepoChange: Function, status: object | null, capabilities: object | null, refMode: string, onRefMode: (ref: string) => void, onRefresh: Function, refreshing: boolean, revalidating?: boolean, onSync: Function, syncing: boolean, branches?: object[], branchesStatus?: string, branchesError?: object | null, branchesTruncated?: boolean, onLoadBranches?: Function, onSwitchBranch?: Function, onBranchActions?: Function, switching?: boolean, branchBusy?: string | null, notice?: { tone: 'error' | 'info', text: string } | null, t: Function, locale?: string }} props - panel header state.
+ * `switching` is a branch switch, `branchBusy` one of the other branch
+ * actions in flight, and `tagBusy` one of the tag actions.
+ * @param {{ repositories: object[], repo: string | null, onRepoChange: Function, status: object | null, capabilities: object | null, refMode: string, onRefMode: (ref: string) => void, onRefresh: Function, refreshing: boolean, revalidating?: boolean, onSync: Function, syncing: boolean, branches?: object[], branchesStatus?: string, branchesError?: object | null, branchesTruncated?: boolean, onLoadBranches?: Function, onSwitchBranch?: Function, onBranchActions?: Function, switching?: boolean, branchBusy?: string | null, tagBusy?: string | null, notice?: { tone: 'error' | 'info', text: string } | null, t: Function, locale?: string }} props - panel header state.
  */
 export function TopBar({
   repositories, repo, onRepoChange, status, capabilities, refMode, onRefMode, onRefresh, refreshing,
   revalidating = false, onSync, syncing, branches = [], branchesStatus = 'idle', branchesError = null,
   branchesTruncated = false, onLoadBranches = () => {}, onSwitchBranch = () => {}, onBranchActions = () => {},
-  switching = false, branchBusy = null, notice, t, locale,
+  switching = false, branchBusy = null, tagBusy = null, notice, t, locale,
 }) {
   // Work on data already on screen shows as one thin bar under the header,
-  // whether the user asked for it (refresh, sync, switch, a branch action) or
-  // the panel did (a refresh on becoming visible); the content stays put.
-  const busy = refreshing || syncing || switching || branchBusy !== null || revalidating
+  // whether the user asked for it (refresh, sync, switch, a branch or tag
+  // action) or the panel did (a refresh on becoming visible); the content
+  // stays put.
+  const busy = refreshing || syncing || switching || branchBusy !== null || tagBusy !== null || revalidating
   const branch = status?.branch
   const workingCopy = status?.workingCopy
   const showsWorkingCopy = capabilities?.workingCopy === 'commit'
@@ -341,8 +343,9 @@ export function TopBar({
   let readonlyHint = t('top.readonlyHint')
   if (capacity?.sync === true) {
     if (branchOps) {
-      readonlyLabel = t('top.readonlySyncBranch')
-      readonlyHint = t('top.readonlyHintSyncBranch')
+      const both = capacity.tagOps === true
+      readonlyLabel = t(both ? 'top.readonlySyncRefs' : 'top.readonlySyncBranch')
+      readonlyHint = t(both ? 'top.readonlyHintSyncRefs' : 'top.readonlyHintSyncBranch')
     } else if (capacity.branchSwitch === true) {
       readonlyLabel = t('top.readonlySyncSwitch')
       readonlyHint = t('top.readonlyHintSyncSwitch')
@@ -445,7 +448,9 @@ export function TopBar({
             ? t('top.switching')
             : branchBusy !== null && BRANCH_BUSY_KEYS[branchBusy] !== undefined
               ? t(BRANCH_BUSY_KEYS[branchBusy])
-              : t('top.refreshing')}
+              : tagBusy !== null && TAG_BUSY_KEYS[tagBusy] !== undefined
+                ? t(TAG_BUSY_KEYS[tagBusy])
+                : t('top.refreshing')}
       />
     </div>
   )

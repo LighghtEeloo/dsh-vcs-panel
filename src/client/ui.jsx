@@ -156,21 +156,22 @@ export function Segmented({ value, options, onChange, label }) {
 /**
  * One ref badge; kind decides its color. The branch HEAD points to takes the
  * HEAD color and reads as git's `HEAD -> name`, so one badge carries both.
- * A branch badge that receives `onBranchContextMenu` is a branch actions
+ * A branch or tag badge that receives `onRefContextMenu` is an actions
  * target: it opens the shared menu instead of the browser's context menu.
  * The prop is `reference`, not `ref`: this client runs on React 18, where
  * `ref` is reserved and never reaches a function component's props.
  */
-export function RefBadge({ reference, onBranchContextMenu }) {
+export function RefBadge({ reference, onRefContextMenu }) {
   const current = reference.current === true
-  const actionable = reference.kind === 'branch' && typeof onBranchContextMenu === 'function'
+  const actionable = (reference.kind === 'branch' || reference.kind === 'tag')
+    && typeof onRefContextMenu === 'function'
   return (
     <span
       className={`vcs-ref vcs-ref-${current ? 'head' : reference.kind}`}
       title={current ? `HEAD -> ${reference.name}` : reference.name}
-      data-branch-actions={actionable ? 'true' : undefined}
+      data-ref-actions={actionable ? 'true' : undefined}
       onContextMenu={actionable
-        ? event => { onBranchContextMenu(reference, event) }
+        ? event => { onRefContextMenu(reference, event) }
         : undefined}
     >
       {reference.name}

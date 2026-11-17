@@ -34,8 +34,8 @@ export function branchActions({ current, currentBranch }) {
 }
 
 /**
- * Whether an action deletes something and is styled as destructive.
- * @param {string} action - action id.
+ * Whether an action removes a ref and is styled as destructive.
+ * @param {string} action - branch or tag action id.
  * @returns {boolean} whether it is destructive.
  */
 export function isDestructiveAction(action) {

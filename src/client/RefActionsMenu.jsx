@@ -1,8 +1,8 @@
 /**
- * The branch actions menu, shared by the header's branch control and the
- * branch ref badges in the timeline.
+ * The ref actions menu, shared by the header's branch control, the branch ref
+ * badges in the timeline, and the tag ref badges.
  *
- * The caller names one branch, says whether it is checked out, and lists the
+ * The caller names one ref, its kind, whether it is checked out, and the
  * actions that apply; this component only places, paints, and keys the menu.
  * It opens at the pointer, stays inside the viewport, focuses its first row,
  * closes on Escape, an outside press, a scroll, or a resize, and reports how
@@ -22,22 +22,34 @@ const MARGIN = 8
 /** Keys the menu consumes so the panel's movement keys stay outside. */
 const MENU_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'])
 
-/** Fixed labels for the actions that take no interpolation. */
-const ACTION_LABELS = {
+/** Fixed labels for branch actions that take no interpolation. */
+const BRANCH_LABELS = {
   checkout: 'branch.checkout',
   rename: 'branch.rename',
   delete: 'branch.delete',
   push: 'branch.push',
 }
 
+/** Fixed labels for tag actions. */
+const TAG_LABELS = {
+  delete: 'tag.delete',
+  push: 'tag.push',
+}
+
 /** Actions in one visual group are separated from the next group. */
-const ACTION_GROUP = {
+const BRANCH_GROUP = {
   checkout: 0,
   rename: 1,
   delete: 1,
   merge: 2,
   rebase: 2,
   push: 3,
+}
+
+/** A tag's destructive write is marked apart from its push. */
+const TAG_GROUP = {
+  delete: 0,
+  push: 1,
 }
 
 /**
@@ -55,11 +67,24 @@ function menuPosition(point, count) {
   }
 }
 
+/** The localized row label for one action of one ref kind. */
+function actionLabel(target, action, t) {
+  if (target.kind === 'tag') return t(TAG_LABELS[action])
+  if (action === 'merge') return t('branch.merge', { branch: target.name })
+  if (action === 'rebase') return t('branch.rebase', { branch: target.name })
+  return t(BRANCH_LABELS[action])
+}
+
+/** The visual group of one action, or undefined for an unknown action. */
+function actionGroup(kind, action) {
+  return (kind === 'tag' ? TAG_GROUP : BRANCH_GROUP)[action]
+}
+
 /**
- * Render the open branch actions menu.
- * @param {{ target: { branch: string, current: boolean, actions: string[], x: number, y: number } | null, busy: boolean, t: Function, onChoose: Function, onClose: (restoreFocus: boolean) => void }} props - the branch, its actions, and the close callbacks.
+ * Render the open ref actions menu.
+ * @param {{ target: { kind: 'branch' | 'tag', name: string, current?: boolean, actions: string[], x: number, y: number } | null, busy: boolean, t: Function, onChoose: Function, onClose: (restoreFocus: boolean) => void }} props - the ref, its actions, and the close callbacks.
  */
-export function BranchActionsMenu({ target, busy, t, onChoose, onClose }) {
+export function RefActionsMenu({ target, busy, t, onChoose, onClose }) {
   const menuRef = useRef(null)
 
   // Move focus into the menu once it appears.
@@ -91,6 +116,9 @@ export function BranchActionsMenu({ target, busy, t, onChoose, onClose }) {
 
   if (target === null) return null
   const position = menuPosition(target, target.actions.length)
+  const menuLabel = target.kind === 'tag'
+    ? t('tag.menuLabel', { tag: target.name })
+    : t('branch.menuLabel', { branch: target.name })
 
   const onKeyDown = event => {
     if (!MENU_KEYS.has(event.key)) return
@@ -115,31 +143,28 @@ export function BranchActionsMenu({ target, busy, t, onChoose, onClose }) {
   return (
     <div
       ref={menuRef}
-      className="vcs-branch-ops"
+      className="vcs-ref-ops"
       role="menu"
-      aria-label={t('branch.menuLabel', { branch: target.branch })}
+      aria-label={menuLabel}
+      data-ref-kind={target.kind}
       tabIndex={-1}
       style={{ left: `${position.left}px`, top: `${position.top}px` }}
       onKeyDown={onKeyDown}
     >
-      <p className="vcs-branch-ops-title">
-        <span className="vcs-branch-ops-name">{target.branch}</span>
-        {target.current ? <span className="vcs-branch-ops-current">{t('branch.current')}</span> : null}
+      <p className="vcs-ref-ops-title">
+        <span className="vcs-ref-ops-name">{target.name}</span>
+        {target.kind === 'branch' && target.current ? <span className="vcs-ref-ops-current">{t('branch.current')}</span> : null}
       </p>
       {target.actions.map((action, index) => {
-        const label = action === 'merge'
-          ? t('branch.merge', { branch: target.branch })
-          : action === 'rebase'
-            ? t('branch.rebase', { branch: target.branch })
-            : t(ACTION_LABELS[action])
-        const separated = index > 0 && ACTION_GROUP[action] !== ACTION_GROUP[target.actions[index - 1]]
+        const label = actionLabel(target, action, t)
+        const separated = index > 0 && actionGroup(target.kind, action) !== actionGroup(target.kind, target.actions[index - 1])
         return (
           <div key={action}>
-            {separated ? <div className="vcs-branch-ops-sep" role="separator" /> : null}
+            {separated ? <div className="vcs-ref-ops-sep" role="separator" /> : null}
             <button
               type="button"
               role="menuitem"
-              className={`vcs-branch-item vcs-branch-ops-item${isDestructiveAction(action) ? ' vcs-branch-ops-danger' : ''}`}
+              className={`vcs-menu-item vcs-ref-ops-item${isDestructiveAction(action) ? ' vcs-ref-ops-danger' : ''}`}
               data-ops-item=""
               aria-disabled={busy ? 'true' : undefined}
               title={label}

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Painel de controle de versão",
-    "description": "Adiciona uma aba de controle de versão à barra lateral direita para repositórios Git e Jujutsu: alterações em andamento com diffs, histórico de commits com gráfico de faixas e detalhes do commit. Navegar é somente leitura exceto pelas ações do branch e Sincronizar: o menu de branches faz checkout, renomeia, exclui, mescla, rebaseia e envia branches locais; Sincronizar faz fetch do upstream de um branch Git e depois avanço rápido ou push. Uma mesclagem ou rebase com conflito é cancelada. Não prepara, não confirma, não faz push forçado, não descarta alterações, não cria branches e não reescreve commits ou marcadores. Jujutsu pode capturar a cópia de trabalho durante a leitura."
+    "description": "Adiciona uma aba de controle de versão à barra lateral direita para repositórios Git e Jujutsu: alterações em andamento com diffs, histórico de commits com gráfico de faixas e detalhes do commit. Navegar é somente leitura exceto pelas ações do branch, ações de tag e Sincronizar: o menu de branches faz checkout, renomeia, exclui, mescla, rebaseia e envia branches locais; o de tags exclui ou envia tags; e Sincronizar faz fetch do upstream de um branch Git e depois avanço rápido ou push. Uma mesclagem ou rebase com conflito é cancelada. Não prepara, não confirma, não faz push forçado, não descarta alterações, não cria branches ou tags e não reescreve commits ou marcadores. Jujutsu pode capturar a cópia de trabalho durante a leitura."
   }
 }

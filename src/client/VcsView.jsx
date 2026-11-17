@@ -14,7 +14,7 @@ import { createApi } from './api.js'
 import {
   loadState, nodePatch, preferredNode, saveState, SIDEBAR_MAX, SIDEBAR_MIN, WORKTREE,
 } from './state.js'
-import { branchOpMessage, errorMessage, formatCount, switchMessage, syncMessage } from './format.js'
+import { branchOpMessage, errorMessage, formatCount, switchMessage, syncMessage, tagOpMessage } from './format.js'
 import { isEditableTarget } from './keys.js'
 import { dirKey } from './detail/tree.js'
 import { buildGraph } from './history/layout.js'
@@ -23,9 +23,11 @@ import { graphInput, headOf, nodeAt, pickRepository, rowOf } from './history/tim
 import { ROW_HEIGHT, Timeline } from './history/Timeline.jsx'
 import { DetailPane } from './detail/DetailPane.jsx'
 import { TopBar } from './TopBar.jsx'
-import { BranchActionsMenu } from './BranchActionsMenu.jsx'
+import { RefActionsMenu } from './RefActionsMenu.jsx'
 import { BranchDialog } from './BranchDialogs.jsx'
+import { TagDialog } from './TagDialog.jsx'
 import { branchActions } from './branch.js'
+import { tagActions } from './tag.js'
 import { TimelineSkeleton, TreeSkeleton } from './skeleton.jsx'
 
 /** Rows per history page. */
@@ -48,6 +50,11 @@ function idleStatus() {
 /** Empty history answer. */
 function idleLog() {
   return { status: 'idle', commits: [], error: null, truncated: false, hasMore: false, loadingMore: false }
+}
+
+/** Empty remote listing for the tag push dialog. */
+function idleRemotes() {
+  return { status: 'idle', list: [], truncated: false, error: null }
 }
 
 /** Clamp a sidebar width. */
@@ -104,9 +111,18 @@ export function VcsView({
   // the input, and an unmerged delete escalates to "delete anyway".
   const [branchDialog, setBranchDialog] = useState(null)
   const [branchDialogError, setBranchDialogError] = useState(null)
-  // The open branch actions menu: `{ branch, current, actions, x, y }`. It is
-  // owned here so the header and the timeline ref badges share one menu.
+  // The open branch actions menu: `{ kind, name, current, actions, x, y }`.
+  // It is owned here so the header and the timeline ref badges share one menu.
   const [branchMenu, setBranchMenu] = useState(null)
+  // The tag action a dialog is running, its open dialog and failure, and the
+  // remotes the push dialog can choose from. Tag writes keep the dialog open
+  // with the error instead of reporting in the header.
+  const [tagBusy, setTagBusy] = useState(null)
+  const [tagDialog, setTagDialog] = useState(null)
+  const [tagDialogError, setTagDialogError] = useState(null)
+  const [tagRemotes, setTagRemotes] = useState(idleRemotes)
+  // The open tag actions menu: `{ kind: 'tag', name, actions, x, y }`.
+  const [tagMenu, setTagMenu] = useState(null)
   // Bumped after the Sidebar host focuses its pane, so the settle effect retries.
   const [focusTick, setFocusTick] = useState(0)
 
@@ -121,9 +137,12 @@ export function VcsView({
   const loadingBranchesRef = useRef(false)
   const switchingRef = useRef(false)
   const branchBusyRef = useRef(false)
-  // The control the branch actions menu is acting for, focused again after
-  // the menu or its dialog closes.
+  const tagBusyRef = useRef(false)
+  // The control the branch or tag actions menu is acting for, focused again
+  // after the menu or its dialog closes.
   const branchMenuReturnRef = useRef(null)
+  const tagMenuReturnRef = useRef(null)
+  const tagRemotesControllerRef = useRef(null)
   const diffCacheRef = useRef(new Map())
   const detailControl = useRef(null)
   const pendingEntryFocusRef = useRef(false)
@@ -234,6 +253,15 @@ export function VcsView({
     setBranchDialogError(null)
     setBranchMenu(null)
     branchMenuReturnRef.current = null
+    tagRemotesControllerRef.current?.abort()
+    tagRemotesControllerRef.current = null
+    tagBusyRef.current = false
+    setTagBusy(null)
+    setTagDialog(null)
+    setTagDialogError(null)
+    setTagRemotes(idleRemotes())
+    setTagMenu(null)
+    tagMenuReturnRef.current = null
     setStatus(idleStatus())
     anchorRef.current = null
     timelineScrollRef.current = 0
@@ -335,6 +363,7 @@ export function VcsView({
   useEffect(() => () => {
     pageControllerRef.current?.abort()
     branchesControllerRef.current?.abort()
+    tagRemotesControllerRef.current?.abort()
   }, [])
 
   // First history page, invalidated by refresh.
@@ -406,6 +435,15 @@ export function VcsView({
     setBranchDialogError(null)
     setBranchMenu(null)
     branchMenuReturnRef.current = null
+    tagRemotesControllerRef.current?.abort()
+    tagRemotesControllerRef.current = null
+    tagBusyRef.current = false
+    setTagBusy(null)
+    setTagDialog(null)
+    setTagDialogError(null)
+    setTagRemotes(idleRemotes())
+    setTagMenu(null)
+    tagMenuReturnRef.current = null
     loadingBranchesRef.current = false
     branchesControllerRef.current?.abort()
     branchesControllerRef.current = null
@@ -494,7 +532,7 @@ export function VcsView({
   const syncingRef = useRef(false)
   const sync = useCallback(async () => {
     const repo = stateRef.current.repo
-    if (repo === null || syncingRef.current || branchBusyRef.current || switchingRef.current) return
+    if (repo === null || syncingRef.current || branchBusyRef.current || tagBusyRef.current || switchingRef.current) return
     syncingRef.current = true
     setSyncingRepo(repo)
     setNotice(null)
@@ -565,7 +603,7 @@ export function VcsView({
    */
   const switchBranch = useCallback(async branch => {
     const repo = stateRef.current.repo
-    if (repo === null || switchingRef.current || branchBusyRef.current || syncingRef.current) return
+    if (repo === null || switchingRef.current || branchBusyRef.current || tagBusyRef.current || syncingRef.current) return
     switchingRef.current = true
     setSwitching(branch)
     setNotice(null)
@@ -635,7 +673,8 @@ export function VcsView({
       : null
     branchMenuReturnRef.current = returnElement ?? null
     setBranchMenu({
-      branch: entry.name,
+      kind: 'branch',
+      name: entry.name,
       current: entry.current === true,
       actions: branchActions({ current: entry.current === true, currentBranch }),
       x: point.clientX,
@@ -673,7 +712,7 @@ export function VcsView({
    */
   const runBranchAction = useCallback(async (action, branch, options = {}) => {
     const repo = stateRef.current.repo
-    if (repo === null || branchBusyRef.current || switchingRef.current || syncingRef.current) return
+    if (repo === null || branchBusyRef.current || tagBusyRef.current || switchingRef.current || syncingRef.current) return
     branchBusyRef.current = true
     setBranchBusy(action)
     setBranchDialogError(null)
@@ -717,34 +756,180 @@ export function VcsView({
     setBranchMenu(null)
     if (action === 'checkout' || action === 'push') {
       restoreBranchFocus()
-      if (action === 'checkout') void switchBranch(target.branch)
-      else void runBranchAction('push', target.branch)
+      if (action === 'checkout') void switchBranch(target.name)
+      else void runBranchAction('push', target.name)
       return
     }
-    openBranchDialog(action, target.branch)
+    openBranchDialog(action, target.name)
   }, [branchMenu, openBranchDialog, restoreBranchFocus, runBranchAction, switchBranch])
 
-  /** Right-click on a branch ref in the timeline hands it to the same menu. */
-  const onTimelineBranchActions = useCallback((reference, event, returnElement) => {
-    event.preventDefault()
-    event.stopPropagation()
-    openBranchActions(reference, event, returnElement)
-  }, [openBranchActions])
+  /**
+   * Return focus to the badge or row that opened the tag menu. A refresh may
+   * have rebuilt the row; the timeline's current row is the fallback.
+   */
+  const restoreTagFocus = useCallback(() => {
+    const element = tagMenuReturnRef.current
+    tagMenuReturnRef.current = null
+    requestAnimationFrame(() => {
+      if (element !== null && element?.isConnected === true) {
+        element.focus({ preventScroll: true })
+        return
+      }
+      const root = rootRef.current
+      const row = root?.querySelector('.vcs-timeline-row[aria-current="true"]')
+        ?? root?.querySelector('.vcs-timeline-row')
+      row?.focus({ preventScroll: true })
+    })
+  }, [])
 
-  /** Submit the open dialog. */
-  /** Submit the open dialog. */
+  /** Open the tag actions menu for one tag badge. */
+  const openTagActions = useCallback((reference, point, returnElement) => {
+    if (capabilities?.tagOps !== true) return
+    tagMenuReturnRef.current = returnElement ?? null
+    setTagMenu({
+      kind: 'tag',
+      name: reference.name,
+      actions: tagActions(),
+      x: point.clientX,
+      y: point.clientY,
+    })
+  }, [capabilities])
+
+  /** Close the shared tag actions menu. */
+  const closeTagActions = useCallback(restoreFocus => {
+    setTagMenu(null)
+    if (restoreFocus) restoreTagFocus()
+    else tagMenuReturnRef.current = null
+  }, [restoreTagFocus])
+
+  /**
+   * Load the remotes the push dialog offers. The previous request is dropped
+   * when the dialog closes; a failed load stays in the dialog with its error.
+   */
+  const loadTagRemotes = useCallback(() => {
+    const repo = stateRef.current.repo
+    if (repo === null) return
+    tagRemotesControllerRef.current?.abort()
+    const controller = new AbortController()
+    tagRemotesControllerRef.current = controller
+    setTagRemotes({ status: 'loading', list: [], truncated: false, error: null })
+    api.remotes(repo, controller.signal).then(answer => {
+      if (controller.signal.aborted || stateRef.current.repo !== repo) return
+      const list = Array.isArray(answer?.remotes)
+        ? answer.remotes.filter(name => typeof name === 'string' && name !== '')
+        : []
+      setTagRemotes({
+        status: 'ready',
+        list,
+        truncated: answer?.truncated === true,
+        error: null,
+      })
+    }).catch(error => {
+      if (error?.name === 'AbortError' || controller.signal.aborted) return
+      if (stateRef.current.repo !== repo) return
+      setTagRemotes({ status: 'error', list: [], truncated: false, error })
+    }).finally(() => {
+      if (tagRemotesControllerRef.current === controller) tagRemotesControllerRef.current = null
+    })
+  }, [api])
+
+  /** Open the confirmation for one tag action; push also loads its remotes. */
+  const openTagDialog = useCallback((kind, tag) => {
+    setTagDialog({ kind, tag })
+    setTagDialogError(null)
+    setTagRemotes(idleRemotes())
+    if (kind === 'push') loadTagRemotes()
+  }, [loadTagRemotes])
+
+  /**
+   * Run one tag action, then refresh. Both actions change refs, so the
+   * timeline and status are read again; a refused action leaves the dialog
+   * open with its error so the user can retry or cancel.
+   */
+  const runTagAction = useCallback(async (action, tag, options = {}) => {
+    const repo = stateRef.current.repo
+    if (repo === null || tagBusyRef.current || branchBusyRef.current || switchingRef.current || syncingRef.current) return
+    tagBusyRef.current = true
+    setTagBusy(action)
+    setTagDialogError(null)
+    setNotice(null)
+    let outcome
+    let failed = false
+    try {
+      const answer = await api.tagOp(repo, action, { tag, ...options })
+      outcome = { tone: 'info', text: tagOpMessage(t, action, tag, answer) }
+    } catch (error) {
+      failed = true
+      outcome = { tone: 'error', text: errorMessage(t, error) }
+      if (stateRef.current.repo === repo) setTagDialogError(error)
+    } finally {
+      tagBusyRef.current = false
+      setTagBusy(null)
+    }
+    if (stateRef.current.repo !== repo) return
+    if (failed) return
+    setTagDialog(null)
+    setTagDialogError(null)
+    setTagRemotes(idleRemotes())
+    refresh('tag')
+    setNotice(outcome)
+    restoreTagFocus()
+  }, [api, refresh, t, restoreTagFocus])
+
+  /** Dispatch one action chosen from the tag menu. */
+  const chooseTagAction = useCallback(action => {
+    const target = tagMenu
+    if (target === null) return
+    setTagMenu(null)
+    openTagDialog(action, target.name)
+  }, [openTagDialog, tagMenu])
+
+  /**
+   * Right-click on a branch or tag ref in the timeline opens the same menu
+   * the corresponding header control uses.
+   */
+  const onTimelineRefActions = useCallback((reference, event, returnElement) => {
+    if (reference.kind === 'branch' && capabilities?.branchOps === true) {
+      event.preventDefault()
+      event.stopPropagation()
+      openBranchActions(reference, event, returnElement)
+    } else if (reference.kind === 'tag' && capabilities?.tagOps === true) {
+      event.preventDefault()
+      event.stopPropagation()
+      openTagActions(reference, event, returnElement)
+    }
+  }, [capabilities, openBranchActions, openTagActions])
+
+  /** Submit the open branch dialog. */
   const confirmBranchDialog = useCallback(values => {
     if (branchDialog === null) return
     void runBranchAction(branchDialog.kind, branchDialog.branch, values)
   }, [branchDialog, runBranchAction])
 
-  /** Close the dialog without writing anything. */
+  /** Close the branch dialog without writing anything. */
   const cancelBranchDialog = useCallback(() => {
     if (branchBusyRef.current) return
     setBranchDialog(null)
     setBranchDialogError(null)
     restoreBranchFocus()
   }, [restoreBranchFocus])
+
+  /** Submit the open tag dialog. */
+  const confirmTagDialog = useCallback(values => {
+    if (tagDialog === null) return
+    void runTagAction(tagDialog.kind, tagDialog.tag, values)
+  }, [tagDialog, runTagAction])
+
+  /** Close the tag dialog without writing anything. */
+  const cancelTagDialog = useCallback(() => {
+    if (tagBusyRef.current) return
+    tagRemotesControllerRef.current?.abort()
+    tagRemotesControllerRef.current = null
+    setTagDialog(null)
+    setTagDialogError(null)
+    setTagRemotes(idleRemotes())
+    restoreTagFocus()
+  }, [restoreTagFocus])
 
   /** Load the direct children of one untracked directory. */
   const expandUntracked = useCallback(async (key, path) => {
@@ -998,6 +1183,7 @@ export function VcsView({
         onBranchActions={openBranchActions}
         switching={switching !== null}
         branchBusy={branchBusy}
+        tagBusy={tagBusy}
         notice={notice}
         t={t}
         locale={locale}
@@ -1050,7 +1236,9 @@ export function VcsView({
                 truncated={log.truncated}
                 onLoadMore={() => { void loadMore() }}
                 onRetry={refresh}
-                onBranchActions={onTimelineBranchActions}
+                onRefActions={capabilities?.branchOps === true || capabilities?.tagOps === true
+                  ? onTimelineRefActions
+                  : undefined}
                 initialScrollTop={timelineScrollRef.current}
                 onScrollOffset={top => {
                   timelineScrollRef.current = top
@@ -1127,12 +1315,19 @@ export function VcsView({
           ) : null}
         </div>
       )}
-      <BranchActionsMenu
+      <RefActionsMenu
         target={branchMenu}
         busy={branchBusy !== null}
         t={t}
         onChoose={chooseBranchAction}
         onClose={closeBranchActions}
+      />
+      <RefActionsMenu
+        target={tagMenu}
+        busy={tagBusy !== null}
+        t={t}
+        onChoose={chooseTagAction}
+        onClose={closeTagActions}
       />
       {branchDialog === null ? null : (
         <BranchDialog
@@ -1142,6 +1337,18 @@ export function VcsView({
           busy={branchBusy !== null}
           onCancel={cancelBranchDialog}
           onConfirm={confirmBranchDialog}
+          t={t}
+        />
+      )}
+      {tagDialog === null ? null : (
+        <TagDialog
+          key={`${tagDialog.kind}:${tagDialog.tag}`}
+          request={tagDialog}
+          error={tagDialogError}
+          busy={tagBusy !== null}
+          remotes={tagRemotes}
+          onCancel={cancelTagDialog}
+          onConfirm={confirmTagDialog}
           t={t}
         />
       )}

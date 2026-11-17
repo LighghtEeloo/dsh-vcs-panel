@@ -1,6 +1,6 @@
 /**
  * Browser data layer for the Host routes: the reads and the writes behind
- * sync, branch switching, and the branch actions menu.
+ * sync, branch switching, the branch actions menu, and the tag actions menu.
  *
  * One instance serves one Session: every request carries the Session identity
  * and the repository the panel currently shows. Requests are cancellable with
@@ -235,6 +235,16 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
     },
 
     /**
+     * Remotes a tag can be pushed to.
+     * @param {string} repo - repository root.
+     * @param {AbortSignal} [signal] - cancellation.
+     * @returns {Promise<{ remotes: string[], truncated: boolean }>} the listing.
+     */
+    remotes(repo, signal) {
+      return get('/api/vcs.remotes', { repo }, signal)
+    },
+
+    /**
      * Check out one existing local branch. The Host refuses when local changes
      * would be overwritten; nothing is stashed or forced.
      * @param {string} repo - repository root.
@@ -261,6 +271,23 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
         branch: target.branch,
         name: target.name,
         force: target.force === true ? true : undefined,
+      })
+    },
+
+    /**
+     * Run one tag action on an existing local tag. The Host validates the
+     * action, the tag, and the remote; push never forces.
+     * @param {string} repo - repository root.
+     * @param {'delete'|'push'} action - the action.
+     * @param {{ tag: string, remote?: string }} target - target tag and remote.
+     * @returns {Promise<object>} what the action did.
+     */
+    tagOp(repo, action, target) {
+      return post('/api/vcs.tag', {
+        repo,
+        action,
+        tag: target.tag,
+        remote: target.remote,
       })
     },
   }

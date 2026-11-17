@@ -492,6 +492,7 @@ test('repositories lists the enclosing repository and one-level children only', 
   assert.equal(body.repositories[0].vcs, 'git')
   assert.equal(body.repositories[0].capabilities.workingCopy, 'row')
   assert.equal(body.repositories[0].capabilities.branchOps, true)
+  assert.equal(body.repositories[0].capabilities.tagOps, true)
   assert.deepEqual(body.repositories[0].capabilities.ranges.map(range => range.value), ['HEAD', 'all'])
 })
 
@@ -1246,6 +1247,7 @@ test('repositories identifies a Jujutsu workspace and exposes its capabilities',
   assert.equal(repo.capabilities.workingCopy, 'commit')
   assert.equal(repo.capabilities.branchSwitch, false)
   assert.equal(repo.capabilities.branchOps, false)
+  assert.equal(repo.capabilities.tagOps, false)
   assert.deepEqual(repo.capabilities.ranges.map(range => range.value), ['@', 'all'])
   assert.equal(repo.capabilities.defaultRange, '@')
 })
@@ -1532,7 +1534,7 @@ test('Jujutsu shared snapshot survives one caller aborting and cancels when all 
   assert.equal(snapshotAborted, 1)
 })
 
-test('apply registers eight GET routes and every write route inside the fence and honors enabled: false', async () => {
+test('apply registers nine GET routes and every write route inside the fence and honors enabled: false', async () => {
   const routes = []
   const ctx = {
     sessions: { get: id => sessions.get(id) },
@@ -1558,6 +1560,7 @@ test('apply registers eight GET routes and every write route inside the fence an
     '/api/vcs.repositories',
     '/api/vcs.status',
     '/api/vcs.branches',
+    '/api/vcs.remotes',
     '/api/vcs.untracked',
     '/api/vcs.diff',
     '/api/vcs.log',
@@ -1566,8 +1569,9 @@ test('apply registers eight GET routes and every write route inside the fence an
     '/api/vcs.sync',
     '/api/vcs.switch',
     '/api/vcs.branch',
+    '/api/vcs.tag',
   ])
-  const writePaths = new Set(['/api/vcs.sync', '/api/vcs.switch', '/api/vcs.branch'])
+  const writePaths = new Set(['/api/vcs.sync', '/api/vcs.switch', '/api/vcs.branch', '/api/vcs.tag'])
   for (const registered of routes) {
     assert.deepEqual(registered.methods, writePaths.has(registered.path) ? ['POST'] : ['GET'])
     assert.equal(registered.requestBody, 'buffered')
@@ -1843,6 +1847,7 @@ test('every route is read-only: repository state is identical after all requests
     [handlers.repositories, route('/api/vcs.repositories', { sessionId: 's-main' })],
     [handlers.status, route('/api/vcs.status', repo)],
     [handlers.branches, route('/api/vcs.branches', repo)],
+    [handlers.remotes, route('/api/vcs.remotes', repo)],
     [handlers.untracked, route('/api/vcs.untracked', { ...repo, path: 'scratch/' })],
     [handlers.diff, route('/api/vcs.diff', { ...repo, scope: 'unstaged', path: 'tracked.txt' })],
     [handlers.diff, route('/api/vcs.diff', { ...repo, scope: 'staged', path: 'staged.txt' })],
@@ -2058,6 +2063,12 @@ test('switch is refused for Jujutsu, which has no branch to check out', { skip: 
   const op = await postBranchOp(handlers.branchOp, { sessionId: 's-jj', repo: jjPath, action: 'push', branch: 'main' })
   assert.equal(op.status, 400)
   assert.equal(op.body.error.code, 'bad-request')
+  const remotes = await call(handlers.remotes, route('/api/vcs.remotes', { sessionId: 's-jj', repo: jjPath }))
+  assert.equal(remotes.status, 400)
+  assert.equal(remotes.body.error.code, 'bad-request')
+  const tag = await postTagOp(handlers.tagOp, { sessionId: 's-jj', repo: jjPath, action: 'delete', tag: 'v1' })
+  assert.equal(tag.status, 400)
+  assert.equal(tag.body.error.code, 'bad-request')
   assert.equal(jj(fixture.jj, ['op', 'log', '--no-graph', '-T', 'id', '--limit', '1']), before)
 })
 
@@ -2172,6 +2183,11 @@ function buildActionFixture(name) {
 
   git(repo, ['branch', 'plain', 'main'])
 
+  // A lightweight tag on the base commit and an annotated tag on main, so
+  // delete and push cover both tag object shapes.
+  git(repo, ['tag', 'v1', baseSha])
+  git(repo, ['tag', '-a', 'v2', '-m', 'release 2', mainSha])
+
   const sessionId = `s-branch-${name}`
   const branchSessions = new Map([[sessionId, { header: { cwd: repo } }]])
   return {
@@ -2197,6 +2213,23 @@ function buildActionFixture(name) {
  */
 async function postBranchOp(handler, body, headers = { 'content-type': 'application/json' }, method = 'POST') {
   const response = await handler(new Request('http://127.0.0.1/api/vcs.branch', {
+    method,
+    headers,
+    body: method === 'GET' ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)),
+  }))
+  return { status: response.status, body: await response.json() }
+}
+
+/**
+ * POST one tag action.
+ * @param {Function} handler - the tagOp handler.
+ * @param {object} body - JSON body.
+ * @param {Record<string, string>} [headers] - request headers.
+ * @param {string} [method] - HTTP method.
+ * @returns {Promise<{ status: number, body: object }>} the decoded answer.
+ */
+async function postTagOp(handler, body, headers = { 'content-type': 'application/json' }, method = 'POST') {
+  const response = await handler(new Request('http://127.0.0.1/api/vcs.tag', {
     method,
     headers,
     body: method === 'GET' ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)),
@@ -2441,6 +2474,156 @@ test('branch actions leave an in-progress merge or rebase untouched', async () =
   assert.equal(rebasing.body.error.code, 'rebase-blocked')
   assert.equal(git(action.repo, ['rev-parse', 'REBASE_HEAD']), rebaseHead)
   assert.match(git(action.repo, ['status', '--porcelain']), /^UU /mu)
+})
+
+// Tag actions ----------------------------------------------------------------
+
+test('remotes lists the destinations tag push can use', async () => {
+  const action = buildActionFixture('tag-remotes')
+  const listed = await call(
+    action.handlers.remotes,
+    route('/api/vcs.remotes', { sessionId: action.sessionId, repo: realpathSync(action.repo) }),
+  )
+  assert.equal(listed.status, 200)
+  assert.deepEqual(listed.body, { remotes: ['origin'], truncated: false })
+
+  // A repository with no remote still answers; the push dialog reports it.
+  const empty = await call(
+    handlers.remotes,
+    route('/api/vcs.remotes', { sessionId: 's-main', repo: mainPath }),
+  )
+  assert.equal(empty.status, 200)
+  assert.deepEqual(empty.body, { remotes: [], truncated: false })
+})
+
+test('tag actions delete a local tag without touching the branch of the same name', async () => {
+  const action = buildActionFixture('tag-delete')
+  const body = { sessionId: action.sessionId, repo: realpathSync(action.repo) }
+  // A tag may share a branch's short name; the delete must remove only the tag.
+  git(action.repo, ['tag', 'merged', action.baseSha])
+
+  const deleted = await postTagOp(action.handlers.tagOp, { ...body, action: 'delete', tag: 'v1' })
+  assert.equal(deleted.status, 200)
+  assert.deepEqual(deleted.body, { tag: 'v1' })
+  assert.equal(git(action.repo, ['tag', '--list']), ['merged', 'v2'].join('\n'))
+
+  // The tag shares its name with a branch; only the tag is gone.
+  const sameName = await postTagOp(action.handlers.tagOp, { ...body, action: 'delete', tag: 'merged' })
+  assert.equal(sameName.status, 200)
+  assert.equal(git(action.repo, ['rev-parse', 'refs/heads/merged']), action.baseSha)
+  assert.equal(git(action.repo, ['tag', '--list']), 'v2')
+
+  const missing = await postTagOp(action.handlers.tagOp, { ...body, action: 'delete', tag: 'v1' })
+  assert.equal(missing.status, 404)
+  assert.equal(missing.body.error.code, 'tag-missing')
+
+  // An annotated tag deletes by its short name too.
+  const annotated = await postTagOp(action.handlers.tagOp, { ...body, action: 'delete', tag: 'v2' })
+  assert.equal(annotated.status, 200)
+  assert.equal(git(action.repo, ['tag', '--list']), '')
+})
+
+test('tag actions push one tag without force and report a refusal', async () => {
+  const action = buildActionFixture('tag-push')
+  const body = { sessionId: action.sessionId, repo: realpathSync(action.repo) }
+  const tagObject = git(action.repo, ['rev-parse', 'refs/tags/v2'])
+
+  const pushed = await postTagOp(action.handlers.tagOp, { ...body, action: 'push', tag: 'v2', remote: 'origin' })
+  assert.equal(pushed.status, 200)
+  assert.deepEqual(pushed.body, { tag: 'v2', remote: 'origin', pushed: true })
+  // Annotated tags push their own tag object, not the commit they point at.
+  assert.equal(git(action.bare, ['rev-parse', 'refs/tags/v2']), tagObject)
+
+  const level = await postTagOp(action.handlers.tagOp, { ...body, action: 'push', tag: 'v2', remote: 'origin' })
+  assert.equal(level.status, 200)
+  assert.deepEqual(level.body, { tag: 'v2', remote: 'origin', pushed: false })
+
+  // The remote already has a different object at the same tag. A push without
+  // force is refused and neither side moves.
+  git(action.bare, ['update-ref', 'refs/tags/v2', action.baseSha])
+  const rejected = await postTagOp(action.handlers.tagOp, { ...body, action: 'push', tag: 'v2', remote: 'origin' })
+  assert.equal(rejected.status, 502)
+  assert.equal(rejected.body.error.code, 'tag-push-failed')
+  assert.equal(git(action.repo, ['rev-parse', 'refs/tags/v2']), tagObject)
+  assert.equal(git(action.bare, ['rev-parse', 'refs/tags/v2']), action.baseSha)
+
+  const unknownTag = await postTagOp(action.handlers.tagOp, { ...body, action: 'push', tag: 'v9', remote: 'origin' })
+  assert.equal(unknownTag.status, 404)
+  assert.equal(unknownTag.body.error.code, 'tag-missing')
+
+  const unknownRemote = await postTagOp(action.handlers.tagOp, { ...body, action: 'push', tag: 'v1', remote: 'nope' })
+  assert.equal(unknownRemote.status, 409)
+  assert.equal(unknownRemote.body.error.code, 'remote-missing')
+})
+
+test('tag actions accept only valid actions and trusted same-origin JSON POSTs', async () => {
+  const action = buildActionFixture('tag-request')
+  const body = { sessionId: action.sessionId, repo: realpathSync(action.repo) }
+  const tagsBefore = git(action.repo, ['for-each-ref', '--format=%(refname) %(objectname)', 'refs/tags'])
+
+  const cases = [
+    [await postTagOp(action.handlers.tagOp, body, { 'content-type': 'application/json' }, 'GET'), 400, 'bad-request'],
+    [await postTagOp(action.handlers.tagOp, { ...body, action: 'push', tag: 'v1', remote: 'origin' }, { 'content-type': 'text/plain' }), 400, 'bad-request'],
+    [await postTagOp(action.handlers.tagOp, { ...body, action: 'delete', tag: 'v1' }, { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' }), 403, 'forbidden'],
+    [await postTagOp(action.handlers.tagOp, '{not json'), 400, 'bad-request'],
+    [await postTagOp(action.handlers.tagOp, [body]), 400, 'bad-request'],
+    [await postTagOp(action.handlers.tagOp, { ...body }), 400, 'bad-request'],
+    [await postTagOp(action.handlers.tagOp, { ...body, action: 'checkout', tag: 'v1' }), 400, 'bad-request'],
+    [await postTagOp(action.handlers.tagOp, { ...body, action: 'delete' }), 400, 'bad-request'],
+    [await postTagOp(action.handlers.tagOp, { ...body, action: 'delete', tag: '-v1' }), 400, 'bad-request'],
+    [await postTagOp(action.handlers.tagOp, { ...body, action: 'delete', tag: 'bad..name' }), 400, 'bad-request'],
+    [await postTagOp(action.handlers.tagOp, { ...body, action: 'push', tag: 'v1' }), 400, 'bad-request'],
+    [await postTagOp(action.handlers.tagOp, { ...body, action: 'push', tag: 'v1', remote: '-bad' }), 400, 'bad-request'],
+    [await postTagOp(action.handlers.tagOp, { ...body, action: 'delete', tag: 'v1', sessionId: 's-missing' }), 409, 'no-session'],
+    [await postTagOp(action.handlers.tagOp, { ...body, action: 'delete', tag: 'v1', repo: plainPath }), 400, 'not-a-repo'],
+  ]
+  for (const [answer, status, code] of cases) {
+    assert.equal(answer.status, status, code)
+    assert.equal(answer.body.error.code, code)
+  }
+  assert.equal(git(action.repo, ['for-each-ref', '--format=%(refname) %(objectname)', 'refs/tags']), tagsBefore)
+})
+
+test('a tag write blocks other writes and releases the lock with its answer', async () => {
+  const { createBackends } = await import('../lib/vcs/index.js')
+  const action = buildActionFixture('tag-lock')
+  const host = createHost({
+    sessions: {
+      get: id => (id === action.sessionId ? { header: { cwd: action.repo } } : undefined),
+    },
+  })
+  const real = createBackends(host)
+  let release
+  let started = 0
+  const gate = new Promise(resolve => { release = resolve })
+  const gated = Object.create(real.get('git'))
+  gated.deleteTag = async () => {
+    started += 1
+    await gate
+    return { tag: 'v1' }
+  }
+  const gatedHandlers = createHandlers(host, {
+    backends: { get: id => (id === 'git' ? gated : real.get(id)), list: () => real.list() },
+  })
+  const body = { sessionId: action.sessionId, repo: realpathSync(action.repo) }
+
+  const first = postTagOp(gatedHandlers.tagOp, { ...body, action: 'delete', tag: 'v1' })
+  const deadline = Date.now() + 5_000
+  while (started === 0 && Date.now() < deadline) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.equal(started, 1, 'the first tag action reached the backend')
+  const second = await postTagOp(gatedHandlers.tagOp, { ...body, action: 'delete', tag: 'v2' })
+  assert.equal(second.status, 409)
+  assert.equal(second.body.error.code, 'busy')
+  const branch = await postBranchOp(gatedHandlers.branchOp, { ...body, action: 'rename', branch: 'topic', name: 'renamed' })
+  assert.equal(branch.status, 409)
+  assert.equal(branch.body.error.code, 'busy')
+  release()
+  assert.equal((await first).status, 200)
+
+  // The lock is released with the answer, so the next write can run.
+  const next = await postTagOp(gatedHandlers.tagOp, { ...body, action: 'delete', tag: 'v2' })
+  assert.equal(next.status, 200)
+  assert.equal(started, 2)
 })
 
 // Sync ----------------------------------------------------------------------

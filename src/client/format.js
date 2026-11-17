@@ -157,6 +157,10 @@ const ERROR_KEYS = {
   'merge-blocked': 'error.mergeBlocked',
   'rebase-blocked': 'error.rebaseBlocked',
   'branch-failed': 'error.branchFailed',
+  'tag-missing': 'error.tagMissing',
+  'remote-missing': 'error.remoteMissing',
+  'tag-push-failed': 'error.tagPushFailed',
+  'tag-failed': 'error.tagFailed',
 }
 
 /**
@@ -227,4 +231,20 @@ export function branchOpMessage(t, action, branch, result) {
   return result?.pushed === false
     ? t('branch.pushLevel', { branch, upstream })
     : t('branch.pushed', { branch, upstream })
+}
+
+/**
+ * Localized outcome of one tag action: what changed and where.
+ * @param {Function} t - the panel's translate function.
+ * @param {'delete'|'push'} action - the action that ran.
+ * @param {string} tag - the tag the user chose.
+ * @param {object | null} result - the Host answer.
+ * @returns {string} browser-facing copy.
+ */
+export function tagOpMessage(t, action, tag, result) {
+  if (action === 'delete') return t('tag.deleted', { tag })
+  const remote = typeof result?.remote === 'string' && result.remote !== '' ? result.remote : tag
+  return result?.pushed === false
+    ? t('tag.pushLevel', { tag, remote })
+    : t('tag.pushed', { tag, remote })
 }

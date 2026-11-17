@@ -7,9 +7,10 @@ import {
 } from '../src/client/state.js'
 import {
   branchOpMessage, errorMessage, formatCommitTime, formatCount, formatDateTime, lineCounts, shortChangeId, shortSha,
-  splitPath, statusKey, switchMessage, syncMessage,
+  splitPath, statusKey, switchMessage, syncMessage, tagOpMessage,
 } from '../src/client/format.js'
 import { branchActions, isDestructiveAction } from '../src/client/branch.js'
+import { tagActions } from '../src/client/tag.js'
 import {
   buildNodeRows, buildRows, dirKey, isRowKey, rowBodyId, sectionKey, summarizeEntries,
 } from '../src/client/detail/tree.js'
@@ -535,6 +536,43 @@ test('createApi sends branch actions as a same-origin JSON POST', async () => {
   })
 })
 
+test('createApi loads remotes and sends tag actions as same-origin JSON POSTs', async () => {
+  const calls = []
+  const api = createApi('session 1', {
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/vcs.remotes')) {
+        return { ok: true, async json() { return { remotes: ['origin'], truncated: false } } }
+      }
+      return { ok: true, async json() { return { tag: 'v1', remote: 'origin', pushed: true } } }
+    },
+  })
+
+  const controller = new AbortController()
+  assert.deepEqual(await api.remotes('/repo', controller.signal), { remotes: ['origin'], truncated: false })
+  assert.equal(calls[0].url, '/api/vcs.remotes?sessionId=session+1&repo=%2Frepo')
+  assert.equal(calls[0].init.method, 'GET')
+  assert.equal(calls[0].init.signal, controller.signal)
+
+  assert.deepEqual(
+    await api.tagOp('/repo', 'push', { tag: 'v1', remote: 'origin' }),
+    { tag: 'v1', remote: 'origin', pushed: true },
+  )
+  assert.equal(calls[1].url, '/api/vcs.tag')
+  assert.equal(calls[1].init.method, 'POST')
+  assert.equal(calls[1].init.credentials, 'same-origin')
+  assert.equal(calls[1].init.headers['content-type'], 'application/json')
+  assert.deepEqual(JSON.parse(calls[1].init.body), {
+    sessionId: 'session 1', repo: '/repo', action: 'push', tag: 'v1', remote: 'origin',
+  })
+  assert.equal(calls[1].init.signal, undefined, 'leaving the panel does not cut a tag action short')
+
+  await api.tagOp('/repo', 'delete', { tag: 'v1' })
+  assert.deepEqual(JSON.parse(calls[2].init.body), {
+    sessionId: 'session 1', repo: '/repo', action: 'delete', tag: 'v1',
+  })
+})
+
 test('branchActions keeps merge and rebase on a named current branch only', () => {
   assert.deepEqual(branchActions({ current: true, currentBranch: 'main' }), ['rename', 'push'])
   assert.deepEqual(
@@ -591,6 +629,36 @@ test('branchOpMessage names the ref each branch action moved', () => {
 test('errorMessage maps every branch action refusal to localized copy', () => {
   const t = key => key
   for (const code of ['branch-invalid', 'branch-exists', 'branch-unmerged', 'branch-in-use', 'merge-blocked', 'rebase-blocked', 'branch-failed']) {
+    assert.notEqual(errorMessage(t, { code }), 'error.internal', code)
+  }
+})
+
+test('tagActions lists delete and push in menu order', () => {
+  assert.deepEqual(tagActions(), ['delete', 'push'])
+  assert.equal(isDestructiveAction('delete'), true)
+})
+
+test('tagOpMessage names the tag and the remote it reached', () => {
+  const t = (key, vars) => `${key}:${JSON.stringify(vars ?? {})}`
+  assert.equal(tagOpMessage(t, 'delete', 'v1', { tag: 'v1' }), 'tag.deleted:{"tag":"v1"}')
+  assert.equal(
+    tagOpMessage(t, 'push', 'v1', { tag: 'v1', remote: 'origin', pushed: true }),
+    'tag.pushed:{"tag":"v1","remote":"origin"}',
+  )
+  assert.equal(
+    tagOpMessage(t, 'push', 'v1', { tag: 'v1', remote: 'origin', pushed: false }),
+    'tag.pushLevel:{"tag":"v1","remote":"origin"}',
+  )
+  assert.equal(
+    tagOpMessage(t, 'push', 'v1', null),
+    'tag.pushed:{"tag":"v1","remote":"v1"}',
+    'a malformed answer falls back to the pick',
+  )
+})
+
+test('errorMessage maps every tag action refusal to localized copy', () => {
+  const t = key => key
+  for (const code of ['tag-missing', 'remote-missing', 'tag-push-failed', 'tag-failed']) {
     assert.notEqual(errorMessage(t, { code }), 'error.internal', code)
   }
 })

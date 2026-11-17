@@ -1,17 +1,18 @@
 /**
  * Host half of `dsh-vcs-panel`.
  *
- * Eight authenticated read routes under `/api/vcs.*` expose one repository's
+ * Nine authenticated read routes under `/api/vcs.*` expose one repository's
  * working changes, a single file's hunks, its history, each turn's recorded
- * head and change totals, and its local branches. Three write routes settle what
- * the panel shows: `POST /api/vcs.sync` brings a Git branch level with its
- * upstream by fetching and then either fast-forwarding or pushing,
- * `POST /api/vcs.switch` checks out an existing local branch, and
- * `POST /api/vcs.branch` runs one branch action (rename, delete, merge,
- * rebase, push). Nothing stages, commits, force-pushes, discards changes, or
- * creates branches; Jujutsu bookmarks are never rewritten. The backend is
- * chosen by the repository's marker (Jujutsu or Git) and runs through the
- * injected subprocess service with fixed argv.
+ * head and change totals, its local branches, and its remotes. Four write
+ * routes settle what the panel shows: `POST /api/vcs.sync` brings a Git branch
+ * level with its upstream by fetching and then either fast-forwarding or
+ * pushing, `POST /api/vcs.switch` checks out an existing local branch,
+ * `POST /api/vcs.branch` runs one branch action (rename, delete, merge, rebase,
+ * push), and `POST /api/vcs.tag` deletes a local tag or pushes it to a remote.
+ * Nothing stages, commits, force-pushes, discards changes, or creates branches;
+ * Jujutsu bookmarks and tags are never rewritten. The backend is chosen by the
+ * repository's marker (Jujutsu or Git) and runs through the injected subprocess
+ * service with fixed argv.
  */
 
 import { createHandlers } from './lib/handlers.js'
@@ -37,6 +38,7 @@ const ROUTES = [
   { path: '/api/vcs.repositories', key: 'repositories', method: 'GET' },
   { path: '/api/vcs.status', key: 'status', method: 'GET' },
   { path: '/api/vcs.branches', key: 'branches', method: 'GET' },
+  { path: '/api/vcs.remotes', key: 'remotes', method: 'GET' },
   { path: '/api/vcs.untracked', key: 'untracked', method: 'GET' },
   { path: '/api/vcs.diff', key: 'diff', method: 'GET' },
   { path: '/api/vcs.log', key: 'log', method: 'GET' },
@@ -45,6 +47,7 @@ const ROUTES = [
   { path: '/api/vcs.sync', key: 'sync', method: 'POST' },
   { path: '/api/vcs.switch', key: 'switchBranch', method: 'POST' },
   { path: '/api/vcs.branch', key: 'branchOp', method: 'POST' },
+  { path: '/api/vcs.tag', key: 'tagOp', method: 'POST' },
 ]
 
 /**
