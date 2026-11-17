@@ -21,6 +21,7 @@ import {
 import { errorMessage, formatCount, shortChangeId } from './format.js'
 import { BRANCH_BUSY_KEYS } from './branch.js'
 import { TAG_BUSY_KEYS } from './tag.js'
+import { COMMIT_BUSY_KEYS } from './commit.js'
 
 /** Range choices when no backend has answered yet. */
 const FALLBACK_RANGES = [
@@ -304,20 +305,22 @@ function SyncButton({ branch, syncing, onSync, t, locale }) {
  * started; `syncing` covers a sync and the refresh it starts afterwards, so
  * one icon turns from the click until the counts it settles are back;
  * `switching` is a branch switch, `branchBusy` one of the other branch
- * actions in flight, and `tagBusy` one of the tag actions.
- * @param {{ repositories: object[], repo: string | null, onRepoChange: Function, status: object | null, capabilities: object | null, refMode: string, onRefMode: (ref: string) => void, onRefresh: Function, refreshing: boolean, revalidating?: boolean, onSync: Function, syncing: boolean, branches?: object[], branchesStatus?: string, branchesError?: object | null, branchesTruncated?: boolean, onLoadBranches?: Function, onSwitchBranch?: Function, onBranchActions?: Function, switching?: boolean, branchBusy?: string | null, tagBusy?: string | null, notice?: { tone: 'error' | 'info', text: string } | null, t: Function, locale?: string }} props - panel header state.
+ * actions in flight, `tagBusy` one of the tag actions, and `commitBusy` one
+ * of the commit actions.
+ * @param {{ repositories: object[], repo: string | null, onRepoChange: Function, status: object | null, capabilities: object | null, refMode: string, onRefMode: (ref: string) => void, onRefresh: Function, refreshing: boolean, revalidating?: boolean, onSync: Function, syncing: boolean, branches?: object[], branchesStatus?: string, branchesError?: object | null, branchesTruncated?: boolean, onLoadBranches?: Function, onSwitchBranch?: Function, onBranchActions?: Function, switching?: boolean, branchBusy?: string | null, tagBusy?: string | null, commitBusy?: string | null, notice?: { tone: 'error' | 'info', text: string } | null, t: Function, locale?: string }} props - panel header state.
  */
 export function TopBar({
   repositories, repo, onRepoChange, status, capabilities, refMode, onRefMode, onRefresh, refreshing,
   revalidating = false, onSync, syncing, branches = [], branchesStatus = 'idle', branchesError = null,
   branchesTruncated = false, onLoadBranches = () => {}, onSwitchBranch = () => {}, onBranchActions = () => {},
-  switching = false, branchBusy = null, tagBusy = null, notice, t, locale,
+  switching = false, branchBusy = null, tagBusy = null, commitBusy = null, notice, t, locale,
 }) {
   // Work on data already on screen shows as one thin bar under the header,
-  // whether the user asked for it (refresh, sync, switch, a branch or tag
-  // action) or the panel did (a refresh on becoming visible); the content
-  // stays put.
-  const busy = refreshing || syncing || switching || branchBusy !== null || tagBusy !== null || revalidating
+  // whether the user asked for it (refresh, sync, switch, a branch, tag, or
+  // commit action) or the panel did (a refresh on becoming visible); the
+  // content stays put.
+  const busy = refreshing || syncing || switching || branchBusy !== null || tagBusy !== null
+    || commitBusy !== null || revalidating
   const branch = status?.branch
   const workingCopy = status?.workingCopy
   const showsWorkingCopy = capabilities?.workingCopy === 'commit'
@@ -450,7 +453,9 @@ export function TopBar({
               ? t(BRANCH_BUSY_KEYS[branchBusy])
               : tagBusy !== null && TAG_BUSY_KEYS[tagBusy] !== undefined
                 ? t(TAG_BUSY_KEYS[tagBusy])
-                : t('top.refreshing')}
+                : commitBusy !== null && COMMIT_BUSY_KEYS[commitBusy] !== undefined
+                  ? t(COMMIT_BUSY_KEYS[commitBusy])
+                  : t('top.refreshing')}
       />
     </div>
   )

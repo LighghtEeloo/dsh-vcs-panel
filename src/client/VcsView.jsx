@@ -14,7 +14,9 @@ import { createApi } from './api.js'
 import {
   loadState, nodePatch, preferredNode, saveState, SIDEBAR_MAX, SIDEBAR_MIN, WORKTREE,
 } from './state.js'
-import { branchOpMessage, errorMessage, formatCount, switchMessage, syncMessage, tagOpMessage } from './format.js'
+import {
+  branchOpMessage, commitOpMessage, errorMessage, formatCount, shortSha, switchMessage, syncMessage, tagOpMessage,
+} from './format.js'
 import { isEditableTarget } from './keys.js'
 import { dirKey } from './detail/tree.js'
 import { buildGraph } from './history/layout.js'
@@ -26,8 +28,10 @@ import { TopBar } from './TopBar.jsx'
 import { RefActionsMenu } from './RefActionsMenu.jsx'
 import { BranchDialog } from './BranchDialogs.jsx'
 import { TagDialog } from './TagDialog.jsx'
-import { branchActions } from './branch.js'
+import { CommitDialog } from './CommitDialog.jsx'
+import { branchActions, remoteBranchActions } from './branch.js'
 import { tagActions } from './tag.js'
+import { commitActions } from './commit.js'
 import { TimelineSkeleton, TreeSkeleton } from './skeleton.jsx'
 
 /** Rows per history page. */
@@ -123,6 +127,12 @@ export function VcsView({
   const [tagRemotes, setTagRemotes] = useState(idleRemotes)
   // The open tag actions menu: `{ kind: 'tag', name, actions, x, y }`.
   const [tagMenu, setTagMenu] = useState(null)
+  // The commit action a dialog is running, its open dialog and failure, and
+  // the open commit menu. A failed commit action stays in its dialog.
+  const [commitBusy, setCommitBusy] = useState(null)
+  const [commitDialog, setCommitDialog] = useState(null)
+  const [commitDialogError, setCommitDialogError] = useState(null)
+  const [commitMenu, setCommitMenu] = useState(null)
   // Bumped after the Sidebar host focuses its pane, so the settle effect retries.
   const [focusTick, setFocusTick] = useState(0)
 
@@ -138,10 +148,12 @@ export function VcsView({
   const switchingRef = useRef(false)
   const branchBusyRef = useRef(false)
   const tagBusyRef = useRef(false)
-  // The control the branch or tag actions menu is acting for, focused again
-  // after the menu or its dialog closes.
+  const commitBusyRef = useRef(false)
+  // The control the branch, tag, or commit actions menu is acting for, focused
+  // again after the menu or its dialog closes.
   const branchMenuReturnRef = useRef(null)
   const tagMenuReturnRef = useRef(null)
+  const commitMenuReturnRef = useRef(null)
   const tagRemotesControllerRef = useRef(null)
   const diffCacheRef = useRef(new Map())
   const detailControl = useRef(null)
@@ -262,6 +274,12 @@ export function VcsView({
     setTagRemotes(idleRemotes())
     setTagMenu(null)
     tagMenuReturnRef.current = null
+    commitBusyRef.current = false
+    setCommitBusy(null)
+    setCommitDialog(null)
+    setCommitDialogError(null)
+    setCommitMenu(null)
+    commitMenuReturnRef.current = null
     setStatus(idleStatus())
     anchorRef.current = null
     timelineScrollRef.current = 0
@@ -444,6 +462,12 @@ export function VcsView({
     setTagRemotes(idleRemotes())
     setTagMenu(null)
     tagMenuReturnRef.current = null
+    commitBusyRef.current = false
+    setCommitBusy(null)
+    setCommitDialog(null)
+    setCommitDialogError(null)
+    setCommitMenu(null)
+    commitMenuReturnRef.current = null
     loadingBranchesRef.current = false
     branchesControllerRef.current?.abort()
     branchesControllerRef.current = null
@@ -532,7 +556,7 @@ export function VcsView({
   const syncingRef = useRef(false)
   const sync = useCallback(async () => {
     const repo = stateRef.current.repo
-    if (repo === null || syncingRef.current || branchBusyRef.current || tagBusyRef.current || switchingRef.current) return
+    if (repo === null || syncingRef.current || branchBusyRef.current || tagBusyRef.current || commitBusyRef.current || switchingRef.current) return
     syncingRef.current = true
     setSyncingRepo(repo)
     setNotice(null)
@@ -595,6 +619,21 @@ export function VcsView({
   }, [api])
 
   /**
+   * Drop everything that described the old HEAD after a checkout: selection,
+   * folds, directory expansions, reading position, and the diff cache. Status
+   * then picks the new head's default node, exactly as after a refresh.
+   */
+  const resetReadingForNewHead = useCallback(() => {
+    anchorRef.current = null
+    timelineScrollRef.current = 0
+    setDirChildren({})
+    setLoadingDirs({})
+    attemptedDirsRef.current.clear()
+    diffCacheRef.current.clear()
+    update({ node: null, nodeChosen: false, anchor: null, folds: {}, collapsed: {}, dirs: {} })
+  }, [update])
+
+  /**
    * Check out one local branch, then drop everything that described the old
    * HEAD: selection, folds, directory expansions, reading position, and the
    * diff cache. Status then picks the new branch's default node, exactly as
@@ -603,7 +642,7 @@ export function VcsView({
    */
   const switchBranch = useCallback(async branch => {
     const repo = stateRef.current.repo
-    if (repo === null || switchingRef.current || branchBusyRef.current || tagBusyRef.current || syncingRef.current) return
+    if (repo === null || switchingRef.current || branchBusyRef.current || tagBusyRef.current || commitBusyRef.current || syncingRef.current) return
     switchingRef.current = true
     setSwitching(branch)
     setNotice(null)
@@ -627,17 +666,11 @@ export function VcsView({
       return
     }
 
-    anchorRef.current = null
-    timelineScrollRef.current = 0
-    setDirChildren({})
-    setLoadingDirs({})
-    attemptedDirsRef.current.clear()
-    diffCacheRef.current.clear()
+    resetReadingForNewHead()
     setBranches({ status: 'idle', list: [], truncated: false, error: null })
-    update({ node: null, nodeChosen: false, anchor: null, folds: {}, collapsed: {}, dirs: {} })
     refresh('switch')
     setNotice(outcome)
-  }, [api, refresh, t, update])
+  }, [api, refresh, resetReadingForNewHead, t])
 
   /** Put keyboard focus back on the branch control after a dialog. */
   const focusBranchControl = useCallback(() => {
@@ -661,9 +694,11 @@ export function VcsView({
   }, [focusBranchControl])
 
   /**
-   * Open the branch actions menu for one branch. `entry` is a branch listing
-   * row or a timeline ref; the point is where the menu opens, and the return
-   * element gets focus when the menu or its dialog closes.
+   * Open the branch actions menu for one local or remote-tracking branch.
+   * `entry` is a branch listing row, a timeline branch badge, or a timeline
+   * remote badge carrying its split remote and branch. The point is where the
+   * menu opens, and the return element gets focus when the menu or its dialog
+   * closes.
    */
   const openBranchActions = useCallback((entry, point, returnElement) => {
     const info = status.data?.branch
@@ -671,12 +706,18 @@ export function VcsView({
       && info.detached !== true && info.unborn !== true && typeof info.name === 'string'
       ? info.name
       : null
+    const remote = entry.kind === 'remote'
+    if (remote && (typeof entry.remote !== 'string' || typeof entry.branch !== 'string')) return
     branchMenuReturnRef.current = returnElement ?? null
     setBranchMenu({
-      kind: 'branch',
+      kind: remote ? 'remote' : 'branch',
       name: entry.name,
-      current: entry.current === true,
-      actions: branchActions({ current: entry.current === true, currentBranch }),
+      remote: remote ? entry.remote : undefined,
+      shortBranch: remote ? entry.branch : undefined,
+      current: remote ? false : entry.current === true,
+      actions: remote
+        ? remoteBranchActions({ currentBranch })
+        : branchActions({ current: entry.current === true, currentBranch }),
       x: point.clientX,
       y: point.clientY,
     })
@@ -694,13 +735,13 @@ export function VcsView({
    * delete, merge, and rebase state what will happen first. The current branch
    * is read here so merge and rebase name it without a second request.
    */
-  const openBranchDialog = useCallback((kind, branch) => {
+  const openBranchDialog = useCallback((kind, branch, extra = {}) => {
     const info = status.data?.branch
     const current = info !== undefined && info !== null
       && info.detached !== true && info.unborn !== true && typeof info.name === 'string'
       ? info.name
       : null
-    setBranchDialog({ kind, branch, current })
+    setBranchDialog({ kind, branch, current, ...extra })
     setBranchDialogError(null)
   }, [status.data])
 
@@ -712,7 +753,7 @@ export function VcsView({
    */
   const runBranchAction = useCallback(async (action, branch, options = {}) => {
     const repo = stateRef.current.repo
-    if (repo === null || branchBusyRef.current || tagBusyRef.current || switchingRef.current || syncingRef.current) return
+    if (repo === null || branchBusyRef.current || tagBusyRef.current || commitBusyRef.current || switchingRef.current || syncingRef.current) return
     branchBusyRef.current = true
     setBranchBusy(action)
     setBranchDialogError(null)
@@ -739,12 +780,14 @@ export function VcsView({
     setBranchDialogError(null)
     // The branch list names and marks may be stale; the menu reloads on open.
     setBranches({ status: 'idle', list: [], truncated: false, error: null })
+    // A remote checkout moves HEAD exactly as a local switch does.
+    if (action === 'checkout-remote') resetReadingForNewHead()
     refresh('branch')
     setNotice(outcome)
     // Checkout and push already restored focus when their menu closed; a
     // dialog keeps it until the write is finished.
     if (action !== 'push') restoreBranchFocus()
-  }, [api, refresh, t, restoreBranchFocus])
+  }, [api, refresh, resetReadingForNewHead, t, restoreBranchFocus])
 
   /**
    * Dispatch one action chosen from the shared menu. A dialog keeps the
@@ -754,6 +797,16 @@ export function VcsView({
     const target = branchMenu
     if (target === null) return
     setBranchMenu(null)
+    if (target.kind === 'remote') {
+      openBranchDialog(
+        action,
+        target.name,
+        action === 'checkout-remote'
+          ? { remote: target.remote, local: target.shortBranch }
+          : { remote: target.remote },
+      )
+      return
+    }
     if (action === 'checkout' || action === 'push') {
       restoreBranchFocus()
       if (action === 'checkout') void switchBranch(target.name)
@@ -848,7 +901,7 @@ export function VcsView({
    */
   const runTagAction = useCallback(async (action, tag, options = {}) => {
     const repo = stateRef.current.repo
-    if (repo === null || tagBusyRef.current || branchBusyRef.current || switchingRef.current || syncingRef.current) return
+    if (repo === null || tagBusyRef.current || branchBusyRef.current || commitBusyRef.current || switchingRef.current || syncingRef.current) return
     tagBusyRef.current = true
     setTagBusy(action)
     setTagDialogError(null)
@@ -893,6 +946,11 @@ export function VcsView({
       event.preventDefault()
       event.stopPropagation()
       openBranchActions(reference, event, returnElement)
+    } else if (reference.kind === 'remote' && capabilities?.branchOps === true) {
+      if (typeof reference.remote !== 'string' || typeof reference.branch !== 'string') return
+      event.preventDefault()
+      event.stopPropagation()
+      openBranchActions(reference, event, returnElement)
     } else if (reference.kind === 'tag' && capabilities?.tagOps === true) {
       event.preventDefault()
       event.stopPropagation()
@@ -930,6 +988,139 @@ export function VcsView({
     setTagRemotes(idleRemotes())
     restoreTagFocus()
   }, [restoreTagFocus])
+
+  /** Return focus to the row that opened the commit menu or its dialog. */
+  const restoreCommitFocus = useCallback(() => {
+    const element = commitMenuReturnRef.current
+    commitMenuReturnRef.current = null
+    requestAnimationFrame(() => {
+      if (element !== null && element?.isConnected === true) {
+        element.focus({ preventScroll: true })
+        return
+      }
+      const root = rootRef.current
+      const row = root?.querySelector('.vcs-timeline-row[aria-current="true"]')
+        ?? root?.querySelector('.vcs-timeline-row')
+      row?.focus({ preventScroll: true })
+    })
+  }, [])
+
+  /** Open the commit actions menu for one timeline commit. */
+  const openCommitActions = useCallback((commit, point, returnElement) => {
+    if (capabilities?.commitOps !== true) return
+    const info = status.data?.branch
+    const currentBranch = info !== undefined && info !== null
+      && info.detached !== true && info.unborn !== true && typeof info.name === 'string'
+      ? info.name
+      : null
+    const head = typeof info?.oid === 'string' && info.oid !== '' ? info.oid : null
+    commitMenuReturnRef.current = returnElement ?? null
+    setCommitMenu({
+      kind: 'commit',
+      name: shortSha(commit.sha),
+      detail: commit.subject ?? '',
+      sha: commit.sha,
+      subject: commit.subject ?? '',
+      actions: commitActions({ commit, currentBranch, head }),
+      x: point.clientX,
+      y: point.clientY,
+    })
+  }, [capabilities, status.data])
+
+  /** Close the shared commit actions menu. */
+  const closeCommitActions = useCallback(restoreFocus => {
+    setCommitMenu(null)
+    if (restoreFocus) restoreCommitFocus()
+    else commitMenuReturnRef.current = null
+  }, [restoreCommitFocus])
+
+  /** Open the dialog for one commit action. */
+  const openCommitDialog = useCallback((kind, target) => {
+    const info = status.data?.branch
+    const current = info !== undefined && info !== null
+      && info.detached !== true && info.unborn !== true && typeof info.name === 'string'
+      ? info.name
+      : null
+    setCommitDialog({
+      kind,
+      sha: target.sha,
+      shortSha: shortSha(target.sha),
+      current,
+      subject: target.subject ?? '',
+    })
+    setCommitDialogError(null)
+  }, [status.data])
+
+  /**
+   * Run one commit action, then refresh. Checkout and a hard reset drop the
+   * old reading state; the other actions keep it and let a rewritten node fall
+   * back through the detail's `onMissing`. A refused action stays in its
+   * dialog with the error.
+   */
+  const runCommitAction = useCallback(async (action, target, values = {}) => {
+    const repo = stateRef.current.repo
+    if (repo === null || commitBusyRef.current || tagBusyRef.current || branchBusyRef.current
+      || switchingRef.current || syncingRef.current) return
+    commitBusyRef.current = true
+    setCommitBusy(action)
+    setCommitDialogError(null)
+    setNotice(null)
+    let outcome
+    let failed = false
+    try {
+      const answer = await api.commitOp(repo, action, { sha: target.sha, ...values })
+      outcome = { tone: 'info', text: commitOpMessage(t, action, target, answer) }
+    } catch (error) {
+      failed = true
+      outcome = { tone: 'error', text: errorMessage(t, error) }
+      if (stateRef.current.repo === repo) setCommitDialogError(error)
+    } finally {
+      commitBusyRef.current = false
+      setCommitBusy(null)
+    }
+    if (stateRef.current.repo !== repo) return
+    if (failed) return
+    setCommitDialog(null)
+    setCommitDialogError(null)
+    setBranches({ status: 'idle', list: [], truncated: false, error: null })
+    if (action === 'checkout' || (action === 'reset' && values.mode === 'hard')) {
+      resetReadingForNewHead()
+    }
+    refresh('commit')
+    setNotice(outcome)
+    restoreCommitFocus()
+  }, [api, refresh, resetReadingForNewHead, restoreCommitFocus, t])
+
+  /** Dispatch one action chosen from the commit menu. */
+  const chooseCommitAction = useCallback(action => {
+    const target = commitMenu
+    if (target === null) return
+    setCommitMenu(null)
+    // The menu names its two ref-creating actions by their visible result;
+    // the Host and dialog use the same names as the other tag and branch writes.
+    const kind = action === 'add-tag' ? 'tag' : action === 'create-branch' ? 'branch' : action
+    openCommitDialog(kind, target)
+  }, [commitMenu, openCommitDialog])
+
+  /** Right-click or Shift+F10 on a timeline row opens its commit menu. */
+  const onTimelineCommitActions = useCallback((commit, point, returnElement) => {
+    if (capabilities?.commitOps !== true) return
+    openCommitActions(commit, point, returnElement)
+  }, [capabilities, openCommitActions])
+
+  /** Submit the open commit dialog. */
+  const confirmCommitDialog = useCallback(values => {
+    if (commitDialog === null) return
+    void runCommitAction(commitDialog.kind, commitDialog, values)
+  }, [commitDialog, runCommitAction])
+
+  /** Close the commit dialog without writing anything. */
+  const cancelCommitDialog = useCallback(() => {
+    if (commitBusyRef.current) return
+    setCommitDialog(null)
+    setCommitDialogError(null)
+    restoreCommitFocus()
+  }, [restoreCommitFocus])
 
   /** Load the direct children of one untracked directory. */
   const expandUntracked = useCallback(async (key, path) => {
@@ -1184,6 +1375,7 @@ export function VcsView({
         switching={switching !== null}
         branchBusy={branchBusy}
         tagBusy={tagBusy}
+        commitBusy={commitBusy}
         notice={notice}
         t={t}
         locale={locale}
@@ -1239,6 +1431,7 @@ export function VcsView({
                 onRefActions={capabilities?.branchOps === true || capabilities?.tagOps === true
                   ? onTimelineRefActions
                   : undefined}
+                onCommitActions={capabilities?.commitOps === true ? onTimelineCommitActions : undefined}
                 initialScrollTop={timelineScrollRef.current}
                 onScrollOffset={top => {
                   timelineScrollRef.current = top
@@ -1329,6 +1522,13 @@ export function VcsView({
         onChoose={chooseTagAction}
         onClose={closeTagActions}
       />
+      <RefActionsMenu
+        target={commitMenu}
+        busy={commitBusy !== null}
+        t={t}
+        onChoose={chooseCommitAction}
+        onClose={closeCommitActions}
+      />
       {branchDialog === null ? null : (
         <BranchDialog
           key={`${branchDialog.kind}:${branchDialog.branch}`}
@@ -1349,6 +1549,17 @@ export function VcsView({
           remotes={tagRemotes}
           onCancel={cancelTagDialog}
           onConfirm={confirmTagDialog}
+          t={t}
+        />
+      )}
+      {commitDialog === null ? null : (
+        <CommitDialog
+          key={`${commitDialog.kind}:${commitDialog.sha}`}
+          request={commitDialog}
+          error={commitDialogError}
+          busy={commitBusy !== null}
+          onCancel={cancelCommitDialog}
+          onConfirm={confirmCommitDialog}
           t={t}
         />
       )}

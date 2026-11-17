@@ -156,14 +156,18 @@ export function Segmented({ value, options, onChange, label }) {
 /**
  * One ref badge; kind decides its color. The branch HEAD points to takes the
  * HEAD color and reads as git's `HEAD -> name`, so one badge carries both.
- * A branch or tag badge that receives `onRefContextMenu` is an actions
- * target: it opens the shared menu instead of the browser's context menu.
+ * A branch, remote-branch, or tag badge that receives `onRefContextMenu` is
+ * an actions target: it opens the shared menu instead of the browser's context
+ * menu. A remote badge is only actionable when the log attached its split
+ * remote and branch names.
  * The prop is `reference`, not `ref`: this client runs on React 18, where
  * `ref` is reserved and never reaches a function component's props.
  */
 export function RefBadge({ reference, onRefContextMenu }) {
   const current = reference.current === true
-  const actionable = (reference.kind === 'branch' || reference.kind === 'tag')
+  const remote = reference.kind === 'remote'
+    && typeof reference.remote === 'string' && typeof reference.branch === 'string'
+  const actionable = (reference.kind === 'branch' || reference.kind === 'tag' || remote)
     && typeof onRefContextMenu === 'function'
   return (
     <span

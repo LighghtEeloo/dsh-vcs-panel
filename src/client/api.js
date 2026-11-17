@@ -1,6 +1,7 @@
 /**
  * Browser data layer for the Host routes: the reads and the writes behind
- * sync, branch switching, the branch actions menu, and the tag actions menu.
+ * sync, branch switching, the branch actions menu, the tag actions menu, and
+ * the commit actions menu.
  *
  * One instance serves one Session: every request carries the Session identity
  * and the repository the panel currently shows. Requests are cancellable with
@@ -256,12 +257,12 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
     },
 
     /**
-     * Run one branch action on an existing local branch. The Host validates
-     * the action, the branch, and the new name; merge and rebase undo
-     * themselves when they conflict.
+     * Run one branch action on an existing local or remote-tracking branch.
+     * The Host validates the action, the branch, and the new name; merge and
+     * rebase undo themselves when they conflict.
      * @param {string} repo - repository root.
-     * @param {'rename'|'delete'|'merge'|'rebase'|'push'} action - the action.
-     * @param {{ branch: string, name?: string, force?: boolean }} target - target branch and options.
+     * @param {'rename'|'delete'|'merge'|'rebase'|'push'|'checkout-remote'|'delete-remote'|'merge-remote'|'pull-remote'} action - the action.
+     * @param {{ branch: string, name?: string, local?: string, force?: boolean }} target - target branch and options.
      * @returns {Promise<object>} what the action did.
      */
     branchOp(repo, action, target) {
@@ -270,6 +271,7 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
         action,
         branch: target.branch,
         name: target.name,
+        local: target.local,
         force: target.force === true ? true : undefined,
       })
     },
@@ -288,6 +290,26 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
         action,
         tag: target.tag,
         remote: target.remote,
+      })
+    },
+
+    /**
+     * Run one commit action on an existing commit. The Host validates the
+     * action, commit, new ref name, tag message, and reset mode; conflicts
+     * abort before the failure is reported.
+     * @param {string} repo - repository root.
+     * @param {'tag'|'branch'|'checkout'|'cherry-pick'|'revert'|'drop'|'merge'|'rebase'|'reset'} action - the action.
+     * @param {{ sha: string, name?: string, message?: string, mode?: string }} target - commit and options.
+     * @returns {Promise<object>} what the action did.
+     */
+    commitOp(repo, action, target) {
+      return post('/api/vcs.commit-op', {
+        repo,
+        action,
+        sha: target.sha,
+        name: target.name,
+        message: target.message,
+        mode: target.mode,
       })
     },
   }

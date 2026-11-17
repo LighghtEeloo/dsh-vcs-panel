@@ -6,11 +6,12 @@ import {
   SIDEBAR_MIN, SIDEBAR_MAX, storageKey, WORKING_COPY, WORKTREE,
 } from '../src/client/state.js'
 import {
-  branchOpMessage, errorMessage, formatCommitTime, formatCount, formatDateTime, lineCounts, shortChangeId, shortSha,
-  splitPath, statusKey, switchMessage, syncMessage, tagOpMessage,
+  branchOpMessage, commitOpMessage, errorMessage, formatCommitTime, formatCount, formatDateTime, lineCounts,
+  shortChangeId, shortSha, splitPath, statusKey, switchMessage, syncMessage, tagOpMessage,
 } from '../src/client/format.js'
-import { branchActions, isDestructiveAction } from '../src/client/branch.js'
+import { branchActions, isDestructiveAction, remoteBranchActions } from '../src/client/branch.js'
 import { tagActions } from '../src/client/tag.js'
+import { commitActions, isDestructiveCommitAction } from '../src/client/commit.js'
 import {
   buildNodeRows, buildRows, dirKey, isRowKey, rowBodyId, sectionKey, summarizeEntries,
 } from '../src/client/detail/tree.js'
@@ -521,6 +522,11 @@ test('createApi sends branch actions as a same-origin JSON POST', async () => {
     sessionId: 'session 1', repo: '/repo', action: 'push', branch: 'old',
   })
 
+  await api.branchOp('/repo', 'checkout-remote', { branch: 'origin/topic', local: 'topic' })
+  assert.deepEqual(JSON.parse(calls[3].init.body), {
+    sessionId: 'session 1', repo: '/repo', action: 'checkout-remote', branch: 'origin/topic', local: 'topic',
+  })
+
   const unmerged = createApi('s', {
     fetchImpl: async () => ({
       ok: false,
@@ -573,6 +579,34 @@ test('createApi loads remotes and sends tag actions as same-origin JSON POSTs', 
   })
 })
 
+test('createApi sends commit actions as same-origin JSON POSTs', async () => {
+  const calls = []
+  const api = createApi('session 1', {
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init })
+      return { ok: true, async json() { return { tag: 'v1', sha: 'a'.repeat(40) } } }
+    },
+  })
+
+  assert.deepEqual(
+    await api.commitOp('/repo', 'tag', { sha: 'a'.repeat(40), name: 'v1', message: 'release' }),
+    { tag: 'v1', sha: 'a'.repeat(40) },
+  )
+  assert.equal(calls[0].url, '/api/vcs.commit-op')
+  assert.equal(calls[0].init.method, 'POST')
+  assert.equal(calls[0].init.credentials, 'same-origin')
+  assert.equal(calls[0].init.headers['content-type'], 'application/json')
+  assert.deepEqual(JSON.parse(calls[0].init.body), {
+    sessionId: 'session 1', repo: '/repo', action: 'tag', sha: 'a'.repeat(40), name: 'v1', message: 'release',
+  })
+  assert.equal(calls[0].init.signal, undefined, 'leaving the panel does not cut a commit action short')
+
+  await api.commitOp('/repo', 'reset', { sha: 'b'.repeat(40), mode: 'soft' })
+  assert.deepEqual(JSON.parse(calls[1].init.body), {
+    sessionId: 'session 1', repo: '/repo', action: 'reset', sha: 'b'.repeat(40), mode: 'soft',
+  })
+})
+
 test('branchActions keeps merge and rebase on a named current branch only', () => {
   assert.deepEqual(branchActions({ current: true, currentBranch: 'main' }), ['rename', 'push'])
   assert.deepEqual(
@@ -585,7 +619,20 @@ test('branchActions keeps merge and rebase on a named current branch only', () =
     'a detached HEAD has no current branch to merge or rebase',
   )
   assert.equal(isDestructiveAction('delete'), true)
+  assert.equal(isDestructiveAction('delete-remote'), true)
   assert.equal(isDestructiveAction('merge'), false)
+})
+
+test('remoteBranchActions offers checkout and delete always, merge and pull on a branch', () => {
+  assert.deepEqual(
+    remoteBranchActions({ currentBranch: 'main' }),
+    ['checkout-remote', 'delete-remote', 'merge-remote', 'pull-remote'],
+  )
+  assert.deepEqual(
+    remoteBranchActions({ currentBranch: null }),
+    ['checkout-remote', 'delete-remote'],
+    'a detached HEAD has no current branch to merge or pull into',
+  )
 })
 
 test('branchOpMessage names the ref each branch action moved', () => {
@@ -620,6 +667,26 @@ test('branchOpMessage names the ref each branch action moved', () => {
     'branch.pushLevel:{"branch":"topic","upstream":"origin/topic"}',
   )
   assert.equal(
+    branchOpMessage(t, 'checkout-remote', 'origin/topic', { branch: 'origin/topic', local: 'topic' }),
+    'branch.checkedOutRemote:{"branch":"origin/topic","local":"topic"}',
+  )
+  assert.equal(
+    branchOpMessage(t, 'delete-remote', 'origin/topic', { branch: 'origin/topic' }),
+    'branch.deletedRemote:{"branch":"origin/topic"}',
+  )
+  assert.equal(
+    branchOpMessage(t, 'merge-remote', 'origin/topic', { branch: 'origin/topic', current: 'main', result: 'merged' }),
+    'branch.merged:{"current":"main","branch":"origin/topic"}',
+  )
+  assert.equal(
+    branchOpMessage(t, 'pull-remote', 'origin/topic', { branch: 'origin/topic', current: 'main', result: 'merged' }),
+    'branch.pulled:{"current":"main","branch":"origin/topic"}',
+  )
+  assert.equal(
+    branchOpMessage(t, 'pull-remote', 'origin/topic', { branch: 'origin/topic', current: 'main', result: 'up-to-date' }),
+    'branch.pulledLevel:{"current":"main","branch":"origin/topic"}',
+  )
+  assert.equal(
     branchOpMessage(t, 'rename', 'old', null),
     'branch.renamed:{"from":"old","branch":"old"}',
     'a malformed answer falls back to the pick',
@@ -628,7 +695,10 @@ test('branchOpMessage names the ref each branch action moved', () => {
 
 test('errorMessage maps every branch action refusal to localized copy', () => {
   const t = key => key
-  for (const code of ['branch-invalid', 'branch-exists', 'branch-unmerged', 'branch-in-use', 'merge-blocked', 'rebase-blocked', 'branch-failed']) {
+  for (const code of [
+    'branch-invalid', 'branch-exists', 'branch-unmerged', 'branch-in-use',
+    'merge-blocked', 'rebase-blocked', 'branch-failed', 'remote-branch-missing',
+  ]) {
     assert.notEqual(errorMessage(t, { code }), 'error.internal', code)
   }
 })
@@ -656,9 +726,95 @@ test('tagOpMessage names the tag and the remote it reached', () => {
   )
 })
 
+test('commitActions follows the commit position and current branch', () => {
+  const commit = { sha: 'a'.repeat(40), parents: ['b'.repeat(40)] }
+  assert.deepEqual(
+    commitActions({ commit, currentBranch: 'main', head: 'c'.repeat(40) }),
+    ['add-tag', 'create-branch', 'checkout', 'cherry-pick', 'revert', 'drop', 'merge', 'rebase', 'reset'],
+  )
+  assert.deepEqual(
+    commitActions({ commit, currentBranch: 'main', head: commit.sha }),
+    ['add-tag', 'create-branch', 'revert', 'drop'],
+    'HEAD itself cannot be checked out, cherry-picked, merged, rebased, or reset',
+  )
+  assert.deepEqual(
+    commitActions({ commit, currentBranch: null, head: 'c'.repeat(40) }),
+    ['add-tag', 'create-branch', 'checkout'],
+    'a detached HEAD has no branch to pick, drop, merge, rebase, or reset',
+  )
+  assert.deepEqual(
+    commitActions({ commit: { sha: 'a'.repeat(40), parents: [] }, currentBranch: 'main', head: 'c'.repeat(40) }),
+    ['add-tag', 'create-branch', 'checkout', 'cherry-pick', 'revert', 'merge', 'rebase', 'reset'],
+    'a root commit cannot be dropped',
+  )
+  assert.deepEqual(
+    commitActions({ commit: { sha: 'a'.repeat(40), parents: ['b'.repeat(40), 'c'.repeat(40)] }, currentBranch: 'main', head: 'd'.repeat(40) }),
+    ['add-tag', 'create-branch', 'checkout', 'cherry-pick', 'revert', 'merge', 'rebase', 'reset'],
+    'a merge commit cannot be dropped',
+  )
+  assert.equal(isDestructiveCommitAction('drop'), true)
+  assert.equal(isDestructiveCommitAction('reset'), true)
+  assert.equal(isDestructiveCommitAction('revert'), false)
+})
+
+test('commitOpMessage names the commit and ref each action changed', () => {
+  const t = (key, vars) => `${key}:${JSON.stringify(vars ?? {})}`
+  const sha = 'a'.repeat(40)
+  assert.equal(
+    commitOpMessage(t, 'tag', { sha, name: 'v1' }, { tag: 'v1', sha }),
+    'commit.tagAdded:{"tag":"v1","sha":"aaaaaaa"}',
+  )
+  assert.equal(
+    commitOpMessage(t, 'branch', { sha, name: 'topic' }, { branch: 'topic', sha }),
+    'commit.branchCreated:{"branch":"topic","sha":"aaaaaaa"}',
+  )
+  assert.equal(commitOpMessage(t, 'checkout', { sha }, { sha }), 'commit.checkedOut:{"sha":"aaaaaaa"}')
+  assert.equal(
+    commitOpMessage(t, 'cherry-pick', { sha }, { sha, current: 'main' }),
+    'commit.cherryPicked:{"sha":"aaaaaaa","current":"main"}',
+  )
+  assert.equal(
+    commitOpMessage(t, 'revert', { sha }, { sha, current: 'main' }),
+    'commit.reverted:{"sha":"aaaaaaa","current":"main"}',
+  )
+  assert.equal(
+    commitOpMessage(t, 'drop', { sha }, { sha, current: 'main' }),
+    'commit.dropped:{"sha":"aaaaaaa","current":"main"}',
+  )
+  assert.equal(
+    commitOpMessage(t, 'merge', { sha }, { sha, current: 'main', result: 'fast-forward' }),
+    'commit.fastForwarded:{"sha":"aaaaaaa","current":"main"}',
+  )
+  assert.equal(
+    commitOpMessage(t, 'merge', { sha }, { sha, current: 'main', result: 'up-to-date' }),
+    'commit.upToDate:{"sha":"aaaaaaa","current":"main"}',
+  )
+  assert.equal(
+    commitOpMessage(t, 'merge', { sha }, { sha, current: 'main', result: 'merged' }),
+    'commit.merged:{"sha":"aaaaaaa","current":"main"}',
+  )
+  assert.equal(
+    commitOpMessage(t, 'rebase', { sha }, { sha, current: 'main' }),
+    'commit.rebased:{"sha":"aaaaaaa","current":"main"}',
+  )
+  assert.equal(
+    commitOpMessage(t, 'reset', { sha }, { sha, current: 'main', mode: 'hard' }),
+    'commit.resetDone:{"sha":"aaaaaaa","current":"main","mode":"commit.resetHard:{}"}',
+  )
+  assert.equal(
+    commitOpMessage(t, 'tag', { sha, name: 'v1' }, null),
+    'commit.tagAdded:{"tag":"v1","sha":"aaaaaaa"}',
+    'a malformed answer falls back to the pick',
+  )
+})
+
 test('errorMessage maps every tag action refusal to localized copy', () => {
   const t = key => key
-  for (const code of ['tag-missing', 'remote-missing', 'tag-push-failed', 'tag-failed']) {
+  for (const code of ['tag-invalid', 'tag-exists', 'tag-missing', 'remote-missing', 'tag-push-failed', 'tag-failed']) {
+    assert.notEqual(errorMessage(t, { code }), 'error.internal', code)
+  }
+
+  for (const code of ['checkout-blocked', 'commit-not-on-branch', 'commit-conflict', 'commit-blocked', 'commit-failed']) {
     assert.notEqual(errorMessage(t, { code }), 'error.internal', code)
   }
 })

@@ -1,6 +1,6 @@
 /**
- * The ref actions menu, shared by the header's branch control, the branch ref
- * badges in the timeline, and the tag ref badges.
+ * The ref actions menu, shared by the header's branch control, the local and
+ * remote branch ref badges in the timeline, and the tag ref badges.
  *
  * The caller names one ref, its kind, whether it is checked out, and the
  * actions that apply; this component only places, paints, and keys the menu.
@@ -12,6 +12,7 @@
 import { useEffect, useRef } from 'react'
 
 import { isDestructiveAction } from './branch.js'
+import { isDestructiveCommitAction } from './commit.js'
 
 /** Width of the menu, row height, and the space its title and separators take. */
 const MENU_WIDTH = 252
@@ -22,18 +23,35 @@ const MARGIN = 8
 /** Keys the menu consumes so the panel's movement keys stay outside. */
 const MENU_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'])
 
-/** Fixed labels for branch actions that take no interpolation. */
+/** Fixed labels for branch and remote-branch actions that take no interpolation. */
 const BRANCH_LABELS = {
   checkout: 'branch.checkout',
   rename: 'branch.rename',
   delete: 'branch.delete',
   push: 'branch.push',
+  'checkout-remote': 'branch.checkoutRemote',
+  'delete-remote': 'branch.deleteRemote',
+  'merge-remote': 'branch.mergeRemote',
+  'pull-remote': 'branch.pullRemote',
 }
 
 /** Fixed labels for tag actions. */
 const TAG_LABELS = {
   delete: 'tag.delete',
   push: 'tag.push',
+}
+
+/** Fixed labels for commit actions. */
+const COMMIT_LABELS = {
+  'add-tag': 'commit.addTag',
+  'create-branch': 'commit.createBranch',
+  checkout: 'commit.checkout',
+  'cherry-pick': 'commit.cherryPick',
+  revert: 'commit.revert',
+  drop: 'commit.drop',
+  merge: 'commit.merge',
+  rebase: 'commit.rebase',
+  reset: 'commit.reset',
 }
 
 /** Actions in one visual group are separated from the next group. */
@@ -44,12 +62,29 @@ const BRANCH_GROUP = {
   merge: 2,
   rebase: 2,
   push: 3,
+  'checkout-remote': 0,
+  'delete-remote': 1,
+  'merge-remote': 2,
+  'pull-remote': 3,
 }
 
 /** A tag's destructive write is marked apart from its push. */
 const TAG_GROUP = {
   delete: 0,
   push: 1,
+}
+
+/** Commit actions keep ref creation, history writes, and branch writes apart. */
+const COMMIT_GROUP = {
+  'add-tag': 0,
+  'create-branch': 0,
+  checkout: 1,
+  'cherry-pick': 1,
+  revert: 1,
+  drop: 1,
+  merge: 2,
+  rebase: 2,
+  reset: 2,
 }
 
 /**
@@ -69,7 +104,9 @@ function menuPosition(point, count) {
 
 /** The localized row label for one action of one ref kind. */
 function actionLabel(target, action, t) {
+  if (target.kind === 'commit') return t(COMMIT_LABELS[action])
   if (target.kind === 'tag') return t(TAG_LABELS[action])
+  if (target.kind === 'remote') return t(BRANCH_LABELS[action])
   if (action === 'merge') return t('branch.merge', { branch: target.name })
   if (action === 'rebase') return t('branch.rebase', { branch: target.name })
   return t(BRANCH_LABELS[action])
@@ -77,12 +114,13 @@ function actionLabel(target, action, t) {
 
 /** The visual group of one action, or undefined for an unknown action. */
 function actionGroup(kind, action) {
+  if (kind === 'commit') return COMMIT_GROUP[action]
   return (kind === 'tag' ? TAG_GROUP : BRANCH_GROUP)[action]
 }
 
 /**
  * Render the open ref actions menu.
- * @param {{ target: { kind: 'branch' | 'tag', name: string, current?: boolean, actions: string[], x: number, y: number } | null, busy: boolean, t: Function, onChoose: Function, onClose: (restoreFocus: boolean) => void }} props - the ref, its actions, and the close callbacks.
+ * @param {{ target: { kind: 'branch' | 'remote' | 'tag' | 'commit', name: string, detail?: string, current?: boolean, actions: string[], x: number, y: number } | null, busy: boolean, t: Function, onChoose: Function, onClose: (restoreFocus: boolean) => void }} props - the ref or commit, its actions, and the close callbacks.
  */
 export function RefActionsMenu({ target, busy, t, onChoose, onClose }) {
   const menuRef = useRef(null)
@@ -116,9 +154,11 @@ export function RefActionsMenu({ target, busy, t, onChoose, onClose }) {
 
   if (target === null) return null
   const position = menuPosition(target, target.actions.length)
-  const menuLabel = target.kind === 'tag'
-    ? t('tag.menuLabel', { tag: target.name })
-    : t('branch.menuLabel', { branch: target.name })
+  const menuLabel = target.kind === 'commit'
+    ? t('commit.menuLabel', { sha: target.name })
+    : target.kind === 'tag'
+      ? t('tag.menuLabel', { tag: target.name })
+      : t('branch.menuLabel', { branch: target.name })
 
   const onKeyDown = event => {
     if (!MENU_KEYS.has(event.key)) return
@@ -153,18 +193,25 @@ export function RefActionsMenu({ target, busy, t, onChoose, onClose }) {
     >
       <p className="vcs-ref-ops-title">
         <span className="vcs-ref-ops-name">{target.name}</span>
+        {target.kind === 'commit' && target.detail ? (
+          <span className="vcs-ref-ops-detail" title={target.detail}>{target.detail}</span>
+        ) : null}
         {target.kind === 'branch' && target.current ? <span className="vcs-ref-ops-current">{t('branch.current')}</span> : null}
+        {target.kind === 'remote' ? <span className="vcs-ref-ops-remote">{t('branch.remoteTag')}</span> : null}
       </p>
       {target.actions.map((action, index) => {
         const label = actionLabel(target, action, t)
         const separated = index > 0 && actionGroup(target.kind, action) !== actionGroup(target.kind, target.actions[index - 1])
+        const destructive = target.kind === 'commit'
+          ? isDestructiveCommitAction(action)
+          : isDestructiveAction(action)
         return (
           <div key={action}>
             {separated ? <div className="vcs-ref-ops-sep" role="separator" /> : null}
             <button
               type="button"
               role="menuitem"
-              className={`vcs-menu-item vcs-ref-ops-item${isDestructiveAction(action) ? ' vcs-ref-ops-danger' : ''}`}
+              className={`vcs-menu-item vcs-ref-ops-item${destructive ? ' vcs-ref-ops-danger' : ''}`}
               data-ops-item=""
               aria-disabled={busy ? 'true' : undefined}
               title={label}

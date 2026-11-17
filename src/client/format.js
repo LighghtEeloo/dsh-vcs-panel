@@ -157,10 +157,18 @@ const ERROR_KEYS = {
   'merge-blocked': 'error.mergeBlocked',
   'rebase-blocked': 'error.rebaseBlocked',
   'branch-failed': 'error.branchFailed',
+  'tag-invalid': 'error.tagInvalid',
+  'tag-exists': 'error.tagExists',
   'tag-missing': 'error.tagMissing',
   'remote-missing': 'error.remoteMissing',
+  'remote-branch-missing': 'error.remoteBranchMissing',
   'tag-push-failed': 'error.tagPushFailed',
   'tag-failed': 'error.tagFailed',
+  'checkout-blocked': 'error.checkoutBlocked',
+  'commit-not-on-branch': 'error.commitNotOnBranch',
+  'commit-conflict': 'error.commitConflict',
+  'commit-blocked': 'error.commitBlocked',
+  'commit-failed': 'error.commitFailed',
 }
 
 /**
@@ -221,10 +229,20 @@ export function branchOpMessage(t, action, branch, result) {
     return t('branch.renamed', { from, branch: to })
   }
   if (action === 'delete') return t('branch.deleted', { branch })
-  if (action === 'merge') {
+  if (action === 'checkout-remote') {
+    const local = typeof result?.local === 'string' && result.local !== '' ? result.local : branch
+    return t('branch.checkedOutRemote', { branch, local })
+  }
+  if (action === 'delete-remote') return t('branch.deletedRemote', { branch })
+  if (action === 'merge' || action === 'merge-remote') {
     if (result?.result === 'fast-forward') return t('branch.fastForwarded', { current, branch })
     if (result?.result === 'up-to-date') return t('branch.upToDate', { current, branch })
     return t('branch.merged', { current, branch })
+  }
+  if (action === 'pull-remote') {
+    return result?.result === 'up-to-date'
+      ? t('branch.pulledLevel', { current, branch })
+      : t('branch.pulled', { current, branch })
   }
   if (action === 'rebase') return t('branch.rebased', { current, branch })
   const upstream = typeof result?.upstream === 'string' && result.upstream !== '' ? result.upstream : branch
@@ -247,4 +265,38 @@ export function tagOpMessage(t, action, tag, result) {
   return result?.pushed === false
     ? t('tag.pushLevel', { tag, remote })
     : t('tag.pushed', { tag, remote })
+}
+
+/**
+ * Localized outcome of one commit action: what changed and where.
+ * @param {Function} t - the panel's translate function.
+ * @param {'tag'|'branch'|'checkout'|'cherry-pick'|'revert'|'drop'|'merge'|'rebase'|'reset'} action - the action that ran.
+ * @param {{ sha: string, name?: string }} target - the selected commit and optional new ref.
+ * @param {object | null} result - the Host answer.
+ * @returns {string} browser-facing copy.
+ */
+export function commitOpMessage(t, action, target, result) {
+  const sha = shortSha(typeof result?.sha === 'string' && result.sha !== '' ? result.sha : target.sha)
+  if (action === 'tag') {
+    const tag = typeof result?.tag === 'string' && result.tag !== '' ? result.tag : target.name
+    return t('commit.tagAdded', { tag, sha })
+  }
+  if (action === 'branch') {
+    const branch = typeof result?.branch === 'string' && result.branch !== '' ? result.branch : target.name
+    return t('commit.branchCreated', { branch, sha })
+  }
+  if (action === 'checkout') return t('commit.checkedOut', { sha })
+  const current = typeof result?.current === 'string' && result.current !== '' ? result.current : ''
+  if (action === 'cherry-pick') return t('commit.cherryPicked', { sha, current })
+  if (action === 'revert') return t('commit.reverted', { sha, current })
+  if (action === 'drop') return t('commit.dropped', { sha, current })
+  if (action === 'merge') {
+    if (result?.result === 'fast-forward') return t('commit.fastForwarded', { sha, current })
+    if (result?.result === 'up-to-date') return t('commit.upToDate', { sha, current })
+    return t('commit.merged', { sha, current })
+  }
+  if (action === 'rebase') return t('commit.rebased', { sha, current })
+  const mode = typeof result?.mode === 'string' ? result.mode : 'mixed'
+  const modeLabel = t(`commit.reset${mode.charAt(0).toUpperCase()}${mode.slice(1)}`)
+  return t('commit.resetDone', { sha, current, mode: modeLabel })
 }

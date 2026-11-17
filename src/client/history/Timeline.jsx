@@ -60,11 +60,11 @@ function WorktreeMeta({ status, statusState, t, locale }) {
 
 /**
  * Render the timeline.
- * @param {{ commits: object[], layout: object, status: object | null, statusState: string, worktreeRow?: boolean, selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, onRefActions?: Function, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
+ * @param {{ commits: object[], layout: object, status: object | null, statusState: string, worktreeRow?: boolean, selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, onRefActions?: Function, onCommitActions?: Function, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
  */
 export function Timeline({
   commits, layout, status, statusState, worktreeRow = true, selectedRow, onSelectRow, onMove, onOpen,
-  onRefActions, t, locale,
+  onRefActions, onCommitActions, t, locale,
   loading, loadingMore, error, hasMore, truncated, onLoadMore, onRetry,
   initialScrollTop = 0, onScrollOffset,
 }) {
@@ -142,12 +142,27 @@ export function Timeline({
       ? shortChangeId(commit.changeId)
       : shortSha(commit.sha)
     const subject = commit.subject === '' ? t('commit.noDescription') : commit.subject
+    const commitMenu = onCommitActions === undefined ? null : {
+      onContextMenu: event => {
+        if (event.defaultPrevented) return
+        event.preventDefault()
+        onCommitActions(commit, event, event.currentTarget)
+      },
+      onKeyDown: event => {
+        if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
+        event.preventDefault()
+        const rect = event.currentTarget.getBoundingClientRect()
+        onCommitActions(commit, { clientX: rect.left + 12, clientY: rect.bottom }, event.currentTarget)
+      },
+    }
     rows.push(
       <button
         key={commit.sha}
         className={`vcs-timeline-row${workingCopy ? ' vcs-working-copy-row' : ''}`}
         title={`${workingCopy ? '@  ' : ''}${commit.changeId === undefined ? shortSha(commit.sha) : commit.changeId}  ${subject}`}
         {...common}
+        onContextMenu={commitMenu?.onContextMenu}
+        onKeyDown={commitMenu?.onKeyDown}
       >
         <span className="vcs-timeline-title">{subject}</span>
         <span className="vcs-timeline-meta">

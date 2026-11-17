@@ -1,11 +1,13 @@
 /**
- * The branch actions that need a decision: rename, delete, merge, and rebase.
+ * The branch actions that need a decision: local rename, delete, merge, and
+ * rebase; remote checkout, delete, merge, and pull.
  *
  * The dialog sits over the panel, names the branch it acts on, and states what
- * the action does before it runs. A delete that Git reports as not fully
+ * the action does before it runs. A local delete that Git reports as not fully
  * merged keeps the dialog open and turns its confirmation into an explicit
  * "delete anyway", so removing unmerged commits is always a second, informed
- * click. Escape cancels unless the write is already running; focus stays
+ * click. Remote checkout asks for the local branch name; remote delete removes
+ * the branch for every fetcher. Escape cancels unless the write is already running; focus stays
  * inside the dialog while it is open.
  */
 
@@ -20,6 +22,10 @@ const DIALOG_COPY = {
   delete: { title: 'branch.deleteTitle', action: 'branch.deleteAction' },
   merge: { title: 'branch.mergeTitle', action: 'branch.mergeAction' },
   rebase: { title: 'branch.rebaseTitle', action: 'branch.rebaseAction' },
+  'checkout-remote': { title: 'branch.checkoutRemoteTitle', action: 'branch.checkout' },
+  'delete-remote': { title: 'branch.deleteRemoteTitle', action: 'branch.deleteAction' },
+  'merge-remote': { title: 'branch.mergeTitle', action: 'branch.mergeAction' },
+  'pull-remote': { title: 'branch.pullTitle', action: 'branch.pullAction' },
 }
 
 /**
@@ -27,21 +33,30 @@ const DIALOG_COPY = {
  * @param {{ request: { kind: 'rename'|'delete'|'merge'|'rebase', branch: string, current?: string | null } | null, error: object | null, busy: boolean, onCancel: Function, onConfirm: Function, t: Function }} props - dialog state and callbacks.
  */
 export function BranchDialog({ request, error, busy, onCancel, onConfirm, t }) {
-  const [name, setName] = useState(request?.branch ?? '')
+  const [name, setName] = useState(
+    request?.kind === 'checkout-remote' ? request.local ?? '' : request?.branch ?? '',
+  )
 
   if (request === null) return null
 
   const copy = DIALOG_COPY[request.kind]
+  const naming = request.kind === 'rename' || request.kind === 'checkout-remote'
   const unmerged = request.kind === 'delete' && error?.code === 'branch-unmerged'
+  const destructive = request.kind === 'delete' || request.kind === 'delete-remote'
   const trimmed = name.trim()
-  const canSubmit = !busy && (request.kind !== 'rename' || (trimmed !== '' && trimmed !== request.branch))
+  const canSubmit = !busy && (
+    !naming
+    || (trimmed !== '' && (request.kind !== 'rename' || trimmed !== request.branch))
+  )
   const confirmLabel = request.kind === 'delete' && unmerged
     ? t('branch.deleteAnyway')
     : t(copy.action)
 
   const submit = () => {
     if (!canSubmit) return
-    onConfirm(request.kind === 'rename' ? { name: trimmed } : { force: unmerged })
+    if (request.kind === 'rename') onConfirm({ name: trimmed })
+    else if (request.kind === 'checkout-remote') onConfirm({ local: trimmed })
+    else onConfirm(request.kind === 'delete' ? { force: unmerged } : {})
   }
 
   return (
@@ -70,6 +85,24 @@ export function BranchDialog({ request, error, busy, onCancel, onConfirm, t }) {
           />
         </>
       ) : null}
+      {request.kind === 'checkout-remote' ? (
+        <>
+          <p className="vcs-dialog-text">{t('branch.checkoutRemoteText', { branch: request.branch, remote: request.remote })}</p>
+          <label className="vcs-dialog-label" htmlFor="vcs-branch-name">{t('branch.localName')}</label>
+          <input
+            id="vcs-branch-name"
+            className="vcs-dialog-input"
+            type="text"
+            value={name}
+            spellCheck={false}
+            autoComplete="off"
+            autoCapitalize="off"
+            disabled={busy}
+            data-autofocus=""
+            onChange={event => { setName(event.currentTarget.value) }}
+          />
+        </>
+      ) : null}
       {request.kind === 'delete' ? (
         <>
           <p className="vcs-dialog-text">{t('branch.deleteText', { branch: request.branch })}</p>
@@ -78,11 +111,17 @@ export function BranchDialog({ request, error, busy, onCancel, onConfirm, t }) {
           ) : null}
         </>
       ) : null}
-      {request.kind === 'merge' ? (
+      {request.kind === 'delete-remote' ? (
+        <p className="vcs-dialog-text">{t('branch.deleteRemoteText', { branch: request.branch })}</p>
+      ) : null}
+      {request.kind === 'merge' || request.kind === 'merge-remote' ? (
         <p className="vcs-dialog-text">{t('branch.mergeText', { branch: request.branch, current: request.current ?? '' })}</p>
       ) : null}
       {request.kind === 'rebase' ? (
         <p className="vcs-dialog-text">{t('branch.rebaseText', { branch: request.branch, current: request.current ?? '' })}</p>
+      ) : null}
+      {request.kind === 'pull-remote' ? (
+        <p className="vcs-dialog-text">{t('branch.pullText', { branch: request.branch, current: request.current ?? '' })}</p>
       ) : null}
       {error !== null && !unmerged ? (
         <p className="vcs-dialog-error" role="alert">{errorMessage(t, error)}</p>

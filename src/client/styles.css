@@ -292,6 +292,7 @@
 }
 
 .vcs-ref-ops-name {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--dsw-alias-label-secondary);
@@ -299,7 +300,17 @@
   white-space: nowrap;
 }
 
-.vcs-ref-ops-current {
+.vcs-ref-ops-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcs-ref-ops-current,
+.vcs-ref-ops-remote {
   flex: none;
   margin-left: auto;
   padding: 0 6px;

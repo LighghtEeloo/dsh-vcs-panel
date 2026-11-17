@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-Version control in the DeepSeek Harness right Sidebar. Adds a `VCS` tab to inspect working changes, syntax-highlighted diffs, and commit history with a lane graph, for both **Git** and **Jujutsu** repositories—and to act on Git branches and tags in one place: check out, rename, delete, merge into the current branch, rebase the current branch onto another, push a branch, delete or push a tag, or sync with its upstream.
+Version control in the DeepSeek Harness right Sidebar. Adds a `VCS` tab to inspect working changes, syntax-highlighted diffs, and commit history with a lane graph, for both **Git** and **Jujutsu** repositories—and to act on Git branches, remote branches, tags, and commits in one place: check out, rename, delete, merge into the current branch, rebase the current branch onto another, push a branch, check out or delete a remote branch, merge or pull it into the current branch, delete or push a tag, tag a commit, branch from it, check it out, cherry-pick, revert, drop, merge, rebase, or reset to it, or sync with the upstream.
 
 ## Features
 
@@ -12,10 +12,12 @@ Version control in the DeepSeek Harness right Sidebar. Adds a `VCS` tab to inspe
 - **Git & Jujutsu native.** Shows staged and unstaged groups (`?` for untracked items) and ahead/behind in Git; shows `@`, change IDs, and bookmarks in Jujutsu.
 - **Turn banner & shortcut.** File-changing turns end with a compact VCS banner showing that turn's branch (or `@`), changed-file count, and `+` / `−` line totals in place of Chat's changed-files card. Open the Sidebar tab from anywhere with `⌘⇧G` / `Ctrl+Shift+G`, and press it again to slide back to the conversation.
 - **One-click sync.** The button beside the Git branch shows ahead/behind counts; clicking it fetches the upstream, then fast-forwards or pushes. A diverged branch, a fast-forward that would overwrite local edits, or a branch without an upstream is left untouched with a note on what to do next.
-- **Branch switching.** The branch name opens the repository's local branches; picking one checks it out. Only local branches are listed—no implicit remote-tracking branches—and Git refuses when local changes would be overwritten, so nothing is stashed, discarded, or forced.
+- **Branch switching.** The branch name opens the repository's local branches; picking one checks it out. Only local branches are listed—no implicit remote-tracking branches; remote branches are checked out explicitly from their history badges. Git refuses when local changes would be overwritten, so nothing is stashed, discarded, or forced.
 - **Branch actions.** Right-click the current branch, any branch in the list, or a branch badge in the history timeline (or press `Shift+F10` on the branch control) for checkout, rename, delete, merge into the current branch, rebase the current branch onto it, and push. The checked-out branch offers rename and push only. Rename, delete, merge, and rebase state what will happen before they run; an unmerged delete needs a second, explicit confirmation; a conflicting merge or rebase is aborted and leaves the branch unchanged. Push sends exactly the named branch to its configured upstream and never forces.
+- **Remote branch actions.** Right-click a remote branch badge such as `origin/topic` for Checkout Branch, Delete Remote Branch, Merge into current branch, and Pull into current branch. Checkout asks for the local name, creates a branch that tracks the remote, and checks it out. Delete removes the branch on its remote after confirmation and drops the stale tracking ref. Merge and pull use the same conflict-abort rules as local merges; pull fetches the named remote branch first, then merges it. Merge and pull are omitted on a detached HEAD.
 - **Tag actions.** Right-click a tag badge in the history timeline for `Delete Tag…` and `Push Tag…`. Delete removes only the local tag and states that a remote copy stays; push sends exactly that tag to a chosen configured remote and never forces, so a tag already on the remote with a different object is refused rather than moved. The push dialog loads the repository's remotes and says so when there are none.
-- **Writes stay explicit.** Sync, the branch actions, and the tag actions are the only writes: the panel never stages, commits, force-pushes, discards changes, or creates branches or tags (Jujutsu only snapshots the working copy on read). Follows DSH themes and all 8 UI languages, and loads large histories and diffs on demand.
+- **Commit actions.** Right-click a commit row (or focus it and press `Shift+F10`) for Add Tag, Create Branch, Checkout, Cherry Pick, Revert, Drop, Merge into current branch, Rebase current branch on this Commit, and Reset current branch to this Commit. Every history write opens a dialog that names the commit and what will change; a conflict aborts the operation and restores the branch. Drop is offered only for a single-parent commit while a branch is checked out, and the Host checks that the commit is on it; Reset chooses Soft, Mixed, or Hard, and only Hard discards staged and unstaged changes.
+- **Writes stay explicit.** Sync, the branch, remote-branch, tag, and commit actions are the only writes. A conflicting merge, pull, pick, revert, drop, or rebase is aborted; pushes and remote deletions never force anything; Jujutsu only snapshots the working copy on read. Follows DSH themes and all 8 UI languages, and loads large histories and diffs on demand.
 
 ## Keyboard
 
@@ -25,9 +27,9 @@ Version control in the DeepSeek Harness right Sidebar. Adds a `VCS` tab to inspe
 | `↑` `↓` or `j` `k` | Move through one vertical list of tree rows and hunk headers of open diffs |
 | `←` `→` or `h` `l` | Enter the change tree or an open file; `←` / `h` closes an open file first, then returns to the timeline |
 | `Enter`, `Space`, `Esc` | Fold/expand the focused row; `Esc` returns to the timeline |
-| `↑` `↓`, `Home` `End` | Move inside the open branch menu or branch/tag actions menu; `Esc` closes it |
-| Right-click, `Shift+F10` | Open branch actions for the current branch, a branch in the list, or a branch badge in the history timeline; right-click a tag badge for tag actions |
-| `Enter`, `Esc` | Confirm or cancel a branch or tag action dialog |
+| `↑` `↓`, `Home` `End` | Move inside the open branch menu or branch/remote-branch/tag/commit actions menu; `Esc` closes it |
+| Right-click / `Shift+F10` | Right-click a branch, remote-branch, or tag badge for its actions; press `Shift+F10` on the branch control for branch actions or on a commit row for commit actions |
+| `Enter`, `Esc` | Confirm or cancel a branch, remote-branch, tag, or commit action dialog |
 | `[` / `]` | Move to the previous / next tree row, skipping hunk headers |
 
 ## Install

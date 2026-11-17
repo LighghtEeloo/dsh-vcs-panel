@@ -16,6 +16,7 @@ import {
   syntheticNewFile,
 } from '../lib/diff.js'
 import {
+  annotateRemoteRefs,
   classifyRefName,
   parseDecoration,
   parseLog,
@@ -270,6 +271,42 @@ test('decodeFileContent distinguishes text, NUL, and invalid UTF-8', () => {
   assert.deepEqual(decodeFileContent(Buffer.from('hello\n')), { binary: false, text: 'hello\n' })
   assert.deepEqual(decodeFileContent(Buffer.from([0x00, 0x01])), { binary: true })
   assert.deepEqual(decodeFileContent(Buffer.from([0xff, 0xfe])), { binary: true })
+})
+
+test('annotateRemoteRefs splits remote refs with the longest configured remote', () => {
+  const commits = [{
+    sha: SHA,
+    refs: [
+      { name: 'main', kind: 'branch', current: true },
+      { name: 'origin/main', kind: 'remote' },
+      { name: 'upstream/feature/x', kind: 'remote' },
+      { name: 'origin/HEAD', kind: 'remote' },
+      { name: 'v1', kind: 'tag' },
+    ],
+  }]
+  const annotated = annotateRemoteRefs(commits, ['origin', 'upstream'])
+  assert.deepEqual(annotated[0].refs, [
+    { name: 'main', kind: 'branch', current: true },
+    { name: 'origin/main', kind: 'remote', remote: 'origin', branch: 'main' },
+    { name: 'upstream/feature/x', kind: 'remote', remote: 'upstream', branch: 'feature/x' },
+    { name: 'origin/HEAD', kind: 'remote' },
+    { name: 'v1', kind: 'tag' },
+  ])
+  assert.equal(commits[0].refs[1].remote, undefined, 'the parsed commits are not mutated')
+
+  const nested = annotateRemoteRefs(
+    [{ refs: [{ name: 'foo/bar/topic', kind: 'remote' }] }],
+    ['foo', 'foo/bar'],
+  )
+  assert.deepEqual(nested[0].refs[0], {
+    name: 'foo/bar/topic',
+    kind: 'remote',
+    remote: 'foo/bar',
+    branch: 'topic',
+  })
+
+  const unknown = annotateRemoteRefs([{ refs: [{ name: 'other/topic', kind: 'remote' }] }], ['origin'])
+  assert.deepEqual(unknown[0].refs[0], { name: 'other/topic', kind: 'remote' })
 })
 
 test('parseDecoration reads full HEAD, branch, remote, and annotated tag refs', () => {
