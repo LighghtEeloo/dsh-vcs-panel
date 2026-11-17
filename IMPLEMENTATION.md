@@ -6,7 +6,7 @@
 
 ### 注册与路由
 
-Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessions', 'subprocess', 'fs']`。`apply` 仅在配置显式为字面量 `enabled: false` 时跳过路由注册（如需同时移除前端页签，需在 Plugins 中停用整个 bundle）。七条只读 `GET` 路由注册在 `ctx.connection.fetch` 的认证栅栏内；请求 `signal` 与插件生命周期 `AbortController` 组合，取消的请求保留 `AbortError`，不转为错误 JSON。
+Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessions', 'subprocess', 'fs']`。`apply` 仅在配置显式为字面量 `enabled: false` 时跳过路由注册（如需同时移除前端页签，需在 Plugins 中停用整个 bundle）。七条只读 `GET` 路由与一条写路由 `POST /api/vcs.sync` 注册在 `ctx.connection.fetch` 的认证栅栏内。读取的请求 `signal` 与插件生命周期 `AbortController` 组合，取消的请求保留 `AbortError`，不转为错误 JSON；同步只接插件生命周期的 `signal`，浏览器离开不会中断已开始的抓取、快进或推送。
 
 | 路由 | 查询参数 | 应答字段 |
 | --- | --- | --- |
@@ -17,6 +17,7 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 | `GET /api/vcs.log` | `sessionId`、`repo`、`ref`、`limit`、`skip` | `commits[]`、`truncated`、`nextSkip` |
 | `GET /api/vcs.commit` | `sessionId`、`repo`、`sha` | `commit`（`CommitDetail`，不含 patch）、`truncated` |
 | `GET /api/vcs.turn` | `sessionId`、`turn`、`seq?` | `turn`、`head`（`TurnHead \| null`）、`changed`、`added`、`deleted` |
+| `POST /api/vcs.sync` | JSON 请求体 `{ sessionId, repo }` | `upstream`、`pulled`、`pushed`（仅 `capabilities.sync` 为真时可用） |
 
 ### 输入校验与路径边界
 
@@ -25,6 +26,7 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 - **会话与仓库白名单**：`sessionId` 必须命中带有效 `header.cwd` 的活跃会话；`repo` 必须命中当次 `discoverRepositories` 的结果（`sameRepoPath`）。
 - **仓库发现与符号链接收敛**：从 `cwd` 向上最多 64 层查找最近的仓库标记，再扫描 `cwd` 下一层子目录（忽略 `node_modules`，不递归）。标记用 `lstat` 检测且 `.jj` 优先于 `.git`，兼容 linked worktree 的 `.git` 文件与 submodule。根路径经 `ctx.fs.resolve` 规范化，子仓库规范路径必须仍在 `cwd` 内；读取文件前再经 `containPath` 做 `realpath` 校验，确保目标留在仓库根内。
 - **路径与修订号净化**：`validateRelPath` 拒绝绝对路径、反斜杠、空段、`.`、`..`、`-` 前缀与控制字符，Git 侧再包 `:(literal)` pathspec，Jujutsu 侧用 `file:"..."` fileset。提交 ID 先做 7–64 位十六进制校验；Git 再经 `rev-parse --verify <sha>^{commit}` 解析，Jujutsu 仅接受 `@` 或十六进制 ID。
+- **写请求栅栏**：`vcs.sync` 只接受 `POST`，`content-type` 必须是 `application/json`（跨站页面不经 CORS 预检发不出），`Sec-Fetch-Site` 存在且不是 `same-origin` / `none` 时返回 `403 forbidden`；请求体中的 `sessionId` 与 `repo` 再走与读取相同的会话与仓库白名单。同一仓库根同时只允许一次同步，第二次返回 `409 busy`。
 
 失败统一返回 `{ error: { code, message } }`，不携带宿主绝对路径、原始命令或堆栈：
 
@@ -36,6 +38,14 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 | `output-too-large` | 413 | 子进程输出超出字节上限（`lossy`） |
 | `vcs-missing` / `timeout` | 503 | 宿主缺少 `git`/`jj` 可执行文件，或命令超时 |
 | `internal` | 500 | 未预期的后端失败 |
+| `forbidden` | 403 | 浏览器声明为跨站的同步请求 |
+| `busy` | 409 | 同一仓库已有同步在进行 |
+| `no-upstream` | 409 | 分离头指针、分支没有上游，或上游在远程上不存在 |
+| `diverged` | 409 | 分支与上游各有新提交 |
+| `pull-blocked` | 409 | 快进被拒绝（通常是本地改动会被覆盖） |
+| `remote-failed` | 502 | 抓取或推送失败：远程不可达、凭据或远程钩子拒绝、与其他推送者竞争 |
+
+同步失败时，`stderr` 末尾三行去掉 URL 中的凭据后只写入 Host 日志（`VcsError.detail`），不进入应答。
 
 ### 命令隔离与后端能力
 
@@ -44,18 +54,19 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 - **Git**：固定 `-c core.quotepath=false`，环境设 `GIT_CONFIG_COUNT=0`、`GIT_TERMINAL_PROMPT=0`、`GIT_OPTIONAL_LOCKS=0`；比较命令加 `--no-pager`、`--no-ext-diff`、`--no-color`、`-U3`。
 - **Jujutsu**：固定 `--color=never`、`--no-pager`，环境设 `JJ_EDITOR=true`；除工作副本快照外的读取均带 `--ignore-working-copy`。
 
-每个后端实现 `require`、`head`、`status`、`log`、`commit`、`diff`（可选 `untracked`）并声明 `capabilities`；Client 仅按能力对象驱动布局，不按后端名称分支：
+每个后端实现 `require`、`head`、`status`、`log`、`commit`、`diff`（可选 `untracked`、`sync`）并声明 `capabilities`；Client 仅按能力对象驱动布局，不按后端名称分支：
 
 | 能力字段 | Git | Jujutsu |
 | --- | --- | --- |
 | `workingCopy` / `workingCopyNode` | `'row'` / `null` | `'commit'` / `'@'` |
-| `staging` / `untracked` / `aheadBehind` | `true` | `false` |
+| `staging` / `untracked` / `aheadBehind` / `sync` | `true` | `false` |
 | `changeId` / `snapshots` | `false` | `true` |
 | `ranges`（`defaultRange`） | **`HEAD`**、`all` | **`@`**、`all` |
 
-两个后端的读取规则差异：
+两个后端的读写规则差异：
 
 - **Git**：`head` 仅读取 `symbolic-ref -q --short HEAD` 与 `rev-parse -q --verify HEAD^{commit}`，不扫描索引与工作区；`status` 组合 `status --porcelain=v2 -z --branch --untracked-files=normal` 与两次 `diff --numstat -z`（index 与工作区），按 `XY` 拆成 `staged`、`unstaged`、`untracked`（两侧均改时各出现一次，冲突标 `U`）。`diff` 按 `staged`（对 `HEAD`）、`unstaged`（对 index）、`untracked`（按新文件合成）、`commit`（对第一父，root 对空树）取值；空仓库读取 `HEAD` 日志视为空历史而非错误。
+- **Git 同步**（`lib/sync.js`）：从 `symbolic-ref` 与 `branch.<name>.remote` / `branch.<name>.merge` 读出分支与上游（远程名拒绝 `-` 前缀与控制字符，上游必须是 `refs/heads/…`），远程不是 `.` 时执行 `fetch --quiet <remote>`，再用 `rev-list --left-right --count HEAD...@{upstream}` 比较：两侧都有提交返回 `diverged`；只落后执行 `merge --ff-only --quiet @{upstream}`；只领先执行 `push --porcelain <remote> refs/heads/<branch>:<merge>`。不带 `--force`，不跳过钩子，抓取与推送使用远程命令超时。
 - **Jujutsu**：每次 `status` 刷新执行一次 `jj log --no-graph -r @ -T commit_id` 快照工作副本（并发请求复用同一 Promise，失败清空缓存），其余读取（含轮末 `head` 读取 `change_id`）均带 `--ignore-working-copy` 复用已记录状态，不触发额外快照。`log` 使用 `::@ ~ root()` 或 `all() ~ root()`；`diff` 使用 `jj diff --git -r <rev>`，输出含 NUL 或 `U+FFFD` 时按二进制处理。
 - **每轮摘要与头指针记录**：`createTurnTracker`（`lib/turns.js`）监听活跃会话的 `session/event`、`agent/turn-stopping`、`tools/pre-execute` 与 `session/disposed`，在有工具执行或 `workspace/changes` 的轮次结束时串行读取外围仓库的 `head`（下一轮工具执行前等待上一轮完成，防止跨轮切分支串台）。`vcs.turn` 通过 `ctx.get('workspaceChanges')` 可选读取宿主的每轮 `{ total, added, deleted }`（校验 `turn` 与 `seq` 归属一致，剔除宿主路径与文件明细），并与该轮 `head` 合并返回；两者均不存在（如 Host 重启后的历史轮次）时返回 `404 not-found`。
 
@@ -164,8 +175,11 @@ type TurnSummary = {
 | diff 请求并发 / 视口预载距离 / 结果缓存 | 4 个并发 / 800 px / 最近 300 条 | Client 请求队列与缓存 |
 | 历史分页 / 最多加载提交数 | 300 条/页，最多 10,000 条 | Host `log` |
 | 单会话保留的轮末头指针 / 客户端空闲轮次摘要缓存 | 2,000 轮 / 500 条 | Host `TurnTracker`、Client `turn-summary` |
-| 单条后端命令 | 30 s 超时，stdout 8 MB，stderr 尾部 16 KB，终止宽限 2 s | Host `CommandRunner` |
+| 单条后端命令 | 30 s 超时（远程抓取与推送 120 s，含钩子），stdout 8 MB，stderr 尾部 16 KB，终止宽限 2 s | Host `CommandRunner`、`lib/sync.js` |
 | 页面重新可见自动刷新阈值 / Jujutsu 快照频率 | 隐藏超过 30 s 刷新一次 / 每次刷新快照一次 | Client 可见性监听、Jujutsu 后端 |
+| 加载轮廓与进度线的淡入延迟 | 180 ms（`--vcs-skeleton-delay`） | Client `styles.css` |
+| 转动图标：巡航周期 / 起转 / 收尾滑行 | 900 ms 一圈（减少动效 2,400 ms）/ 加速 90° / 250–1,000 ms | Client `turning.js` |
+| 进度线淡出 | 240 ms（`PROGRESS_FADE`） | Client `TopBar.jsx`、`styles.css` |
 
 变更树当前一次渲染全部可见行，仅按需加载 diff 本体。
 

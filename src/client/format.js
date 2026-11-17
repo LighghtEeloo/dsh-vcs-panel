@@ -142,6 +142,12 @@ const ERROR_KEYS = {
   network: 'error.network',
   'bad-request': 'error.badRequest',
   internal: 'error.internal',
+  forbidden: 'error.forbidden',
+  busy: 'error.busy',
+  'no-upstream': 'error.noUpstream',
+  diverged: 'error.diverged',
+  'pull-blocked': 'error.pullBlocked',
+  'remote-failed': 'error.remoteFailed',
 }
 
 /**
@@ -154,4 +160,22 @@ export function errorMessage(t, error) {
   const key = ERROR_KEYS[error?.code]
   if (key !== undefined) return t(key)
   return error?.message ?? t('error.internal')
+}
+
+/**
+ * Localized outcome of one sync: what moved, and to or from which upstream.
+ * @param {Function} t - the panel's translate function.
+ * @param {{ upstream?: string, pulled?: number, pushed?: number }} result - the sync answer.
+ * @param {string} [locale] - BCP 47 locale for the count.
+ * @returns {string} browser-facing copy.
+ */
+export function syncMessage(t, result, locale) {
+  const upstream = typeof result?.upstream === 'string' ? result.upstream : ''
+  const pushed = Number.isSafeInteger(result?.pushed) ? result.pushed : 0
+  const pulled = Number.isSafeInteger(result?.pulled) ? result.pulled : 0
+  if (pushed === 1) return t('sync.pushedOne', { upstream })
+  if (pushed > 1) return t('sync.pushedMany', { upstream, count: formatCount(pushed, locale) })
+  if (pulled === 1) return t('sync.pulledOne', { upstream })
+  if (pulled > 1) return t('sync.pulledMany', { upstream, count: formatCount(pulled, locale) })
+  return t('sync.level', { upstream })
 }

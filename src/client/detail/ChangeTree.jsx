@@ -19,7 +19,8 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { FileDiff, isValidDiff } from '../diff/FileDiff.jsx'
 import { formatCount, lineCounts, splitPath, statusKey } from '../format.js'
 import { BACK, DOWN, FORWARD, isEditableTarget, movement, rowStep, UP } from '../keys.js'
-import { Chevron, Spinner } from '../ui.jsx'
+import { Chevron } from '../ui.jsx'
+import { Bar, barWidth } from '../skeleton.jsx'
 import {
   MAX_PARALLEL, changedLines, diffTarget, estimateHeight, isFolded, rowAt,
 } from './detail.js'
@@ -871,12 +872,14 @@ export function ChangeTree({
   const renderLoading = row => (
     <div
       key={`loading:${row.key}`}
-      className="vcs-tree-row vcs-tree-loading"
+      className="vcs-tree-row vcs-tree-loading vcs-skeleton"
       role="status"
+      aria-busy="true"
       style={{ paddingLeft: indentOf(row.depth) }}
     >
-      <Spinner label={t('changes.loadingDirectory')} />
-      <span className="vcs-dim">{t('changes.loadingDirectory')}</span>
+      <span className="vcs-sr-only">{t('changes.loadingDirectory')}</span>
+      <span className="vcs-skeleton-shape vcs-skeleton-glyph" />
+      <Bar width={barWidth(row.depth + 2, 0.4)} />
     </div>
   )
   const renderGroup = (row, children) => {

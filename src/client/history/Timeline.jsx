@@ -17,7 +17,8 @@ import { hasSeveralAuthors } from './commits.js'
 import { worktreeSummary } from './timeline.js'
 import { errorMessage, formatCommitTime, formatCount, shortChangeId, shortSha } from '../format.js'
 import { DOWN, FORWARD, movement, unmodified, UP } from '../keys.js'
-import { RefBadge, Spinner } from '../ui.jsx'
+import { RefBadge } from '../ui.jsx'
+import { Bar, TimelineSkeleton } from '../skeleton.jsx'
 
 /** Fixed row height in CSS pixels. */
 export const ROW_HEIGHT = DEFAULT_ROW_HEIGHT
@@ -40,7 +41,12 @@ function LineStat({ added, deleted, locale }) {
 function WorktreeMeta({ status, statusState, t, locale }) {
   if (status === null) {
     if (statusState === 'error') return <span className="vcs-timeline-error">{t('changes.error')}</span>
-    return <span>{t('changes.loading')}</span>
+    return (
+      <span className="vcs-skeleton vcs-timeline-meta-skeleton" role="status" aria-busy="true">
+        <span className="vcs-sr-only">{t('changes.loading')}</span>
+        <Bar width="96px" />
+      </span>
+    )
   }
   const summary = worktreeSummary(status)
   if (summary.changed === 0) return <span>{t('changes.clean')}</span>
@@ -195,8 +201,14 @@ export function Timeline({
             {rows}
           </div>
           {loading && commits.length === 0 ? (
-            <div className="vcs-timeline-note"><Spinner label={t('history.loading')} /><span>{t('history.loading')}</span></div>
+            <TimelineSkeleton
+              rows={Math.max(1, Math.ceil(viewport / ROW_HEIGHT) - rowCount)}
+              rowHeight={ROW_HEIGHT}
+              gutter={gutter}
+              label={t('history.loading')}
+            />
           ) : null}
+          {loadingMore ? <TimelineSkeleton rows={3} rowHeight={ROW_HEIGHT} gutter={gutter} /> : null}
           {!loading && error !== null ? (
             <div className="vcs-timeline-note">
               <span>{t('history.error')} {errorMessage(t, error)}</span>

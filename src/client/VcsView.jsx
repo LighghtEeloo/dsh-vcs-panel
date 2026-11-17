@@ -12,16 +12,16 @@ import { createApi } from './api.js'
 import {
   loadState, nodePatch, preferredNode, saveState, SIDEBAR_MAX, SIDEBAR_MIN, WORKTREE,
 } from './state.js'
-import { errorMessage, formatCount } from './format.js'
+import { errorMessage, formatCount, syncMessage } from './format.js'
 import { isEditableTarget } from './keys.js'
 import { dirKey } from './detail/tree.js'
 import { buildGraph } from './history/layout.js'
 import { indexCommits } from './history/commits.js'
 import { graphInput, headOf, nodeAt, pickRepository, rowOf } from './history/timeline.js'
-import { Timeline } from './history/Timeline.jsx'
+import { ROW_HEIGHT, Timeline } from './history/Timeline.jsx'
 import { DetailPane } from './detail/DetailPane.jsx'
 import { TopBar } from './TopBar.jsx'
-import { Spinner } from './ui.jsx'
+import { TimelineSkeleton, TreeSkeleton } from './skeleton.jsx'
 
 /** Rows per history page. */
 const PAGE_SIZE = 300
@@ -75,12 +75,16 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   const [status, setStatus] = useState(idleStatus)
   const [log, setLog] = useState(idleLog)
   const [revision, setRevision] = useState(0)
-  const [refreshing, setRefreshing] = useState(false)
+  // The control whose refresh is waiting for status: 'refresh', 'sync', or null.
+  const [refreshing, setRefreshing] = useState(null)
   const [width, setWidth] = useState(0)
   const [narrowDetail, setNarrowDetail] = useState(false)
   const [dirChildren, setDirChildren] = useState({})
   const [loadingDirs, setLoadingDirs] = useState({})
+  // The top bar's message, right of the branch and sync: `{ tone: 'error' | 'info', text }`.
   const [notice, setNotice] = useState(null)
+  // The repository a sync is running for; one sync at a time per panel.
+  const [syncingRepo, setSyncingRepo] = useState(null)
 
   const rootRef = useRef(null)
   const logKeyRef = useRef('')
@@ -224,11 +228,11 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
       const nextEntry = pickRepository(list, previousRepo)
       const nextRepo = nextEntry?.path ?? null
       if (nextRepo !== previousRepo) switchRepo(nextRepo, nextEntry?.capabilities)
-      if (list.length === 0) setRefreshing(false)
+      if (list.length === 0) setRefreshing(null)
     }).catch(error => {
       if (error?.name === 'AbortError' || controller.signal.aborted) return
       setRepositories({ status: 'error', list: [], truncated: false, error })
-      setRefreshing(false)
+      setRefreshing(null)
     })
     return () => { controller.abort() }
   }, [api, revision, switchRepo])
@@ -250,18 +254,18 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
       if (controller.signal.aborted) return
       if (data === null || typeof data !== 'object') {
         setStatus(previous => ({ status: 'error', data: previous.data, error: null }))
-        setRefreshing(false)
+        setRefreshing(null)
         return
       }
       setStatus({ status: 'ready', data, error: null })
-      setRefreshing(false)
+      setRefreshing(null)
       lastLoaded.current = Date.now()
       const node = preferredNode(stateRef.current, data)
       if (node !== null && node !== stateRef.current.node) selectNode(node, false)
     }).catch(error => {
       if (error?.name === 'AbortError' || controller.signal.aborted) return
       setStatus(previous => ({ status: 'error', data: previous.data, error }))
-      setRefreshing(false)
+      setRefreshing(null)
     })
     return () => { controller.abort() }
   }, [api, repositoriesReady, state.repo, revision, selectNode])
@@ -391,9 +395,13 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     rootRef.current?.querySelector(`[data-timeline-index="${selectedRow}"]`)?.focus({ preventScroll: true })
   }, [selectedRow, showTimeline, state.nodeChosen])
 
-  /** Refresh repositories, status, history, and every open comparison. */
-  const refresh = useCallback(() => {
-    setRefreshing(true)
+  /**
+   * Refresh repositories, status, history, and every open comparison.
+   * `requester` names the control the wait belongs to, so its icon is the
+   * one that turns.
+   */
+  const refresh = useCallback((requester = 'refresh') => {
+    setRefreshing(requester)
     setNotice(null)
     setDirChildren({})
     setLoadingDirs({})
@@ -401,6 +409,40 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     diffCacheRef.current.clear()
     setRevision(value => value + 1)
   }, [])
+
+  /**
+   * Sync the chosen repository's branch with its upstream, then refresh.
+   * Refresh runs on failure too: the fetch may already have moved the
+   * upstream, so the counts on the button change either way. The refresh is
+   * the sync's own, so the sync icon keeps turning until the counts are back
+   * instead of handing over to the refresh icon. The outcome is set after the
+   * refresh, which clears notices.
+   */
+  const syncingRef = useRef(false)
+  const sync = useCallback(async () => {
+    const repo = stateRef.current.repo
+    if (repo === null || syncingRef.current) return
+    syncingRef.current = true
+    setSyncingRepo(repo)
+    setNotice(null)
+    try {
+      let outcome
+      try {
+        outcome = { tone: 'info', text: syncMessage(t, await api.sync(repo), locale) }
+      } catch (error) {
+        outcome = { tone: 'error', text: errorMessage(t, error) }
+      }
+      // The refresh takes over the wait before the sync lets go of it, so
+      // the icon turns on without a gap whether or not the updates batch.
+      if (sessionRef.current === sessionId && stateRef.current.repo === repo) {
+        refresh('sync')
+        setNotice(outcome)
+      }
+    } finally {
+      syncingRef.current = false
+      setSyncingRepo(null)
+    }
+  }, [api, locale, refresh, sessionId, t])
 
   /** Load the direct children of one untracked directory. */
   const expandUntracked = useCallback(async (key, path) => {
@@ -414,13 +456,13 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
       const entries = Array.isArray(answer.entries) ? answer.entries : []
       setDirChildren(previous => ({ ...previous, [key]: entries }))
       if (answer.truncated === true) {
-        setNotice(t('changes.untrackedTruncated', { count: formatCount(entries.length, locale) }))
+        setNotice({ tone: 'error', text: t('changes.untrackedTruncated', { count: formatCount(entries.length, locale) }) })
       }
     } catch (error) {
       if (error?.name === 'AbortError') return
       if (stateRef.current.repo !== repo) return
       update({ dirs: omit(stateRef.current.dirs, key) })
-      setNotice(errorMessage(t, error))
+      setNotice({ tone: 'error', text: errorMessage(t, error) })
     } finally {
       setLoadingDirs(previous => omit(previous, key))
     }
@@ -578,7 +620,7 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
       if (error?.name === 'AbortError' || controller.signal.aborted) return
       if (stateRef.current.repo !== repo || stateRef.current.ref !== ref) return
       setLog(previous => ({ ...previous, loadingMore: false }))
-      setNotice(errorMessage(t, error))
+      setNotice({ tone: 'error', text: errorMessage(t, error) })
     } finally {
       if (pageControllerRef.current === controller) pageControllerRef.current = null
     }
@@ -641,15 +683,28 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
         capabilities={capabilities}
         refMode={state.ref}
         onRefMode={ref => { update({ ref }) }}
-        onRefresh={refresh}
-        refreshing={refreshing}
+        onRefresh={() => { refresh() }}
+        refreshing={refreshing === 'refresh'}
+        revalidating={status.status === 'refreshing'}
+        onSync={() => { void sync() }}
+        syncing={(syncingRepo !== null && syncingRepo === state.repo) || refreshing === 'sync'}
+        notice={notice}
         t={t}
         locale={locale}
       />
-      {notice === null ? null : <p className="vcs-notice" role="alert">{notice}</p>}
       {repositories.truncated ? <p className="vcs-note">{t('repositories.truncated', { count: formatCount(repositories.list.length, locale) })}</p> : null}
       {repositories.status === 'loading' ? (
-        <div className="vcs-center"><Spinner label={t('loading.repositories')} /><p className="vcs-note">{t('loading.repositories')}</p></div>
+        // Nothing is known yet, not even the backend: draw both columns as
+        // they will be, so the panel settles in place instead of popping in.
+        <div className="vcs-main">
+          <section
+            className="vcs-sidebar vcs-sidebar-loading"
+            style={narrow ? undefined : { width: `${state.sidebarWidth}px` }}
+          >
+            <TimelineSkeleton rowHeight={ROW_HEIGHT} label={t('loading.repositories')} />
+          </section>
+          {narrow ? null : <section className="vcs-content"><TreeSkeleton /></section>}
+        </div>
       ) : state.repo === null ? (
         <div className="vcs-center">
           <p className="vcs-empty-title">{t('empty.repository')}</p>
@@ -717,7 +772,7 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
           {showDetail ? (
             <section className="vcs-content">
               {state.node === null ? (
-                <div className="vcs-center"><Spinner label={t('changes.loading')} /></div>
+                <TreeSkeleton label={t('changes.loading')} />
               ) : (
                 <DetailPane
                   key={`${state.repo}|${state.node}`}

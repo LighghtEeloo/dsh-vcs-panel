@@ -286,7 +286,12 @@ test('FileDiff renders loading and missing states through t', () => {
   const calls = []
   const loading = renderFileDiff({ state: 'loading', split: false, wrap: false, retry() {}, t: tFor(calls) })
   assert.equal(hasClass(loading, 'vcs-diff-root'), true)
-  assert.equal(findByClass(loading, 'vcs-diff-status').props.role, 'status')
+  // Loading draws the outline of a comparison; only its label reaches the text.
+  const shape = findByClass(loading, 'vcs-diff-skeleton')
+  assert.equal(shape.props.role, 'status')
+  assert.equal(shape.props['aria-busy'], 'true')
+  assert.equal(hasClass(shape, 'vcs-skeleton'), true, 'it shares the delayed fade-in')
+  assert.equal(findByClass(loading, 'vcs-diff-status'), undefined, 'no status sentence is shown')
   assert.equal(textOf(loading), 'diff.loading')
 
   const undefinedState = renderFileDiff({ state: undefined, split: false, wrap: false, retry() {}, t: tFor(calls) })

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Panel de control de versiones",
-    "description": "Añade a cada conversación una vista de control de versiones de solo lectura para repositorios Git y Jujutsu: cambios en curso con sus diferencias de archivo, historial de commits con un gráfico de carriles y detalle de cada commit. No indexa, confirma, descarga, sube ni reescribe commits o marcadores. Jujutsu puede capturar la copia de trabajo al leer."
+    "description": "Añade a cada conversación una vista de control de versiones para repositorios Git y Jujutsu: cambios en curso con sus diferencias de archivo, historial de commits con un gráfico de carriles y detalle de cada commit. Explorar es de solo lectura; un botón Sincronizar hace fetch del upstream de una rama Git y luego avance rápido o push. No indexa, confirma, fusiona, rebasa, fuerza el push ni reescribe commits o marcadores. Jujutsu puede capturar la copia de trabajo al leer."
   }
 }

@@ -1,5 +1,5 @@
 /**
- * Browser data layer for the read-only Host routes.
+ * Browser data layer for the Host routes: the reads and the one sync write.
  *
  * One instance serves one Session: every request carries the Session identity
  * and the repository the panel currently shows. Requests are cancellable with
@@ -58,25 +58,12 @@ function toAbortError(error) {
  */
 export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' } = {}) {
   /**
-   * One JSON request.
-   * @param {string} path - exact Host route path.
-   * @param {Record<string, string | number | undefined | null>} params - query values.
+   * Decode one Host answer, turning a non-2xx status into an {@link ApiError}.
+   * @param {Response} response - the transport answer.
    * @param {AbortSignal} [signal] - cancellation.
-   * @returns {Promise<unknown>} the decoded body.
+   * @returns {Promise<object>} the decoded body.
    */
-  async function get(path, params, signal) {
-    let response
-    try {
-      response = await fetchImpl(`${base}${path}${queryString({ sessionId, ...params })}`, {
-        method: 'GET',
-        credentials: 'same-origin',
-        cache: 'no-store',
-        signal,
-      })
-    } catch (error) {
-      if (isAborted(error, signal)) throw toAbortError(error)
-      throw new ApiError('network', 'The version control panel could not reach the Host.', 0)
-    }
+  async function decode(response, signal) {
     let body = null
     let bodyFailed = false
     try {
@@ -97,6 +84,52 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
       throw new ApiError('internal', 'The version control response could not be read.', response.status)
     }
     return body
+  }
+
+  /**
+   * One JSON read.
+   * @param {string} path - exact Host route path.
+   * @param {Record<string, string | number | undefined | null>} params - query values.
+   * @param {AbortSignal} [signal] - cancellation.
+   * @returns {Promise<unknown>} the decoded body.
+   */
+  async function get(path, params, signal) {
+    let response
+    try {
+      response = await fetchImpl(`${base}${path}${queryString({ sessionId, ...params })}`, {
+        method: 'GET',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        signal,
+      })
+    } catch (error) {
+      if (isAborted(error, signal)) throw toAbortError(error)
+      throw new ApiError('network', 'The version control panel could not reach the Host.', 0)
+    }
+    return decode(response, signal)
+  }
+
+  /**
+   * One JSON write. It carries no AbortSignal: once sent, the Host finishes it
+   * even if the panel goes away.
+   * @param {string} path - exact Host route path.
+   * @param {Record<string, string>} values - body values besides the Session.
+   * @returns {Promise<unknown>} the decoded body.
+   */
+  async function post(path, values) {
+    let response
+    try {
+      response = await fetchImpl(`${base}${path}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId, ...values }),
+      })
+    } catch {
+      throw new ApiError('network', 'The version control panel could not reach the Host.', 0)
+    }
+    return decode(response)
   }
 
   return {
@@ -178,6 +211,16 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
      */
     turn(turn, seq, signal) {
       return get('/api/vcs.turn', { turn, seq }, signal)
+    },
+
+    /**
+     * Bring the checked-out branch level with its upstream: fetch, then
+     * fast-forward or push.
+     * @param {string} repo - repository root.
+     * @returns {Promise<{ upstream: string, pulled: number, pushed: number }>} what moved.
+     */
+    sync(repo) {
+      return post('/api/vcs.sync', { repo })
     },
   }
 }

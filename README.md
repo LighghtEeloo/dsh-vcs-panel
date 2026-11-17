@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-Read-only version control inside DeepSeek Harness conversations. Adds a `VCS` tab to inspect working changes, syntax-highlighted diffs, and commit history with a lane graph—for both **Git** and **Jujutsu** repositories.
+Version control inside DeepSeek Harness conversations. Adds a `VCS` tab to inspect working changes, syntax-highlighted diffs, and commit history with a lane graph—for both **Git** and **Jujutsu** repositories—and to sync a Git branch with its upstream in one click.
 
 ## Features
 
@@ -10,7 +10,8 @@ Read-only version control inside DeepSeek Harness conversations. Adds a `VCS` ta
 - **Inline change tree.** Browse changed files as a collapsible list, or expand any file to read its diff in place with sticky headers, unified or split view, and line wrapping.
 - **Git & Jujutsu native.** Shows staged and unstaged groups (`?` for untracked items) and ahead/behind in Git; shows `@`, change IDs, and bookmarks in Jujutsu.
 - **Turn banner & shortcut.** File-changing turns end with a compact VCS banner showing that turn's branch (or `@`), changed-file count, and `+` / `−` line totals in place of Chat's changed-files card. Toggle `VCS` from anywhere with `⌘⇧G` / `Ctrl+Shift+G`.
-- **Strictly read-only.** Reads repository state only; never stages, commits, fetches, or rewrites history (Jujutsu only snapshots the working copy on read). Follows DSH themes and all 8 UI languages, and loads large histories and diffs on demand.
+- **One-click sync.** The button beside the Git branch shows ahead/behind counts; clicking it fetches the upstream, then fast-forwards or pushes. A diverged branch, a fast-forward that would overwrite local edits, or a branch without an upstream is left untouched with a note on what to do next.
+- **Read-only otherwise.** Sync is the only write: the panel never stages, commits, merges, rebases, force-pushes, or rewrites history (Jujutsu only snapshots the working copy on read). Follows DSH themes and all 8 UI languages, and loads large histories and diffs on demand.
 
 ## Keyboard
 

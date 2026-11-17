@@ -1,12 +1,14 @@
 /**
  * Host half of `dsh-vcs-panel`.
  *
- * Seven authenticated, read-only `/api/vcs.*` routes expose one repository's
+ * Seven authenticated read routes under `/api/vcs.*` expose one repository's
  * working changes, a single file's hunks, its history, and each turn's
- * recorded head and change totals. The backend is chosen by the repository's
- * marker (Jujutsu or Git) and runs through the injected subprocess service
- * with fixed argv; no route stages, commits, checks out, or otherwise rewrites
- * commits or bookmarks.
+ * recorded head and change totals. One write route, `POST /api/vcs.sync`,
+ * brings a Git branch level with its upstream by fetching and then either
+ * fast-forwarding or pushing; nothing stages, commits, checks out, merges,
+ * rebases, force-pushes, or rewrites bookmarks. The backend is chosen by the
+ * repository's marker (Jujutsu or Git) and runs through the injected
+ * subprocess service with fixed argv.
  */
 
 import { createHandlers } from './lib/handlers.js'
@@ -22,15 +24,21 @@ export { createTurnTracker } from './lib/turns.js'
  */
 export const inject = ['connection', 'sessions', 'subprocess', 'fs']
 
-/** One entry per registered route, in the order the client asks for them. */
+/**
+ * One entry per registered route, in the order the client asks for them.
+ * A read follows the browser request and stops when the browser leaves; the
+ * write runs to completion once started, bounded only by the plugin lifetime,
+ * so a closed tab never cuts a push or fast-forward short.
+ */
 const ROUTES = [
-  ['/api/vcs.repositories', 'repositories'],
-  ['/api/vcs.status', 'status'],
-  ['/api/vcs.untracked', 'untracked'],
-  ['/api/vcs.diff', 'diff'],
-  ['/api/vcs.log', 'log'],
-  ['/api/vcs.commit', 'commit'],
-  ['/api/vcs.turn', 'turn'],
+  { path: '/api/vcs.repositories', key: 'repositories', method: 'GET' },
+  { path: '/api/vcs.status', key: 'status', method: 'GET' },
+  { path: '/api/vcs.untracked', key: 'untracked', method: 'GET' },
+  { path: '/api/vcs.diff', key: 'diff', method: 'GET' },
+  { path: '/api/vcs.log', key: 'log', method: 'GET' },
+  { path: '/api/vcs.commit', key: 'commit', method: 'GET' },
+  { path: '/api/vcs.turn', key: 'turn', method: 'GET' },
+  { path: '/api/vcs.sync', key: 'sync', method: 'POST' },
 ]
 
 /**
@@ -44,7 +52,7 @@ export function normalizeConfig(raw) {
 }
 
 /**
- * Register the read-only routes and per-turn head observer inside Connection's
+ * Register the routes and per-turn head observer inside Connection's
  * authentication fence.
  * @param {object} ctx - Host context carrying every injected service.
  * @param {unknown} config - the row config.
@@ -62,15 +70,17 @@ export function apply(ctx, config) {
 
   const handlers = createHandlers(ctx, { backends, turnTracker })
 
-  for (const [path, key] of ROUTES) {
+  for (const { path, key, method } of ROUTES) {
     ctx.effect(
       () => ctx.connection.fetch.register({
         path,
-        methods: ['GET'],
+        methods: [method],
         requestBody: 'buffered',
         fetch: async request => handlers[key](
           new Request(request, {
-            signal: AbortSignal.any([request.signal, lifetime.signal]),
+            signal: method === 'GET'
+              ? AbortSignal.any([request.signal, lifetime.signal])
+              : lifetime.signal,
           }),
         ),
       }),

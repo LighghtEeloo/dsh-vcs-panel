@@ -1529,7 +1529,7 @@ test('Jujutsu shared snapshot survives one caller aborting and cancels when all 
   assert.equal(snapshotAborted, 1)
 })
 
-test('apply registers all seven GET routes inside the fence and honors enabled: false', async () => {
+test('apply registers seven GET routes and the POST sync route inside the fence and honors enabled: false', async () => {
   const routes = []
   const ctx = {
     sessions: { get: id => sessions.get(id) },
@@ -1559,9 +1559,10 @@ test('apply registers all seven GET routes inside the fence and honors enabled: 
     '/api/vcs.log',
     '/api/vcs.commit',
     '/api/vcs.turn',
+    '/api/vcs.sync',
   ])
   for (const registered of routes) {
-    assert.deepEqual(registered.methods, ['GET'])
+    assert.deepEqual(registered.methods, registered.path === '/api/vcs.sync' ? ['POST'] : ['GET'])
     assert.equal(registered.requestBody, 'buffered')
   }
 
@@ -1571,6 +1572,26 @@ test('apply registers all seven GET routes inside the fence and honors enabled: 
   ))
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('cache-control'), 'no-store')
+
+  // A read stops with the browser; the write keeps going once it has started.
+  const left = new AbortController()
+  left.abort()
+  await assert.rejects(
+    statusRoute.fetch(new Request(
+      `http://127.0.0.1${route('/api/vcs.status', { sessionId: 's-main', repo: mainPath })}`,
+      { signal: left.signal },
+    )),
+    error => error.name === 'AbortError',
+  )
+  const syncRoute = routes.find(r => r.path === '/api/vcs.sync')
+  const syncResponse = await syncRoute.fetch(new Request('http://127.0.0.1/api/vcs.sync', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: 's-main', repo: mainPath }),
+    signal: left.signal,
+  }))
+  assert.equal(syncResponse.status, 409)
+  assert.equal((await syncResponse.json()).error.code, 'no-upstream')
 
   const disabled = []
   apply({
@@ -1836,4 +1857,238 @@ test('every route is read-only: repository state is identical after all requests
     else throw error
   }
   assert.equal(lockExists, false)
+})
+
+// Sync ----------------------------------------------------------------------
+
+/**
+ * Build one bare remote with two clones of `main`: `local` is the repository
+ * the panel syncs, `peer` stands for everyone else pushing to the remote.
+ * @param {string} name - scratch subdirectory.
+ * @returns {{ remote: string, local: string, peer: string, sessionId: string, handlers: object }} the fixture.
+ */
+function buildSyncFixture(name) {
+  const base = join(fixture.scratch, name)
+  const remote = join(base, 'remote.git')
+  const seed = join(base, 'seed')
+  mkdirSync(base, { recursive: true })
+  git(base, ['init', '-q', '--bare', '-b', 'main', remote])
+  initRepo(seed)
+  writeFileSync(join(seed, 'file.txt'), 'base\n')
+  git(seed, ['add', '-A'])
+  git(seed, ['commit', '-qm', 'base'])
+  git(seed, ['push', '-q', remote, 'main'])
+
+  const clone = target => {
+    git(base, ['clone', '-q', remote, target])
+    git(target, ['config', 'user.email', 'test@example.com'])
+    git(target, ['config', 'user.name', 'Test User'])
+    git(target, ['config', 'commit.gpgsign', 'false'])
+    return target
+  }
+  const local = clone(join(base, 'local'))
+  const peer = clone(join(base, 'peer'))
+  const sessionId = `s-sync-${name}`
+  const syncSessions = new Map([[sessionId, { header: { cwd: local } }]])
+  const syncHandlers = createHandlers(createHost({ sessions: { get: id => syncSessions.get(id) } }))
+  return { remote, local, peer, sessionId, handlers: syncHandlers }
+}
+
+/** Commit one line to `file` in a clone. */
+function commitLine(repo, file, text) {
+  writeFileSync(join(repo, file), text)
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-qm', `edit ${file}`])
+}
+
+/**
+ * POST one sync request.
+ * @param {Function} handler - the sync handler.
+ * @param {unknown} body - JSON body, or a raw string.
+ * @param {Record<string, string>} [headers] - request headers.
+ * @param {string} [method] - HTTP method.
+ */
+async function postSync(handler, body, headers = { 'content-type': 'application/json' }, method = 'POST') {
+  const response = await handler(new Request('http://127.0.0.1/api/vcs.sync', {
+    method,
+    headers,
+    body: method === 'GET' ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)),
+  }))
+  return { status: response.status, body: await response.json() }
+}
+
+test('sync pushes commits the upstream lacks, then fast-forwards commits it gained, then reports level', async () => {
+  const sync = buildSyncFixture('sync-flow')
+  const repoPath = realpathSync(sync.local)
+  const body = { sessionId: sync.sessionId, repo: repoPath }
+
+  commitLine(sync.local, 'file.txt', 'base\nlocal\n')
+  const localHead = git(sync.local, ['rev-parse', 'HEAD'])
+  const pushed = await postSync(sync.handlers.sync, body)
+  assert.equal(pushed.status, 200)
+  assert.deepEqual(pushed.body, { upstream: 'origin/main', pulled: 0, pushed: 1 })
+  assert.equal(git(sync.remote, ['rev-parse', 'main']), localHead)
+
+  git(sync.peer, ['pull', '-q', '--ff-only'])
+  commitLine(sync.peer, 'other.txt', 'peer\n')
+  commitLine(sync.peer, 'other.txt', 'peer\nagain\n')
+  git(sync.peer, ['push', '-q', 'origin', 'main'])
+  const peerHead = git(sync.peer, ['rev-parse', 'HEAD'])
+  // An unrelated working-tree edit rides along a fast-forward untouched.
+  writeFileSync(join(sync.local, 'file.txt'), 'base\nlocal\nuncommitted\n')
+  const pulled = await postSync(sync.handlers.sync, body)
+  assert.equal(pulled.status, 200)
+  assert.deepEqual(pulled.body, { upstream: 'origin/main', pulled: 2, pushed: 0 })
+  assert.equal(git(sync.local, ['rev-parse', 'HEAD']), peerHead)
+  assert.equal(await readFile(join(sync.local, 'file.txt'), 'utf8'), 'base\nlocal\nuncommitted\n')
+
+  const level = await postSync(sync.handlers.sync, body)
+  assert.equal(level.status, 200)
+  assert.deepEqual(level.body, { upstream: 'origin/main', pulled: 0, pushed: 0 })
+  assert.equal(git(sync.remote, ['rev-parse', 'main']), peerHead)
+})
+
+test('sync leaves a diverged branch and a blocked fast-forward exactly as they were', async () => {
+  const sync = buildSyncFixture('sync-refuse')
+  const body = { sessionId: sync.sessionId, repo: realpathSync(sync.local) }
+
+  commitLine(sync.peer, 'file.txt', 'base\npeer\n')
+  git(sync.peer, ['push', '-q', 'origin', 'main'])
+  const remoteHead = git(sync.remote, ['rev-parse', 'main'])
+
+  // Behind only, but the incoming change touches a file edited locally.
+  writeFileSync(join(sync.local, 'file.txt'), 'base\nmine\n')
+  const localHead = git(sync.local, ['rev-parse', 'HEAD'])
+  const blocked = await postSync(sync.handlers.sync, body)
+  assert.equal(blocked.status, 409)
+  assert.equal(blocked.body.error.code, 'pull-blocked')
+  assert.equal(git(sync.local, ['rev-parse', 'HEAD']), localHead)
+  assert.equal(await readFile(join(sync.local, 'file.txt'), 'utf8'), 'base\nmine\n')
+
+  // Ahead and behind: nothing merges, rebases, or pushes.
+  git(sync.local, ['checkout', '-q', '--', 'file.txt'])
+  commitLine(sync.local, 'local.txt', 'local\n')
+  const divergedHead = git(sync.local, ['rev-parse', 'HEAD'])
+  const diverged = await postSync(sync.handlers.sync, body)
+  assert.equal(diverged.status, 409)
+  assert.equal(diverged.body.error.code, 'diverged')
+  assert.equal(git(sync.local, ['rev-parse', 'HEAD']), divergedHead)
+  assert.equal(git(sync.remote, ['rev-parse', 'main']), remoteHead)
+})
+
+test('sync reports a push or fetch the remote refused without moving either side', async () => {
+  // A remote hook declining the update.
+  const declined = buildSyncFixture('sync-declined')
+  writeFileSync(join(declined.remote, 'hooks', 'pre-receive'), '#!/bin/sh\necho "protected" >&2\nexit 1\n', { mode: 0o755 })
+  commitLine(declined.local, 'local.txt', 'local\n')
+  const before = git(declined.remote, ['rev-parse', 'main'])
+  const refused = await postSync(declined.handlers.sync, { sessionId: declined.sessionId, repo: realpathSync(declined.local) })
+  assert.equal(refused.status, 502)
+  assert.equal(refused.body.error.code, 'remote-failed')
+  assert.equal(git(declined.remote, ['rev-parse', 'main']), before)
+
+  // A remote that cannot be reached fails the fetch the same way.
+  git(declined.local, ['remote', 'set-url', 'origin', join(fixture.scratch, 'missing-remote.git')])
+  const unreachable = await postSync(declined.handlers.sync, { sessionId: declined.sessionId, repo: realpathSync(declined.local) })
+  assert.equal(unreachable.status, 502)
+  assert.equal(unreachable.body.error.code, 'remote-failed')
+  assert.equal(JSON.stringify(unreachable.body).includes(fixture.scratch), false)
+})
+
+test('sync needs a checked-out branch with an upstream', async () => {
+  const sync = buildSyncFixture('sync-upstream')
+  const body = { sessionId: sync.sessionId, repo: realpathSync(sync.local) }
+
+  git(sync.local, ['checkout', '-qb', 'topic'])
+  commitLine(sync.local, 'topic.txt', 'topic\n')
+  const untracked = await postSync(sync.handlers.sync, body)
+  assert.equal(untracked.status, 409)
+  assert.equal(untracked.body.error.code, 'no-upstream')
+  assert.equal(git(sync.remote, ['branch', '--list', 'topic']), '')
+
+  git(sync.local, ['checkout', '-q', '--detach'])
+  const detached = await postSync(sync.handlers.sync, body)
+  assert.equal(detached.status, 409)
+  assert.equal(detached.body.error.code, 'no-upstream')
+})
+
+test('sync accepts only same-origin JSON POSTs for a discovered repository it can sync', async () => {
+  const sync = buildSyncFixture('sync-request')
+  const body = { sessionId: sync.sessionId, repo: realpathSync(sync.local) }
+  commitLine(sync.local, 'local.txt', 'local\n')
+  const remoteHead = git(sync.remote, ['rev-parse', 'main'])
+
+  const cases = [
+    [await postSync(sync.handlers.sync, body, { 'content-type': 'application/json' }, 'GET'), 400, 'bad-request'],
+    [await postSync(sync.handlers.sync, body, { 'content-type': 'text/plain' }), 400, 'bad-request'],
+    [await postSync(sync.handlers.sync, body, { 'content-type': 'application/x-www-form-urlencoded' }), 400, 'bad-request'],
+    [await postSync(sync.handlers.sync, body, { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' }), 403, 'forbidden'],
+    [await postSync(sync.handlers.sync, body, { 'content-type': 'application/json', 'sec-fetch-site': 'same-site' }), 403, 'forbidden'],
+    [await postSync(sync.handlers.sync, '{not json'), 400, 'bad-request'],
+    [await postSync(sync.handlers.sync, [body]), 400, 'bad-request'],
+    [await postSync(sync.handlers.sync, { sessionId: sync.sessionId }), 400, 'bad-request'],
+    [await postSync(sync.handlers.sync, { ...body, sessionId: 's-missing' }), 409, 'no-session'],
+    [await postSync(sync.handlers.sync, { ...body, repo: plainPath }), 400, 'not-a-repo'],
+  ]
+  for (const [answer, status, code] of cases) {
+    assert.equal(answer.status, status, code)
+    assert.equal(answer.body.error.code, code)
+  }
+  assert.equal(git(sync.remote, ['rev-parse', 'main']), remoteHead)
+
+  const accepted = await postSync(sync.handlers.sync, body, {
+    'content-type': 'application/json; charset=utf-8',
+    'sec-fetch-site': 'same-origin',
+  })
+  assert.equal(accepted.status, 200)
+  assert.equal(accepted.body.pushed, 1)
+})
+
+test('sync is refused for a backend without the capability', { skip: !HAS_JJ }, async () => {
+  const before = jj(fixture.jj, ['op', 'log', '--no-graph', '-T', 'id', '--limit', '1'])
+  const answer = await postSync(handlers.sync, { sessionId: 's-jj', repo: jjPath })
+  assert.equal(answer.status, 400)
+  assert.equal(answer.body.error.code, 'bad-request')
+  assert.equal(jj(fixture.jj, ['op', 'log', '--no-graph', '-T', 'id', '--limit', '1']), before)
+})
+
+test('a second sync of the same repository is refused while the first runs', async () => {
+  const { createBackends } = await import('../lib/vcs/index.js')
+  const host = createHost()
+  const real = createBackends(host)
+  let release
+  let started = 0
+  const gate = new Promise(resolve => { release = resolve })
+  const gated = Object.create(real.get('git'))
+  gated.sync = async () => {
+    started += 1
+    await gate
+    return { upstream: 'origin/main', pulled: 0, pushed: 0 }
+  }
+  const gatedHandlers = createHandlers(host, {
+    backends: { get: id => (id === 'git' ? gated : real.get(id)), list: () => real.list() },
+  })
+  const body = { sessionId: 's-main', repo: mainPath }
+
+  const first = postSync(gatedHandlers.sync, body)
+  while (started === 0) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const second = await postSync(gatedHandlers.sync, body)
+  assert.equal(second.status, 409)
+  assert.equal(second.body.error.code, 'busy')
+  release()
+  assert.equal((await first).status, 200)
+
+  // The lock is released with the answer, so the next sync runs.
+  const third = await postSync(gatedHandlers.sync, body)
+  assert.equal(third.status, 200)
+  assert.equal(started, 2)
+})
+
+test('sync diagnostics keep the last stderr lines and drop URL credentials', async () => {
+  const { redactDetail } = await import('../lib/sync.js')
+  assert.equal(
+    redactDetail('hint: one\n\nfatal: unable to access \'https://user:token@example.com/repo.git/\'\nfatal: two\nfatal: three\n'),
+    "fatal: unable to access 'https://***@example.com/repo.git/' | fatal: two | fatal: three",
+  )
+  assert.equal(redactDetail(''), '')
 })

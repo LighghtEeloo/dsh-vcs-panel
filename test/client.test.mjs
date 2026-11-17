@@ -7,6 +7,7 @@ import {
 } from '../src/client/state.js'
 import {
   errorMessage, formatCommitTime, formatCount, formatDateTime, lineCounts, shortChangeId, shortSha, splitPath, statusKey,
+  syncMessage,
 } from '../src/client/format.js'
 import {
   buildNodeRows, buildRows, dirKey, isRowKey, rowBodyId, sectionKey, summarizeEntries,
@@ -389,6 +390,55 @@ test('createApi builds exact Host routes', async () => {
   assert.match(calls[5], /sha=abc1234/)
   assert.equal(calls[6], '/api/vcs.turn?sessionId=session+1&turn=3&seq=42')
   assert.equal(calls[7], '/api/vcs.turn?sessionId=session+1&turn=4')
+})
+
+test('createApi sends sync as an uncancellable same-origin JSON POST and maps its refusals', async () => {
+  const calls = []
+  const api = createApi('session 1', {
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init })
+      return { ok: true, async json() { return { upstream: 'origin/main', pulled: 0, pushed: 2 } } }
+    },
+  })
+  assert.deepEqual(await api.sync('/repo'), { upstream: 'origin/main', pulled: 0, pushed: 2 })
+  assert.equal(calls.length, 1)
+  const [{ url, init }] = calls
+  assert.equal(url, '/api/vcs.sync', 'the session and repository travel in the body, not the URL')
+  assert.equal(init.method, 'POST')
+  assert.equal(init.credentials, 'same-origin')
+  assert.equal(init.headers['content-type'], 'application/json')
+  assert.deepEqual(JSON.parse(init.body), { sessionId: 'session 1', repo: '/repo' })
+  assert.equal(init.signal, undefined, 'leaving the panel does not cut a push short')
+
+  const diverged = createApi('s', {
+    fetchImpl: async () => ({
+      ok: false,
+      status: 409,
+      async json() { return { error: { code: 'diverged', message: 'The branch and its upstream have diverged.' } } },
+    }),
+  })
+  await assert.rejects(diverged.sync('/r'), error => {
+    assert.ok(error instanceof ApiError)
+    assert.equal(error.code, 'diverged')
+    assert.equal(error.status, 409)
+    return true
+  })
+
+  const offline = createApi('s', { fetchImpl: async () => { throw new TypeError('offline') } })
+  await assert.rejects(offline.sync('/r'), error => error.code === 'network')
+})
+
+test('syncMessage names what moved, preferring the push, and reports a level branch', () => {
+  const t = (key, vars) => `${key}:${JSON.stringify(vars ?? {})}`
+  assert.equal(syncMessage(t, { upstream: 'origin/main', pulled: 0, pushed: 1 }), 'sync.pushedOne:{"upstream":"origin/main"}')
+  assert.equal(
+    syncMessage(t, { upstream: 'origin/main', pulled: 0, pushed: 1200 }, 'en-US'),
+    'sync.pushedMany:{"upstream":"origin/main","count":"1,200"}',
+  )
+  assert.equal(syncMessage(t, { upstream: 'up/x', pulled: 1, pushed: 0 }), 'sync.pulledOne:{"upstream":"up/x"}')
+  assert.equal(syncMessage(t, { upstream: 'up/x', pulled: 3, pushed: 0 }, 'en-US'), 'sync.pulledMany:{"upstream":"up/x","count":"3"}')
+  assert.equal(syncMessage(t, { upstream: 'up/x', pulled: 0, pushed: 0 }), 'sync.level:{"upstream":"up/x"}')
+  assert.equal(syncMessage(t, { pushed: -1, pulled: 'many' }), 'sync.level:{"upstream":""}', 'a malformed answer reads as level')
 })
 
 test('createApi maps failure bodies and transport failures', async () => {

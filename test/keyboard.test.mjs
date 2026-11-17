@@ -1326,6 +1326,16 @@ test('VcsView lands keyboard focus on the timeline and completes deferred detail
         harness.keyDown(harness.document.activeElement, 'ArrowRight')
         await harness.settle()
         assert.notEqual(resolveCommit2, null, 'sha2 commit request is still pending')
+        // While the commit is on its way, the detail draws the outline of its
+        // facts and files: one named status region, no spinner sentence.
+        const facts = harness.document.body.querySelector('.vcs-meta-skeleton')
+        assert.notEqual(facts, null, 'the commit facts draw their outline while loading')
+        assert.equal(facts.attributes.get('role'), 'status')
+        assert.equal(facts.attributes.get('aria-busy'), 'true')
+        const files = harness.document.body.querySelector('.vcs-tree-skeleton')
+        assert.notEqual(files, null, 'the commit files draw tree rows while loading')
+        assert.equal(files.attributes.get('aria-hidden'), 'true', 'the file outline does not repeat the status')
+        assert.equal(harness.document.body.querySelector('.vcs-spinner'), null)
         if (width < 760) {
           const root = harness.document.body.querySelector('.vcs-root')
           assert.equal(root.contains(harness.document.activeElement), true, 'narrow view keeps focus inside the panel while loading')
@@ -1335,6 +1345,8 @@ test('VcsView lands keyboard focus on the timeline and completes deferred detail
         resolveCommit2()
         await harness.settle()
         assert.match(harness.document.activeElement?.dataset?.rowKey ?? '', /^commit\|src/u)
+        assert.equal(harness.document.body.querySelector('.vcs-meta-skeleton'), null, 'the outline gives way to the facts')
+        assert.equal(harness.document.body.querySelector('.vcs-tree-skeleton'), null)
       } finally {
         globalThis.fetch = savedFetch
       }
@@ -1503,6 +1515,133 @@ test('rapid keyboard commit switching while commit and diff bodies abort never t
       globalThis.fetch = savedFetch
     }
   } finally {
+    harness.unmount()
+    restore()
+  }
+})
+
+test('VcsView keeps one icon turning from a sync click until its refresh returns, with both buttons focusable', async () => {
+  const harness = createHarness()
+  const restore = harness.installGlobals()
+  // Record the rotations `Turning` plays; the fake DOM has no compositor.
+  const played = []
+  FakeElement.prototype.animate = function animate(keyframes, options) {
+    const animation = { element: this, keyframes, options, startTime: null, cancelled: false, cancel() { this.cancelled = true } }
+    played.push(animation)
+    return animation
+  }
+  const playedOn = element => played.filter(animation => animation.element === element)
+  try {
+    const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+    const sha = 'c'.repeat(40)
+    let statusCalls = 0
+    let releaseStatus = null
+    let releaseSync = null
+    const json = body => ({ ok: true, status: 200, async json() { return body } })
+    const fetchImpl = async (url, init) => {
+      const parsed = new URL(url, 'http://127.0.0.1')
+      if (parsed.pathname === '/api/vcs.repositories') {
+        return json({
+          cwd: '/repo',
+          truncated: false,
+          repositories: [{ path: '/repo', name: 'repo', enclosing: true, vcs: 'git', capabilities: GIT_CAPABILITIES }],
+        })
+      }
+      if (parsed.pathname === '/api/vcs.status') {
+        statusCalls += 1
+        const ahead = statusCalls === 1 ? 2 : 0
+        if (statusCalls > 1) await new Promise(resolve => { releaseStatus = resolve })
+        return json({
+          repo: { path: '/repo', name: 'repo' },
+          vcs: 'git',
+          capabilities: GIT_CAPABILITIES,
+          defaultNode: sha,
+          branch: { name: 'main', oid: sha, detached: false, unborn: false, upstream: 'origin/main', ahead, behind: 0 },
+          groups: { staged: [], unstaged: [], untracked: [] },
+          total: 0,
+          truncated: false,
+        })
+      }
+      if (parsed.pathname === '/api/vcs.sync') {
+        assert.equal(init.method, 'POST')
+        await new Promise(resolve => { releaseSync = resolve })
+        return json({ upstream: 'origin/main', pulled: 0, pushed: 2 })
+      }
+      if (parsed.pathname === '/api/vcs.log') {
+        return json({
+          truncated: false,
+          nextSkip: null,
+          commits: [{ sha, parents: [], refs: [{ name: 'main', kind: 'branch', current: true }], author: 'Ada', authorTime: 1_700_000_000_000, subject: 'only' }],
+        })
+      }
+      if (parsed.pathname === '/api/vcs.commit') {
+        return json({
+          truncated: false,
+          commit: { sha, parents: [], refs: [], author: 'Ada', authorTime: 1_700_000_000_000, committer: 'Ada', committerTime: 1_700_000_000_000, subject: 'only', message: '', files: [] },
+        })
+      }
+      return json({ kind: 'text', path: 'a.js', before: true, after: true, hunks: [] })
+    }
+
+    const savedFetch = globalThis.fetch
+    globalThis.fetch = fetchImpl
+    try {
+      harness.mount(harness.react.createElement(VcsView, { sessionId: 'session-sync', t, locale: 'en-US' }))
+      await harness.settle()
+
+      const body = harness.document.body
+      const syncButton = body.querySelector('.vcs-sync')
+      const refreshButton = body.querySelector('[aria-label="top.refresh"]')
+      const progress = body.querySelector('.vcs-progress')
+      assert.notEqual(syncButton, null, 'a branch with an upstream shows the sync button')
+      const [syncIcon] = syncButton.querySelectorAll('.vcs-turning')
+      const [refreshIcon] = refreshButton.querySelectorAll('.vcs-turning')
+      assert.equal(played.length, 0, 'icons at rest play nothing')
+      assert.equal(progress.attributes.get('data-sweeping'), undefined)
+
+      syncButton.props.onClick()
+      await harness.settle()
+      assert.notEqual(releaseSync, null, 'the sync request is on its way')
+      assert.equal(syncButton.attributes.get('aria-busy'), 'true')
+      assert.equal(syncButton.attributes.get('disabled'), undefined, 'a busy sync button keeps focus')
+      assert.equal(progress.attributes.get('data-busy'), 'true')
+      const turning = playedOn(syncIcon)
+      assert.equal(turning.length, 2, 'the sync icon spins up, then cruises')
+      assert.deepEqual(turning[0].keyframes.map(frame => frame.transform), ['rotate(0deg)', 'rotate(90deg)'])
+      assert.equal(turning[1].options.iterations, Infinity)
+
+      releaseSync()
+      await harness.settle()
+      assert.notEqual(releaseStatus, null, 'the sync refreshes afterwards')
+      assert.equal(syncButton.attributes.get('aria-busy'), 'true', 'the sync icon keeps turning through its refresh')
+      assert.equal(refreshButton.attributes.get('aria-busy'), undefined, 'the refresh button does not take over')
+      assert.equal(refreshButton.attributes.get('disabled'), undefined)
+      assert.equal(playedOn(refreshIcon).length, 0, 'the refresh icon stays at rest')
+      assert.equal(playedOn(syncIcon).length, 2, 'the spin is not restarted between the sync and its refresh')
+      assert.equal(turning.some(animation => animation.cancelled), false)
+      assert.equal(progress.attributes.get('data-busy'), 'true')
+
+      releaseStatus()
+      await harness.settle()
+      assert.equal(syncButton.attributes.get('aria-busy'), undefined)
+      assert.equal(turning.every(animation => animation.cancelled), true, 'the spin hands over to a glide')
+      const glide = playedOn(syncIcon)[2]
+      assert.notEqual(glide, undefined, 'the sync icon glides to rest instead of snapping back')
+      const target = Number.parseFloat(glide.keyframes[1].transform.slice('rotate('.length))
+      assert.equal(target % 180, 0, 'the glide ends where the two arrows look as at rest')
+      assert.equal(glide.options.iterations, undefined)
+      assert.equal(progress.attributes.get('data-busy'), undefined)
+      assert.equal(progress.attributes.get('data-sweeping'), 'true', 'the progress line fades out with its sweep running')
+      assert.equal(body.querySelector('.vcs-progress'), progress, 'the progress line stays mounted while it fades')
+      await new Promise(resolve => { setTimeout(resolve, 300) })
+      await harness.settle()
+      assert.equal(progress.attributes.get('data-sweeping'), undefined, 'the sweep stops once the fade is over')
+      assert.match(body.querySelector('.vcs-notice')?.props?.children ?? '', /^sync\.pushedMany/u)
+    } finally {
+      globalThis.fetch = savedFetch
+    }
+  } finally {
+    delete FakeElement.prototype.animate
     harness.unmount()
     restore()
   }

@@ -6,6 +6,9 @@
  * segmented choices, ref badges, icons) local, styled with theme tokens.
  */
 
+import { useEffect, useRef } from 'react'
+import { motionAt, PERIOD, REDUCED_PERIOD, segmentEasing, startTurning, stopTurning } from './turning.js'
+
 /** A text button with an optional leading icon. */
 export function Button({ children, onClick, disabled = false, title, className = '', ...rest }) {
   return (
@@ -24,22 +27,107 @@ export function Button({ children, onClick, disabled = false, title, className =
 
 /**
  * A square icon-only button; `label` is its accessible name. A toggle passes
- * `pressed` so assistive technology hears the choice that is on.
+ * `pressed` so assistive technology hears the choice that is on. A `busy`
+ * button ignores clicks while its work runs but keeps focus and full contrast
+ * (`aria-disabled` rather than `disabled`).
  */
-export function IconButton({ label, children, onClick, disabled = false, title, pressed, className = '' }) {
+export function IconButton({ label, children, onClick, disabled = false, busy = false, title, pressed, className = '' }) {
   return (
     <button
       type="button"
       className={`vcs-icon-button ${className}`.trim()}
       aria-label={label}
       aria-pressed={pressed}
+      aria-busy={busy ? 'true' : undefined}
+      aria-disabled={busy ? 'true' : undefined}
       title={title ?? label}
-      onClick={onClick}
+      onClick={busy ? undefined : onClick}
       disabled={disabled}
     >
       {children}
     </button>
   )
+}
+
+/** Milliseconds per turn, slower when the system asks for reduced motion. */
+function turnPeriod() {
+  const reduced = typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  return reduced ? REDUCED_PERIOD : PERIOD
+}
+
+/** One rotation keyframe. */
+function rotation(angle) {
+  return { transform: `rotate(${angle}deg)` }
+}
+
+/**
+ * Play a motion from `start` on the element's timeline.
+ * @param {Element} element - the turning wrapper.
+ * @param {import('./turning.js').Motion} motion - the stretches to play.
+ * @param {number} start - timeline time the motion starts at.
+ * @returns {Animation[]} the running animations.
+ */
+function playMotion(element, motion, start) {
+  const animations = []
+  if (motion.kind === 'gliding') {
+    const { glide } = motion
+    animations.push(element.animate([rotation(glide.from), rotation(glide.to)], {
+      duration: glide.duration,
+      easing: segmentEasing(glide),
+    }))
+  } else {
+    const { spinUp, period } = motion
+    animations.push(element.animate([rotation(spinUp.from), rotation(spinUp.to)], {
+      duration: spinUp.duration,
+      easing: segmentEasing(spinUp),
+      fill: 'forwards',
+    }))
+    // Starts where the spin-up ends; created later, so it wins from then on.
+    animations.push(element.animate([rotation(spinUp.to), rotation(spinUp.to + 360)], {
+      duration: period,
+      delay: spinUp.duration,
+      iterations: Infinity,
+    }))
+  }
+  // Both clocks read the same timeline, so the motion picks up exactly where
+  // the previous one was in the last painted frame.
+  for (const animation of animations) animation.startTime = start
+  return animations
+}
+
+/**
+ * Wrap an icon that turns while `turning` is true. It speeds up from rest
+ * and, when the work ends, glides on to the next angle where it looks as it
+ * does at rest; `restEvery` is that angle's spacing, 180 for a symmetric pair
+ * of arrows. See `turning.js`.
+ * @param {{ turning: boolean, restEvery?: number, children: unknown }} props - turning state and the icon.
+ */
+export function Turning({ turning, restEvery = 360, children }) {
+  const elementRef = useRef(null)
+  // `{ motion, start, animations }` for the motion on screen, or null at rest.
+  const playingRef = useRef(null)
+
+  useEffect(() => {
+    const element = elementRef.current
+    if (element === null || typeof element.animate !== 'function') return
+    const timeline = element.ownerDocument?.timeline
+    const now = typeof timeline?.currentTime === 'number' ? timeline.currentTime : performance.now()
+    const playing = playingRef.current
+    const state = playing === null ? { angle: 0, speed: 0 } : motionAt(playing.motion, now - playing.start)
+    const motion = turning ? startTurning(state, turnPeriod()) : stopTurning(state, restEvery)
+    if (playing !== null) for (const animation of playing.animations) animation.cancel()
+    playingRef.current = motion === null ? null : { motion, start: now, animations: playMotion(element, motion, now) }
+  }, [turning, restEvery])
+
+  useEffect(() => () => {
+    const playing = playingRef.current
+    if (playing !== null) for (const animation of playing.animations) animation.cancel()
+    playingRef.current = null
+  }, [])
+
+  return <span ref={elementRef} className="vcs-turning">{children}</span>
 }
 
 /**
@@ -93,11 +181,6 @@ export function LockIcon() {
   )
 }
 
-/** A small indeterminate progress ring with an accessible label. */
-export function Spinner({ label }) {
-  return <span className="vcs-spinner" role="status" aria-label={label} />
-}
-
 /** Git branch glyph. */
 export function BranchIcon() {
   return (
@@ -115,6 +198,16 @@ export function RefreshIcon() {
   return (
     <svg className="vcs-icon" viewBox="0 0 16 16" aria-hidden="true">
       <path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.6v2.8h-2.8" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+/** Two arrows chasing each other: the branch and its upstream trading commits. */
+export function SyncIcon() {
+  return (
+    <svg className="vcs-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M3 8a5 5 0 0 1 9.33-2.5M12.6 2.7v2.9H9.7" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M13 8a5 5 0 0 1-9.33 2.5M3.4 13.3v-2.9h2.9" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }

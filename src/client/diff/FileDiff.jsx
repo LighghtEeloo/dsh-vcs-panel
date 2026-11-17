@@ -301,6 +301,29 @@ export function isValidDiff(value) {
   return value.kind === 'text' && Array.isArray(value.hunks)
 }
 
+/** Cycled code-line widths (percent) for a comparison still on its way. */
+const SKELETON_LINES = [58, 74, 41, 66, 83, 52]
+
+/**
+ * The outline of a comparison on its way: a hunk header, then numbered code
+ * lines, at the diff's own line height. It is the status region for the
+ * loading comparison and fades in after the shared skeleton delay.
+ * @param {string} label - localized loading label.
+ * @returns {object} the loading shape.
+ */
+function diffSkeleton(label) {
+  const shape = className => h('span', { className: `vcs-skeleton-shape vcs-skeleton-bar ${className}` })
+  return h('div', { className: 'vcs-skeleton vcs-diff-skeleton', role: 'status', 'aria-busy': 'true' },
+    h('span', { className: 'vcs-sr-only' }, label),
+    h('div', { className: 'vcs-diff-skeleton-line vcs-diff-skeleton-hunk' }, shape('vcs-diff-skeleton-header')),
+    ...SKELETON_LINES.map((width, index) => h('div', { key: index, className: 'vcs-diff-skeleton-line' },
+      shape('vcs-diff-skeleton-number'),
+      h('span', {
+        className: 'vcs-skeleton-shape vcs-skeleton-bar',
+        style: { width: `${width}%` },
+      }))))
+}
+
 /**
  * Render a file comparison with the same states, numbering, and layout choices
  * as DSH's built-in `FileDiff`.
@@ -312,7 +335,7 @@ export function isValidDiff(value) {
 export function FileDiff({ state, split, wrap, retry, t, locale }) {
   let content
   if (state === undefined || state === 'loading') {
-    content = h('p', { className: 'vcs-diff-status', role: 'status' }, t('diff.loading'))
+    content = diffSkeleton(t('diff.loading'))
   } else if (state === 'missing') {
     content = h('p', { className: 'vcs-diff-status' }, t('diff.missing'))
   } else if (state === 'error' || !isValidDiff(state)) {

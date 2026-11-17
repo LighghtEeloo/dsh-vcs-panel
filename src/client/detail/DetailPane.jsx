@@ -15,8 +15,9 @@ import { messageBody } from '../history/commits.js'
 import { worktreeSummary } from '../history/timeline.js'
 import {
   BackIcon, BranchIcon, Button, CheckIcon, CompareSplitIcon, CopyIcon, FoldIcon, IconButton,
-  NowrapIcon, RefBadge, Spinner, WrapIcon,
+  NowrapIcon, RefBadge, WrapIcon,
 } from '../ui.jsx'
+import { MetaSkeleton, TreeSkeleton } from '../skeleton.jsx'
 import { buildNodeRows } from './tree.js'
 import {
   SPLIT_MIN_WIDTH, allFileFolds, budgetFolds, commitGroups, commitSummary, comparisonBase,
@@ -65,7 +66,7 @@ function CommitHeader({ commitState, summary, onSelectCommit, isLoaded, onRetry,
           <Button onClick={onRetry}>{t('error.retry')}</Button>
         </div>
       ) : detail === null || detail === undefined ? (
-        <div className="vcs-node-status"><Spinner label={t('commit.loading')} /><span>{t('commit.loading')}</span></div>
+        <MetaSkeleton label={t('commit.loading')} />
       ) : (
         <>
           <dl className="vcs-commit-meta">
@@ -116,7 +117,8 @@ function WorktreeHeader({ status, statusState, statusError, t }) {
     if (statusState === 'error') {
       return <header className="vcs-node-header"><p className="vcs-node-status">{t('changes.error')} {errorMessage(t, statusError)}</p></header>
     }
-    return <header className="vcs-node-header"><div className="vcs-node-status"><Spinner label={t('changes.loading')} /><span>{t('changes.loading')}</span></div></header>
+    // The groups and files are on their way: draw tree rows where they will land.
+    return <TreeSkeleton label={t('changes.loading')} />
   }
   if ((status.total ?? 0) > 0) return null
   return (
@@ -255,6 +257,8 @@ export function DetailPane({
     <>
       {header}
       {isWorktree && status?.truncated === true ? <p className="vcs-note">{t('changes.truncatedMany')}</p> : null}
+      {/* The commit's files arrive with its facts; the facts' shape already speaks for both. */}
+      {!isWorktree && commitState.commit === null && commitState.status !== 'error' ? <TreeSkeleton /> : null}
     </>
   )
 

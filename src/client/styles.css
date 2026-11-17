@@ -116,6 +116,44 @@
   flex: 1;
 }
 
+/* The counts and the action that settles them, as one control. */
+.vcs-sync {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm, 6px);
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.vcs-sync:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.vcs-sync[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.vcs-sync[aria-disabled='true']:not([aria-busy='true']):hover {
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+}
+
+/* Running is not unavailable: keep full contrast and the hover look while the icon turns. */
+.vcs-sync[aria-busy='true'] {
+  opacity: 1;
+}
+
 .vcs-readonly {
   display: inline-flex;
   flex: none;
@@ -829,6 +867,11 @@
   opacity: 0.55;
 }
 
+/* Busy: clicks wait for the work, the look stays as it was when clicked. */
+.vcs-icon-button[aria-busy='true'] {
+  cursor: default;
+}
+
 .vcs-segmented {
   display: inline-flex;
   flex: none;
@@ -868,12 +911,20 @@
   font-size: 11px;
 }
 
+/* The top bar's message: one line that yields width first; the title carries the full text. */
 .vcs-notice {
+  flex: 0 1 auto;
+  min-width: 0;
   margin: 0;
-  padding: 6px 10px;
+  overflow: hidden;
   color: var(--dsw-alias-state-error-primary);
-  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
   font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.vcs-notice-info {
+  color: var(--dsw-alias-label-secondary);
 }
 
 .vcs-center {
@@ -905,22 +956,233 @@
   border: 0;
 }
 
-.vcs-spinner {
-  display: inline-block;
-  width: 13px;
-  height: 13px;
-  border: 1.5px solid color-mix(in srgb, var(--dsw-alias-label-secondary) 35%, transparent);
-  border-top-color: var(--dsw-alias-label-secondary);
-  border-radius: 50%;
-  animation: vcs-spin 0.9s linear infinite;
+/* Loading ------------------------------------------------------------------
+   Waiting draws the outline of what is coming, where it will land; work on
+   content already on screen is one thin bar under the header plus the
+   clicked icon turning. Every loading shape waits out the delay before it
+   fades in, so a quick answer never flashes. */
+
+.vcs-root {
+  --vcs-skeleton-delay: 180ms;
+  --vcs-skeleton-fill: color-mix(in srgb, var(--dsw-alias-label-secondary) 16%, transparent);
 }
 
-@keyframes vcs-spin {
-  to { transform: rotate(360deg); }
+.vcs-skeleton {
+  animation: vcs-appear 160ms ease-out var(--vcs-skeleton-delay) both;
+}
+
+.vcs-skeleton-shape {
+  background: var(--vcs-skeleton-fill);
+  animation: vcs-pulse 1.6s ease-in-out infinite;
+}
+
+.vcs-skeleton-bar {
+  display: block;
+  flex: none;
+  height: 8px;
+  border-radius: 4px;
+}
+
+@keyframes vcs-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes vcs-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Timeline rows: one lane with dots, a subject line, a shorter meta line. */
+.vcs-timeline-skeleton {
+  position: relative;
+}
+
+.vcs-timeline-skeleton-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  padding-right: 16px;
+}
+
+.vcs-skeleton-title {
+  height: 9px;
+}
+
+.vcs-skeleton-meta {
+  height: 7px;
+}
+
+.vcs-skeleton-dot {
+  position: absolute;
+  top: 50%;
+  left: var(--vcs-skeleton-lane);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.vcs-skeleton-lane {
+  position: absolute;
+  top: calc(var(--vcs-skeleton-row) / 2);
+  bottom: calc(var(--vcs-skeleton-row) / 2);
+  left: var(--vcs-skeleton-lane);
+  width: 1.5px;
+  transform: translateX(-50%);
+}
+
+.vcs-timeline-meta-skeleton {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+}
+
+.vcs-timeline-meta-skeleton .vcs-skeleton-bar {
+  height: 7px;
+}
+
+/* Change-tree rows at the tree's own row height. */
+.vcs-tree-skeleton {
+  padding: 4px 0;
+}
+
+.vcs-tree-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  height: var(--vcs-row-height, 28px);
+  padding-right: 12px;
+}
+
+.vcs-skeleton-glyph {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.vcs-skeleton-stat {
+  width: 36px;
+  margin-left: auto;
+}
+
+/* Commit facts: label/value lines, then the message. */
+.vcs-meta-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 6px 0 8px;
+}
+
+.vcs-meta-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.vcs-skeleton-label {
+  width: 56px;
+}
+
+.vcs-meta-skeleton-message {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* A comparison: a hunk header, then numbered code lines at the diff's line height. */
+.vcs-diff-skeleton {
+  padding: 4px 0;
+}
+
+.vcs-diff-skeleton-line {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: var(--vcs-diff-line-height, 20px);
+  padding: 0 12px;
+}
+
+.vcs-diff-skeleton-line .vcs-skeleton-bar {
+  height: 7px;
+}
+
+.vcs-diff-skeleton-number {
+  width: 3ch;
+}
+
+.vcs-diff-skeleton-header {
+  width: 32%;
+}
+
+/* The first page before any repository is known: the sidebar keeps its edge. */
+.vcs-sidebar-loading {
+  border-right: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+/* Work on content already shown: a thin sweep along the header's bottom edge. */
+.vcs-topbar {
+  position: relative;
+}
+
+/* It stays mounted and fades with transitions, which start from the current
+   opacity: work that ends during the fade-in delay never shows, and work that
+   ends mid-sweep fades out with the sweep still moving. The fade-out time is
+   `PROGRESS_FADE` in `TopBar.jsx`. */
+.vcs-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 240ms ease-in;
+}
+
+.vcs-progress[data-busy='true'] {
+  opacity: 1;
+  transition: opacity 160ms ease-out var(--vcs-skeleton-delay);
+}
+
+.vcs-progress[data-sweeping='true']::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 30%;
+  border-radius: 1px;
+  background: var(--dsw-alias-brand-primary);
+  content: '';
+  animation: vcs-sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes vcs-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(340%); }
+}
+
+/* The icon that was clicked turns while its work runs; `Turning` in `ui.jsx`
+   drives the rotation, including reduced motion. */
+.vcs-turning {
+  display: inline-flex;
+  flex: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .vcs-spinner { animation-duration: 2.4s; }
+  .vcs-skeleton-shape { animation: none; }
+  .vcs-progress[data-sweeping='true']::before {
+    width: 100%;
+    opacity: 0.5;
+    animation: none;
+  }
   .vcs-chevron { transition: none; }
 }
 
