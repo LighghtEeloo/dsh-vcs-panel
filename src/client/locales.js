@@ -1029,9 +1029,9 @@ for (const [locale, entries] of Object.entries(CAPABILITY_KEYS)) {
 /**
  * Sync copy, for backends whose capabilities declare `sync`.
  *
- * Sync is the panel's one write, so its copy names exactly what it does
- * (fetch, then fast-forward or push) and what it never does, and every refusal
- * says how to continue.
+ * Sync is one of the panel's two writes, so its copy names exactly what it
+ * does (fetch, then fast-forward or push) and what it never does, and every
+ * refusal says how to continue.
  */
 const SYNC_KEYS = {
   en: {
@@ -1047,7 +1047,7 @@ const SYNC_KEYS = {
     'sync.pulledMany': 'Pulled {count} commits from {upstream}.',
     'sync.level': 'Already in sync with {upstream}.',
     'error.forbidden': 'The request was refused.',
-    'error.busy': 'A sync is already running for this repository.',
+    'error.busy': 'Another write is already running for this repository.',
     'error.noUpstream': 'This branch has no upstream to sync with.',
     'error.diverged': 'The branch and its upstream have diverged. Merge or rebase in a terminal, then sync again.',
     'error.pullBlocked': 'The branch could not be fast-forwarded, usually because local changes would be overwritten. Commit or stash them, then sync again.',
@@ -1066,7 +1066,7 @@ const SYNC_KEYS = {
     'sync.pulledMany': '已从 {upstream} 拉取 {count} 个提交。',
     'sync.level': '已与 {upstream} 同步。',
     'error.forbidden': '请求被拒绝。',
-    'error.busy': '这个仓库正在同步。',
+    'error.busy': '这个仓库正在执行另一项写入。',
     'error.noUpstream': '当前分支没有可同步的上游。',
     'error.diverged': '分支与上游已经分叉。请在终端中合并或变基，然后再同步。',
     'error.pullBlocked': '无法快进分支，通常是因为本地改动会被覆盖。请先提交或贮藏这些改动，然后再同步。',
@@ -1085,7 +1085,7 @@ const SYNC_KEYS = {
     'sync.pulledMany': '{upstream} から {count} 件のコミットをプルしました。',
     'sync.level': '{upstream} と同期済みです。',
     'error.forbidden': 'リクエストは拒否されました。',
-    'error.busy': 'このリポジトリはすでに同期中です。',
+    'error.busy': 'このリポジトリでは別の書き込みが実行中です。',
     'error.noUpstream': 'このブランチには同期先の上流ブランチがありません。',
     'error.diverged': 'ブランチと上流ブランチが分岐しています。ターミナルでマージまたはリベースしてから、もう一度同期してください。',
     'error.pullBlocked': 'ブランチを早送りできませんでした。多くの場合、ローカルの変更が上書きされるためです。コミットまたはスタッシュしてから、もう一度同期してください。',
@@ -1104,7 +1104,7 @@ const SYNC_KEYS = {
     'sync.pulledMany': 'Se trajeron {count} commits de {upstream}.',
     'sync.level': 'Ya está sincronizada con {upstream}.',
     'error.forbidden': 'La solicitud fue rechazada.',
-    'error.busy': 'Ya hay una sincronización en curso para este repositorio.',
+    'error.busy': 'Ya hay otra escritura en curso para este repositorio.',
     'error.noUpstream': 'Esta rama no tiene upstream con el que sincronizar.',
     'error.diverged': 'La rama y su upstream han divergido. Fusiona o rebasa en una terminal y vuelve a sincronizar.',
     'error.pullBlocked': 'No se pudo hacer avance rápido de la rama, normalmente porque se sobrescribirían cambios locales. Haz commit o stash de ellos y vuelve a sincronizar.',
@@ -1123,7 +1123,7 @@ const SYNC_KEYS = {
     'sync.pulledMany': '{count} commits récupérés depuis {upstream}.',
     'sync.level': 'Déjà synchronisée avec {upstream}.',
     'error.forbidden': 'La requête a été refusée.',
-    'error.busy': 'Une synchronisation est déjà en cours pour ce dépôt.',
+    'error.busy': 'Une autre écriture est déjà en cours pour ce dépôt.',
     'error.noUpstream': 'Cette branche n’a pas d’upstream avec lequel se synchroniser.',
     'error.diverged': 'La branche et son upstream ont divergé. Fusionnez ou rebasez dans un terminal, puis synchronisez à nouveau.',
     'error.pullBlocked': 'La branche n’a pas pu avancer rapidement, généralement parce que des modifications locales seraient écrasées. Commitez-les ou mettez-les de côté (stash), puis synchronisez à nouveau.',
@@ -1142,7 +1142,7 @@ const SYNC_KEYS = {
     'sync.pulledMany': '{count} Commits von {upstream} gepullt.',
     'sync.level': 'Bereits synchron mit {upstream}.',
     'error.forbidden': 'Die Anfrage wurde abgelehnt.',
-    'error.busy': 'Für dieses Repository läuft bereits eine Synchronisierung.',
+    'error.busy': 'Für dieses Repository läuft bereits eine andere Schreiboperation.',
     'error.noUpstream': 'Dieser Branch hat keinen Upstream zum Synchronisieren.',
     'error.diverged': 'Branch und Upstream sind auseinandergelaufen. Führen Sie im Terminal einen Merge oder Rebase aus und synchronisieren Sie dann erneut.',
     'error.pullBlocked': 'Der Branch konnte nicht per Fast-Forward aktualisiert werden, meist weil lokale Änderungen überschrieben würden. Committen oder stashen Sie sie und synchronisieren Sie dann erneut.',
@@ -1161,7 +1161,7 @@ const SYNC_KEYS = {
     'sync.pulledMany': 'Коммитов получено из {upstream}: {count}.',
     'sync.level': 'Уже синхронизировано с {upstream}.',
     'error.forbidden': 'Запрос отклонён.',
-    'error.busy': 'Синхронизация этого репозитория уже выполняется.',
+    'error.busy': 'Другая операция записи уже выполняется для этого репозитория.',
     'error.noUpstream': 'У этой ветки нет upstream для синхронизации.',
     'error.diverged': 'Ветка и её upstream разошлись. Выполните слияние или rebase в терминале, затем синхронизируйте снова.',
     'error.pullBlocked': 'Не удалось перемотать ветку вперёд — обычно потому, что локальные изменения были бы перезаписаны. Закоммитьте их или уберите в stash, затем синхронизируйте снова.',
@@ -1180,7 +1180,7 @@ const SYNC_KEYS = {
     'sync.pulledMany': '{count} commits recebidos de {upstream}.',
     'sync.level': 'Já sincronizado com {upstream}.',
     'error.forbidden': 'A solicitação foi recusada.',
-    'error.busy': 'Já há uma sincronização em andamento neste repositório.',
+    'error.busy': 'Já há outra gravação em andamento neste repositório.',
     'error.noUpstream': 'Este branch não tem upstream para sincronizar.',
     'error.diverged': 'O branch e seu upstream divergiram. Faça merge ou rebase em um terminal e sincronize novamente.',
     'error.pullBlocked': 'Não foi possível fazer avanço rápido do branch, geralmente porque alterações locais seriam sobrescritas. Faça commit ou stash delas e sincronize novamente.',
@@ -1189,5 +1189,133 @@ const SYNC_KEYS = {
 }
 
 for (const [locale, entries] of Object.entries(SYNC_KEYS)) {
+  Object.assign(DICTIONARIES[locale], entries)
+}
+
+/**
+ * Branch-switching copy, for backends whose capabilities declare
+ * `branchSwitch`.
+ *
+ * Switching is the panel's second write. The copy states the two limits that
+ * keep it safe: only local branches are targets, and Git itself refuses when
+ * local changes would be overwritten — nothing is stashed, discarded, or
+ * forced. Because Git declares both writes, the read-only marker names both.
+ */
+const BRANCH_SWITCH_KEYS = {
+  en: {
+    'top.switchBranch': 'Switch branch',
+    'top.switchBranchLabel': 'Switch branch: {branch}',
+    'top.switchBranchHint': 'Switch to another local branch. Git refuses when local changes would be overwritten; nothing is stashed or discarded.',
+    'top.switching': 'Switching branch…',
+    'top.readonlySyncSwitch': 'Read-only except Sync and branch switching',
+    'top.readonlyHintSyncSwitch': 'Browsing never changes the repository. Sync fetches, then fast-forwards or pushes; the branch menu checks out an existing local branch. Nothing stages, commits, merges, rebases, force-pushes, discards changes, or creates branches.',
+    'switch.loading': 'Loading branches…',
+    'switch.empty': 'No local branches to switch to.',
+    'switch.done': 'Switched to {branch}.',
+    'switch.truncated': 'Only the first {count} branches are listed.',
+    'error.switchBlocked': 'Git refused to switch because local changes would be overwritten. Commit or stash them first.',
+    'error.switchFailed': 'The branch could not be switched.',
+  },
+  zh: {
+    'top.switchBranch': '切换分支',
+    'top.switchBranchLabel': '切换分支：{branch}',
+    'top.switchBranchHint': '切换到另一个本地分支。会覆盖本地改动时 Git 会拒绝；不贮藏、不丢弃这些改动。',
+    'top.switching': '正在切换分支…',
+    'top.readonlySyncSwitch': '只读（同步与切换分支除外）',
+    'top.readonlyHintSyncSwitch': '浏览不会修改仓库。“同步”先抓取再快进或推送；“切换分支”检出已有的本地分支。不暂存、不提交、不合并、不变基、不强制推送、不丢弃改动，也不创建分支。',
+    'switch.loading': '正在加载分支…',
+    'switch.empty': '没有可切换的本地分支。',
+    'switch.done': '已切换到 {branch}。',
+    'switch.truncated': '只列出前 {count} 个分支。',
+    'error.switchBlocked': '本地改动会被覆盖，Git 拒绝了切换。请先提交或贮藏这些改动。',
+    'error.switchFailed': '无法切换分支。',
+  },
+  ja: {
+    'top.switchBranch': 'ブランチを切り替え',
+    'top.switchBranchLabel': 'ブランチを切り替え：{branch}',
+    'top.switchBranchHint': '別のローカルブランチに切り替えます。ローカルの変更が上書きされる場合、Git は拒否します。変更を stash したり破棄したりはしません。',
+    'top.switching': 'ブランチを切り替え中…',
+    'top.readonlySyncSwitch': '読み取り専用（同期とブランチ切り替えを除く）',
+    'top.readonlyHintSyncSwitch': '閲覧はリポジトリを変更しません。同期はフェッチしてから早送りまたはプッシュし、ブランチメニューは既存のローカルブランチをチェックアウトします。ステージ、コミット、マージ、リベース、強制プッシュ、変更の破棄、ブランチ作成は行いません。',
+    'switch.loading': 'ブランチを読み込み中…',
+    'switch.empty': '切り替え可能なローカルブランチがありません。',
+    'switch.done': '{branch} に切り替えました。',
+    'switch.truncated': '最初の {count} 件のブランチのみ表示しています。',
+    'error.switchBlocked': 'ローカルの変更が上書きされるため、Git が切り替えを拒否しました。先にコミットするか stash してください。',
+    'error.switchFailed': 'ブランチを切り替えられませんでした。',
+  },
+  es: {
+    'top.switchBranch': 'Cambiar de rama',
+    'top.switchBranchLabel': 'Cambiar de rama: {branch}',
+    'top.switchBranchHint': 'Cambia a otra rama local. Git se niega cuando se sobrescribirían cambios locales; no se guarda ni se descarta nada.',
+    'top.switching': 'Cambiando de rama…',
+    'top.readonlySyncSwitch': 'Solo lectura salvo Sincronizar y cambiar de rama',
+    'top.readonlyHintSyncSwitch': 'Navegar nunca cambia el repositorio. Sincronizar hace fetch y luego avance rápido o push; el menú de ramas hace checkout de una rama local existente. No prepara, confirma, fusiona, rebasa, fuerza el push, descarta cambios ni crea ramas.',
+    'switch.loading': 'Cargando ramas…',
+    'switch.empty': 'No hay ramas locales a las que cambiar.',
+    'switch.done': 'Cambiado a {branch}.',
+    'switch.truncated': 'Solo se muestran las primeras {count} ramas.',
+    'error.switchBlocked': 'Git se negó a cambiar porque se sobrescribirían cambios locales. Confírmalos o guárdalos en stash primero.',
+    'error.switchFailed': 'No se pudo cambiar de rama.',
+  },
+  fr: {
+    'top.switchBranch': 'Changer de branche',
+    'top.switchBranchLabel': 'Changer de branche : {branch}',
+    'top.switchBranchHint': 'Passe à une autre branche locale. Git refuse lorsque des modifications locales seraient écrasées ; rien n’est remisé ni supprimé.',
+    'top.switching': 'Changement de branche…',
+    'top.readonlySyncSwitch': 'Lecture seule sauf synchronisation et changement de branche',
+    'top.readonlyHintSyncSwitch': 'La navigation ne modifie jamais le dépôt. La synchronisation récupère puis avance rapidement ou pousse ; le menu des branches extrait une branche locale existante. Aucun indexage, commit, merge, rebase, push forcé, abandon de modifications ni création de branche.',
+    'switch.loading': 'Chargement des branches…',
+    'switch.empty': 'Aucune branche locale vers laquelle basculer.',
+    'switch.done': 'Bascule vers {branch}.',
+    'switch.truncated': 'Seules les {count} premières branches sont affichées.',
+    'error.switchBlocked': 'Git a refusé le changement car des modifications locales seraient écrasées. Validez-les ou remisez-les d’abord.',
+    'error.switchFailed': 'Impossible de changer de branche.',
+  },
+  de: {
+    'top.switchBranch': 'Branch wechseln',
+    'top.switchBranchLabel': 'Branch wechseln: {branch}',
+    'top.switchBranchHint': 'Wechselt zu einem anderen lokalen Branch. Git lehnt ab, wenn lokale Änderungen überschrieben würden; nichts wird gestasht oder verworfen.',
+    'top.switching': 'Branch wird gewechselt…',
+    'top.readonlySyncSwitch': 'Schreibgeschützt außer Sync und Branch-Wechsel',
+    'top.readonlyHintSyncSwitch': 'Das Anzeigen ändert nie das Repository. Sync ruft ab und spult vor oder pusht; das Branch-Menü checkt einen vorhandenen lokalen Branch aus. Nichts wird gestaged, committet, gemergt, rebased, force-gepusht, verworfen oder neu angelegt.',
+    'switch.loading': 'Branches werden geladen…',
+    'switch.empty': 'Keine lokalen Branches zum Wechseln.',
+    'switch.done': 'Zu {branch} gewechselt.',
+    'switch.truncated': 'Nur die ersten {count} Branches werden angezeigt.',
+    'error.switchBlocked': 'Git hat den Wechsel abgelehnt, weil lokale Änderungen überschrieben würden. Committe oder stashe sie zuerst.',
+    'error.switchFailed': 'Der Branch konnte nicht gewechselt werden.',
+  },
+  ru: {
+    'top.switchBranch': 'Переключить ветку',
+    'top.switchBranchLabel': 'Переключить ветку: {branch}',
+    'top.switchBranchHint': 'Переключает на другую локальную ветку. Git откажет, если локальные изменения были бы перезаписаны; ничего не прячется в stash и не отбрасывается.',
+    'top.switching': 'Переключение ветки…',
+    'top.readonlySyncSwitch': 'Только чтение, кроме синхронизации и переключения веток',
+    'top.readonlyHintSyncSwitch': 'Просмотр не изменяет репозиторий. Синхронизация делает fetch, затем перемотку вперёд или push; меню веток переключает на существующую локальную ветку. Ничего не индексируется, не коммитится, не сливается, не перебазируется, не пушится принудительно, не отбрасывается и не создаётся.',
+    'switch.loading': 'Загрузка веток…',
+    'switch.empty': 'Нет локальных веток для переключения.',
+    'switch.done': 'Переключено на {branch}.',
+    'switch.truncated': 'Показаны только первые {count} веток.',
+    'error.switchBlocked': 'Git отказал в переключении, так как локальные изменения были бы перезаписаны. Сначала закоммитьте их или уберите в stash.',
+    'error.switchFailed': 'Не удалось переключить ветку.',
+  },
+  pt: {
+    'top.switchBranch': 'Trocar de branch',
+    'top.switchBranchLabel': 'Trocar de branch: {branch}',
+    'top.switchBranchHint': 'Troca para outro branch local. O Git recusa quando alterações locais seriam sobrescritas; nada é guardado em stash nem descartado.',
+    'top.switching': 'Trocando de branch…',
+    'top.readonlySyncSwitch': 'Somente leitura, exceto Sincronizar e trocar de branch',
+    'top.readonlyHintSyncSwitch': 'Navegar nunca altera o repositório. Sincronizar faz fetch e depois avanço rápido ou push; o menu de branches faz checkout de um branch local existente. Nada é preparado, confirmado, mesclado, rebaseado, enviado à força, descartado ou criado.',
+    'switch.loading': 'Carregando branches…',
+    'switch.empty': 'Nenhum branch local para trocar.',
+    'switch.done': 'Trocado para {branch}.',
+    'switch.truncated': 'Apenas os primeiros {count} branches são listados.',
+    'error.switchBlocked': 'O Git recusou a troca porque alterações locais seriam sobrescritas. Faça commit ou stash delas primeiro.',
+    'error.switchFailed': 'Não foi possível trocar de branch.',
+  },
+}
+
+for (const [locale, entries] of Object.entries(BRANCH_SWITCH_KEYS)) {
   Object.assign(DICTIONARIES[locale], entries)
 }

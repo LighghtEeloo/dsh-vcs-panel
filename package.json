@@ -1,8 +1,8 @@
 {
   "name": "dsh-vcs-panel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
-  "description": "Version control panel for DeepSeek Harness: working changes, their diffs, and history with a lane graph, for Git and Jujutsu repositories, plus one-click fast-forward-or-push sync for Git branches.",
+  "description": "Version control panel for DeepSeek Harness: working changes, their diffs, and history with a lane graph, for Git and Jujutsu repositories, plus switching Git branches and one-click fast-forward-or-push sync.",
   "icon": "./icon.svg",
   "type": "module",
   "keywords": [

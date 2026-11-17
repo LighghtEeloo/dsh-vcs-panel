@@ -1,5 +1,5 @@
 /**
- * Browser data layer for the Host routes: the reads and the one sync write.
+ * Browser data layer for the Host routes: the reads and the two writes.
  *
  * One instance serves one Session: every request carries the Session identity
  * and the repository the panel currently shows. Requests are cancellable with
@@ -221,6 +221,27 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
      */
     sync(repo) {
       return post('/api/vcs.sync', { repo })
+    },
+
+    /**
+     * Local branches a switch can target, newest commit first.
+     * @param {string} repo - repository root.
+     * @param {AbortSignal} [signal] - cancellation.
+     * @returns {Promise<{ branches: { name: string, current: boolean }[], truncated: boolean }>} the listing.
+     */
+    branches(repo, signal) {
+      return get('/api/vcs.branches', { repo }, signal)
+    },
+
+    /**
+     * Check out one existing local branch. The Host refuses when local changes
+     * would be overwritten; nothing is stashed or forced.
+     * @param {string} repo - repository root.
+     * @param {string} branch - exact local branch name.
+     * @returns {Promise<{ branch: string }>} the checked-out branch.
+     */
+    switchBranch(repo, branch) {
+      return post('/api/vcs.switch', { repo, branch })
     },
   }
 }

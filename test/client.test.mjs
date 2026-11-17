@@ -7,7 +7,7 @@ import {
 } from '../src/client/state.js'
 import {
   errorMessage, formatCommitTime, formatCount, formatDateTime, lineCounts, shortChangeId, shortSha, splitPath, statusKey,
-  syncMessage,
+  switchMessage, syncMessage,
 } from '../src/client/format.js'
 import {
   buildNodeRows, buildRows, dirKey, isRowKey, rowBodyId, sectionKey, summarizeEntries,
@@ -201,6 +201,8 @@ test('errorMessage localizes known codes and falls back to the Host message', ()
   const t = key => `t:${key}`
   assert.equal(errorMessage(t, { code: 'timeout', message: 'raw' }), 't:error.timeout')
   assert.equal(errorMessage(t, { code: 'network', message: 'raw' }), 't:error.network')
+  assert.equal(errorMessage(t, { code: 'switch-blocked', message: 'raw' }), 't:error.switchBlocked')
+  assert.equal(errorMessage(t, { code: 'switch-failed', message: 'raw' }), 't:error.switchFailed')
   assert.equal(errorMessage(t, { code: 'unheard-of', message: 'host text' }), 'host text')
   assert.equal(
     errorMessage(t, { code: 'vcs-missing', message: 'jj is not available on this host.' }),
@@ -372,24 +374,26 @@ test('createApi builds exact Host routes', async () => {
   })
   assert.deepEqual(await api.repositories(), { ok: true })
   await api.status('/repo')
+  await api.branches('/repo')
   await api.untracked('/repo', 'dir/')
   await api.diff('/repo', { scope: 'commit', path: 'a.js', oldPath: 'old/a.js', rev: 'abc1234' })
   await api.log('/repo', { ref: 'all', skip: 300, limit: 300 })
   await api.commit('/repo', 'abc1234')
   await api.turn(3, 42)
   await api.turn(4, null)
-  assert.equal(calls.length, 8)
+  assert.equal(calls.length, 9)
   assert.match(calls[0], /^\/api\/vcs\.repositories\?sessionId=session\+1$/)
   assert.match(calls[1], /^\/api\/vcs\.status\?sessionId=session\+1&repo=%2Frepo$/)
-  assert.match(calls[2], /path=dir%2F/)
-  assert.match(calls[3], /scope=commit/)
-  assert.match(calls[3], /oldPath=old%2Fa.js/)
-  assert.match(calls[3], /rev=abc1234/)
-  assert.match(calls[4], /skip=300/)
-  assert.match(calls[4], /limit=300/)
-  assert.match(calls[5], /sha=abc1234/)
-  assert.equal(calls[6], '/api/vcs.turn?sessionId=session+1&turn=3&seq=42')
-  assert.equal(calls[7], '/api/vcs.turn?sessionId=session+1&turn=4')
+  assert.match(calls[2], /^\/api\/vcs\.branches\?sessionId=session\+1&repo=%2Frepo$/)
+  assert.match(calls[3], /path=dir%2F/)
+  assert.match(calls[4], /scope=commit/)
+  assert.match(calls[4], /oldPath=old%2Fa.js/)
+  assert.match(calls[4], /rev=abc1234/)
+  assert.match(calls[5], /skip=300/)
+  assert.match(calls[5], /limit=300/)
+  assert.match(calls[6], /sha=abc1234/)
+  assert.equal(calls[7], '/api/vcs.turn?sessionId=session+1&turn=3&seq=42')
+  assert.equal(calls[8], '/api/vcs.turn?sessionId=session+1&turn=4')
 })
 
 test('createApi sends sync as an uncancellable same-origin JSON POST and maps its refusals', async () => {
@@ -426,6 +430,48 @@ test('createApi sends sync as an uncancellable same-origin JSON POST and maps it
 
   const offline = createApi('s', { fetchImpl: async () => { throw new TypeError('offline') } })
   await assert.rejects(offline.sync('/r'), error => error.code === 'network')
+})
+
+test('createApi sends switch as a same-origin JSON POST and maps a refusal', async () => {
+  const calls = []
+  const api = createApi('session 1', {
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init })
+      return { ok: true, async json() { return { branch: 'topic' } } }
+    },
+  })
+  assert.deepEqual(await api.switchBranch('/repo', 'topic'), { branch: 'topic' })
+  assert.equal(calls.length, 1)
+  const [{ url, init }] = calls
+  assert.equal(url, '/api/vcs.switch', 'the session, repository, and branch travel in the body')
+  assert.equal(init.method, 'POST')
+  assert.equal(init.credentials, 'same-origin')
+  assert.equal(init.headers['content-type'], 'application/json')
+  assert.deepEqual(JSON.parse(init.body), { sessionId: 'session 1', repo: '/repo', branch: 'topic' })
+  assert.equal(init.signal, undefined, 'leaving the panel does not cut a switch short')
+
+  const blocked = createApi('s', {
+    fetchImpl: async () => ({
+      ok: false,
+      status: 409,
+      async json() {
+        return { error: { code: 'switch-blocked', message: 'Git refused to switch because local changes would be overwritten.' } }
+      },
+    }),
+  })
+  await assert.rejects(blocked.switchBranch('/r', 'topic'), error => {
+    assert.ok(error instanceof ApiError)
+    assert.equal(error.code, 'switch-blocked')
+    assert.equal(error.status, 409)
+    return true
+  })
+})
+
+test('switchMessage names the branch now checked out', () => {
+  const t = (key, vars) => `${key}:${JSON.stringify(vars ?? {})}`
+  assert.equal(switchMessage(t, { branch: 'topic' }, 'requested'), 'switch.done:{"branch":"topic"}')
+  assert.equal(switchMessage(t, { branch: '' }, 'requested'), 'switch.done:{"branch":"requested"}', 'a malformed answer falls back to the pick')
+  assert.equal(switchMessage(t, null, 'topic'), 'switch.done:{"branch":"topic"}')
 })
 
 test('syncMessage names what moved, preferring the push, and reports a level branch', () => {

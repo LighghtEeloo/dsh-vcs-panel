@@ -79,6 +79,104 @@
   text-overflow: ellipsis;
 }
 
+/* The branch control opens the local-branch menu. The menu is fixed because
+   the header clips its children, so it can hang below the bar. */
+.vcs-branch-wrap {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.vcs-branch-button {
+  height: 26px;
+  max-width: 240px;
+  padding: 0 6px;
+  border: 0.5px solid transparent;
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.vcs-branch-button:hover,
+.vcs-branch-button[aria-expanded='true'] {
+  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.vcs-branch-menu {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 260px;
+  max-height: min(360px, calc(100vh - 96px));
+  padding: 6px;
+  overflow-y: auto;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: 0 8px 24px var(--dsw-alias-shadow, rgb(0 0 0 / 18%));
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+
+.vcs-branch-menu:focus {
+  outline: none;
+}
+
+.vcs-branch-menu-title {
+  margin: 2px 6px 6px;
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary));
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.vcs-branch-menu-note {
+  margin: 2px 6px 6px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.vcs-branch-item {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vcs-branch-item:hover {
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.vcs-branch-item[aria-checked='true'] {
+  color: var(--dsw-alias-brand-primary);
+  font-weight: 500;
+}
+
+.vcs-branch-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcs-branch-item .vcs-icon {
+  width: 12px;
+  height: 12px;
+}
+
 .vcs-icon {
   width: 14px;
   height: 14px;

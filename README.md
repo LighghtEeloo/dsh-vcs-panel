@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-Version control inside DeepSeek Harness conversations. Adds a `VCS` tab to inspect working changes, syntax-highlighted diffs, and commit history with a lane graph—for both **Git** and **Jujutsu** repositories—and to sync a Git branch with its upstream in one click.
+Version control inside DeepSeek Harness conversations. Adds a `VCS` tab to inspect working changes, syntax-highlighted diffs, and commit history with a lane graph—for both **Git** and **Jujutsu** repositories—and to sync a Git branch with its upstream or switch between local branches in one click.
 
 ## Features
 
@@ -11,7 +11,8 @@ Version control inside DeepSeek Harness conversations. Adds a `VCS` tab to inspe
 - **Git & Jujutsu native.** Shows staged and unstaged groups (`?` for untracked items) and ahead/behind in Git; shows `@`, change IDs, and bookmarks in Jujutsu.
 - **Turn banner & shortcut.** File-changing turns end with a compact VCS banner showing that turn's branch (or `@`), changed-file count, and `+` / `−` line totals in place of Chat's changed-files card. Toggle `VCS` from anywhere with `⌘⇧G` / `Ctrl+Shift+G`.
 - **One-click sync.** The button beside the Git branch shows ahead/behind counts; clicking it fetches the upstream, then fast-forwards or pushes. A diverged branch, a fast-forward that would overwrite local edits, or a branch without an upstream is left untouched with a note on what to do next.
-- **Read-only otherwise.** Sync is the only write: the panel never stages, commits, merges, rebases, force-pushes, or rewrites history (Jujutsu only snapshots the working copy on read). Follows DSH themes and all 8 UI languages, and loads large histories and diffs on demand.
+- **Branch switching.** The branch name opens the repository's local branches; picking one checks it out. Only local branches are listed—no implicit remote-tracking branches—and Git refuses when local changes would be overwritten, so nothing is stashed, discarded, or forced.
+- **Read-only otherwise.** Sync and branch switching are the only writes: the panel never stages, commits, merges, rebases, force-pushes, discards changes, or creates branches (Jujutsu only snapshots the working copy on read). Follows DSH themes and all 8 UI languages, and loads large histories and diffs on demand.
 
 ## Keyboard
 
@@ -21,6 +22,7 @@ Version control inside DeepSeek Harness conversations. Adds a `VCS` tab to inspe
 | `↑` `↓` or `j` `k` | Move through one vertical list of tree rows and hunk headers of open diffs |
 | `←` `→` or `h` `l` | Enter the change tree or an open file; `←` / `h` closes an open file first, then returns to the timeline |
 | `Enter`, `Space`, `Esc` | Fold/expand the focused row; `Esc` returns to the timeline |
+| `↑` `↓`, `Home` `End` | Move inside the open branch menu; `Esc` closes it |
 | `[` / `]` | Move to the previous / next tree row, skipping hunk headers |
 
 ## Install

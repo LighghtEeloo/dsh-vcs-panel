@@ -12,7 +12,7 @@ import { createApi } from './api.js'
 import {
   loadState, nodePatch, preferredNode, saveState, SIDEBAR_MAX, SIDEBAR_MIN, WORKTREE,
 } from './state.js'
-import { errorMessage, formatCount, syncMessage } from './format.js'
+import { errorMessage, formatCount, switchMessage, syncMessage } from './format.js'
 import { isEditableTarget } from './keys.js'
 import { dirKey } from './detail/tree.js'
 import { buildGraph } from './history/layout.js'
@@ -85,6 +85,10 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   const [notice, setNotice] = useState(null)
   // The repository a sync is running for; one sync at a time per panel.
   const [syncingRepo, setSyncingRepo] = useState(null)
+  // Local branches for the header menu, loaded when the menu opens.
+  const [branches, setBranches] = useState({ status: 'idle', list: [], truncated: false, error: null })
+  // The branch a switch is running for, which keeps the branch icon turning.
+  const [switching, setSwitching] = useState(null)
 
   const rootRef = useRef(null)
   const logKeyRef = useRef('')
@@ -93,6 +97,9 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
   const attemptedDirsRef = useRef(new Set())
   const perRepoRef = useRef(new Map())
   const pageControllerRef = useRef(null)
+  const branchesControllerRef = useRef(null)
+  const loadingBranchesRef = useRef(false)
+  const switchingRef = useRef(false)
   const diffCacheRef = useRef(new Map())
   const detailControl = useRef(null)
   const pendingEntryFocusRef = useRef(false)
@@ -180,6 +187,10 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     setLoadingDirs({})
     attemptedDirsRef.current.clear()
     diffCacheRef.current.clear()
+    branchesControllerRef.current?.abort()
+    branchesControllerRef.current = null
+    loadingBranchesRef.current = false
+    setBranches({ status: 'idle', list: [], truncated: false, error: null })
     setStatus(idleStatus())
     anchorRef.current = null
     timelineScrollRef.current = 0
@@ -278,7 +289,10 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     logKeyRef.current = ''
   }, [state.repo, state.ref])
 
-  useEffect(() => () => { pageControllerRef.current?.abort() }, [])
+  useEffect(() => () => {
+    pageControllerRef.current?.abort()
+    branchesControllerRef.current?.abort()
+  }, [])
 
   // First history page, invalidated by refresh.
   useEffect(() => {
@@ -342,6 +356,11 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
     setLoadingDirs({})
     setNarrowDetail(false)
     setNotice(null)
+    setBranches({ status: 'idle', list: [], truncated: false, error: null })
+    setSwitching(null)
+    loadingBranchesRef.current = false
+    branchesControllerRef.current?.abort()
+    branchesControllerRef.current = null
     pendingEntryFocusRef.current = false
     pendingDetailFocusRef.current = false
     attemptedDirsRef.current.clear()
@@ -443,6 +462,90 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
       setSyncingRepo(null)
     }
   }, [api, locale, refresh, sessionId, t])
+
+  /**
+   * Load the local branches behind the header menu. Opening the menu again
+   * reloads: branches are created and renamed outside the panel, and the
+   * current one is part of the answer. The previous list stays visible while
+   * the reload runs.
+   */
+  const loadBranches = useCallback(() => {
+    const repo = stateRef.current.repo
+    if (repo === null || loadingBranchesRef.current) return
+    loadingBranchesRef.current = true
+    branchesControllerRef.current?.abort()
+    const controller = new AbortController()
+    branchesControllerRef.current = controller
+    setBranches(previous => ({ ...previous, status: 'loading', error: null }))
+    api.branches(repo, controller.signal).then(answer => {
+      if (controller.signal.aborted) return
+      if (stateRef.current.repo !== repo) return
+      const list = Array.isArray(answer?.branches)
+        ? answer.branches.filter(entry => entry !== null && typeof entry === 'object'
+          && typeof entry.name === 'string' && entry.name !== '')
+        : []
+      setBranches({
+        status: 'ready',
+        list: list.map(entry => ({ name: entry.name, current: entry.current === true })),
+        truncated: answer?.truncated === true,
+        error: null,
+      })
+    }).catch(error => {
+      if (error?.name === 'AbortError' || controller.signal.aborted) return
+      if (stateRef.current.repo !== repo) return
+      setBranches(previous => ({ status: 'error', list: previous.list, truncated: false, error }))
+    }).finally(() => {
+      if (branchesControllerRef.current === controller) {
+        branchesControllerRef.current = null
+        loadingBranchesRef.current = false
+      }
+    })
+  }, [api])
+
+  /**
+   * Check out one local branch, then drop everything that described the old
+   * HEAD: selection, folds, directory expansions, reading position, and the
+   * diff cache. Status then picks the new branch's default node, exactly as
+   * after an ordinary refresh. A refused switch changes nothing and only
+   * reports why.
+   */
+  const switchBranch = useCallback(async branch => {
+    const repo = stateRef.current.repo
+    if (repo === null || switchingRef.current) return
+    switchingRef.current = true
+    setSwitching(branch)
+    setNotice(null)
+    // A listing that started before the switch describes the old HEAD.
+    branchesControllerRef.current?.abort()
+    branchesControllerRef.current = null
+    loadingBranchesRef.current = false
+    let outcome
+    try {
+      const answer = await api.switchBranch(repo, branch)
+      outcome = { tone: 'info', text: switchMessage(t, answer, branch) }
+    } catch (error) {
+      outcome = { tone: 'error', text: errorMessage(t, error) }
+    } finally {
+      switchingRef.current = false
+      setSwitching(null)
+    }
+    if (stateRef.current.repo !== repo) return
+    if (outcome.tone !== 'info') {
+      setNotice(outcome)
+      return
+    }
+
+    anchorRef.current = null
+    timelineScrollRef.current = 0
+    setDirChildren({})
+    setLoadingDirs({})
+    attemptedDirsRef.current.clear()
+    diffCacheRef.current.clear()
+    setBranches({ status: 'idle', list: [], truncated: false, error: null })
+    update({ node: null, nodeChosen: false, anchor: null, folds: {}, collapsed: {}, dirs: {} })
+    refresh('switch')
+    setNotice(outcome)
+  }, [api, refresh, t, update])
 
   /** Load the direct children of one untracked directory. */
   const expandUntracked = useCallback(async (key, path) => {
@@ -688,6 +791,13 @@ export function VcsView({ sessionId, t, locale, viewRequest, completeViewRequest
         revalidating={status.status === 'refreshing'}
         onSync={() => { void sync() }}
         syncing={(syncingRepo !== null && syncingRepo === state.repo) || refreshing === 'sync'}
+        branches={branches.list}
+        branchesStatus={branches.status}
+        branchesError={branches.error}
+        branchesTruncated={branches.truncated}
+        onLoadBranches={loadBranches}
+        onSwitchBranch={branch => { void switchBranch(branch) }}
+        switching={switching !== null}
         notice={notice}
         t={t}
         locale={locale}

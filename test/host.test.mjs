@@ -1243,6 +1243,7 @@ test('repositories identifies a Jujutsu workspace and exposes its capabilities',
   assert.ok(repo)
   assert.equal(repo.vcs, 'jujutsu')
   assert.equal(repo.capabilities.workingCopy, 'commit')
+  assert.equal(repo.capabilities.branchSwitch, false)
   assert.deepEqual(repo.capabilities.ranges.map(range => range.value), ['@', 'all'])
   assert.equal(repo.capabilities.defaultRange, '@')
 })
@@ -1529,7 +1530,7 @@ test('Jujutsu shared snapshot survives one caller aborting and cancels when all 
   assert.equal(snapshotAborted, 1)
 })
 
-test('apply registers seven GET routes and the POST sync route inside the fence and honors enabled: false', async () => {
+test('apply registers eight GET routes and both write routes inside the fence and honors enabled: false', async () => {
   const routes = []
   const ctx = {
     sessions: { get: id => sessions.get(id) },
@@ -1554,15 +1555,20 @@ test('apply registers seven GET routes and the POST sync route inside the fence 
   assert.deepEqual(routes.map(r => r.path), [
     '/api/vcs.repositories',
     '/api/vcs.status',
+    '/api/vcs.branches',
     '/api/vcs.untracked',
     '/api/vcs.diff',
     '/api/vcs.log',
     '/api/vcs.commit',
     '/api/vcs.turn',
     '/api/vcs.sync',
+    '/api/vcs.switch',
   ])
   for (const registered of routes) {
-    assert.deepEqual(registered.methods, registered.path === '/api/vcs.sync' ? ['POST'] : ['GET'])
+    assert.deepEqual(
+      registered.methods,
+      registered.path === '/api/vcs.sync' || registered.path === '/api/vcs.switch' ? ['POST'] : ['GET'],
+    )
     assert.equal(registered.requestBody, 'buffered')
   }
 
@@ -1592,6 +1598,18 @@ test('apply registers seven GET routes and the POST sync route inside the fence 
   }))
   assert.equal(syncResponse.status, 409)
   assert.equal((await syncResponse.json()).error.code, 'no-upstream')
+
+  // A switch to the checked-out branch is a no-op, and the write ignores the
+  // browser's abort like sync does.
+  const switchRoute = routes.find(r => r.path === '/api/vcs.switch')
+  const switchResponse = await switchRoute.fetch(new Request('http://127.0.0.1/api/vcs.switch', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: 's-main', repo: mainPath, branch: 'main' }),
+    signal: left.signal,
+  }))
+  assert.equal(switchResponse.status, 200)
+  assert.deepEqual(await switchResponse.json(), { branch: 'main' })
 
   const disabled = []
   apply({
@@ -1823,6 +1841,7 @@ test('every route is read-only: repository state is identical after all requests
   for (const [handler, url] of [
     [handlers.repositories, route('/api/vcs.repositories', { sessionId: 's-main' })],
     [handlers.status, route('/api/vcs.status', repo)],
+    [handlers.branches, route('/api/vcs.branches', repo)],
     [handlers.untracked, route('/api/vcs.untracked', { ...repo, path: 'scratch/' })],
     [handlers.diff, route('/api/vcs.diff', { ...repo, scope: 'unstaged', path: 'tracked.txt' })],
     [handlers.diff, route('/api/vcs.diff', { ...repo, scope: 'staged', path: 'staged.txt' })],
@@ -1857,6 +1876,221 @@ test('every route is read-only: repository state is identical after all requests
     else throw error
   }
   assert.equal(lockExists, false)
+})
+
+// Branch switching ----------------------------------------------------------
+
+/**
+ * Build one repository with two local branches that change the same file, so
+ * switching between them can be refused by local changes.
+ * @param {string} name - scratch subdirectory.
+ * @returns {object} the fixture paths, the session, and its handlers.
+ */
+function buildSwitchFixture(name) {
+  const base = join(fixture.scratch, name)
+  const repo = join(base, 'repo')
+  mkdirSync(base, { recursive: true })
+  initRepo(repo)
+  writeFileSync(join(repo, 'shared.txt'), 'base\n')
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-qm', 'base'])
+
+  git(repo, ['checkout', '-qb', 'topic'])
+  writeFileSync(join(repo, 'shared.txt'), 'topic\n')
+  writeFileSync(join(repo, 'topic.txt'), 'topic only\n')
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-qm', 'topic change'])
+  const topicSha = git(repo, ['rev-parse', 'HEAD'])
+
+  git(repo, ['checkout', '-q', 'main'])
+  writeFileSync(join(repo, 'shared.txt'), 'main\n')
+  writeFileSync(join(repo, 'main.txt'), 'main only\n')
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-qm', 'main change'])
+
+  const sessionId = `s-switch-${name}`
+  const switchSessions = new Map([[sessionId, { header: { cwd: repo } }]])
+  const switchHandlers = createHandlers(createHost({ sessions: { get: id => switchSessions.get(id) } }))
+  return { repo, sessionId, handlers: switchHandlers, topicSha }
+}
+
+/**
+ * POST one switch request.
+ * @param {Function} handler - the switch handler.
+ * @param {unknown} body - JSON body, or a raw string.
+ * @param {Record<string, string>} [headers] - request headers.
+ * @param {string} [method] - HTTP method.
+ * @returns {Promise<{ status: number, body: object }>} the decoded answer.
+ */
+async function postSwitch(handler, body, headers = { 'content-type': 'application/json' }, method = 'POST') {
+  const response = await handler(new Request('http://127.0.0.1/api/vcs.switch', {
+    method,
+    headers,
+    body: method === 'GET' ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)),
+  }))
+  return { status: response.status, body: await response.json() }
+}
+
+test('branches lists local branches with the checked-out one marked', async () => {
+  const fixtureSwitch = buildSwitchFixture('branches')
+  const body = { sessionId: fixtureSwitch.sessionId, repo: realpathSync(fixtureSwitch.repo) }
+
+  const listed = await call(fixtureSwitch.handlers.branches, route('/api/vcs.branches', body))
+  assert.equal(listed.status, 200)
+  assert.equal(listed.body.truncated, false)
+  assert.deepEqual(
+    listed.body.branches.map(entry => [entry.name, entry.current]),
+    [['main', true], ['topic', false]],
+  )
+
+  // A remote-tracking ref is not a local branch and cannot be checked out.
+  git(fixtureSwitch.repo, ['update-ref', 'refs/remotes/origin/topic', fixtureSwitch.topicSha])
+  const localOnly = await call(fixtureSwitch.handlers.branches, route('/api/vcs.branches', body))
+  assert.deepEqual(
+    localOnly.body.branches.map(entry => entry.name),
+    ['main', 'topic'],
+  )
+})
+
+test('switch checks out a local branch and leaves a clean tree in place', async () => {
+  const fixtureSwitch = buildSwitchFixture('switch-flow')
+  const body = { sessionId: fixtureSwitch.sessionId, repo: realpathSync(fixtureSwitch.repo) }
+
+  const switched = await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch: 'topic' })
+  assert.equal(switched.status, 200)
+  assert.deepEqual(switched.body, { branch: 'topic' })
+  assert.equal(git(fixtureSwitch.repo, ['symbolic-ref', '--short', 'HEAD']), 'topic')
+  assert.equal(await readFile(join(fixtureSwitch.repo, 'shared.txt'), 'utf8'), 'topic\n')
+  assert.equal(await readFile(join(fixtureSwitch.repo, 'topic.txt'), 'utf8'), 'topic only\n')
+
+  const status = await call(fixtureSwitch.handlers.status, route('/api/vcs.status', body))
+  assert.equal(status.body.branch.name, 'topic')
+
+  const back = await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch: 'main' })
+  assert.equal(back.status, 200)
+  assert.deepEqual(back.body, { branch: 'main' })
+  assert.equal(await readFile(join(fixtureSwitch.repo, 'shared.txt'), 'utf8'), 'main\n')
+  assert.equal(await readFile(join(fixtureSwitch.repo, 'main.txt'), 'utf8'), 'main only\n')
+
+  // Switching to the checked-out branch is an answer, not a command.
+  const again = await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch: 'main' })
+  assert.equal(again.status, 200)
+  assert.deepEqual(again.body, { branch: 'main' })
+})
+
+test('switch refuses a dirty tree and an untracked collision without changing anything', async () => {
+  const fixtureSwitch = buildSwitchFixture('switch-dirty')
+  const body = { sessionId: fixtureSwitch.sessionId, repo: realpathSync(fixtureSwitch.repo) }
+
+  // A tracked edit that the target branch would overwrite.
+  writeFileSync(join(fixtureSwitch.repo, 'shared.txt'), 'mine\n')
+  const blocked = await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch: 'topic' })
+  assert.equal(blocked.status, 409)
+  assert.equal(blocked.body.error.code, 'switch-blocked')
+  assert.equal(git(fixtureSwitch.repo, ['symbolic-ref', '--short', 'HEAD']), 'main')
+  assert.equal(await readFile(join(fixtureSwitch.repo, 'shared.txt'), 'utf8'), 'mine\n')
+
+  // An untracked file that the target branch would overwrite.
+  git(fixtureSwitch.repo, ['checkout', '-q', '--', 'shared.txt'])
+  writeFileSync(join(fixtureSwitch.repo, 'topic.txt'), 'local untracked\n')
+  const untracked = await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch: 'topic' })
+  assert.equal(untracked.status, 409)
+  assert.equal(untracked.body.error.code, 'switch-blocked')
+  assert.equal(git(fixtureSwitch.repo, ['symbolic-ref', '--short', 'HEAD']), 'main')
+  assert.equal(await readFile(join(fixtureSwitch.repo, 'topic.txt'), 'utf8'), 'local untracked\n')
+
+  // With the path clear, the same switch succeeds.
+  rmSync(join(fixtureSwitch.repo, 'topic.txt'))
+  const switched = await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch: 'topic' })
+  assert.equal(switched.status, 200)
+  assert.equal(git(fixtureSwitch.repo, ['symbolic-ref', '--short', 'HEAD']), 'topic')
+})
+
+test('switch accepts only an existing local branch and nothing that reads as an option', async () => {
+  const fixtureSwitch = buildSwitchFixture('switch-target')
+  const body = { sessionId: fixtureSwitch.sessionId, repo: realpathSync(fixtureSwitch.repo) }
+  const head = git(fixtureSwitch.repo, ['rev-parse', 'HEAD'])
+
+  for (const branch of [undefined, null, '', 42, 'topic\n', 'two words', '-f', '--force', '@{upstream}', 'origin/topic', 'nope']) {
+    const answer = await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch })
+    assert.equal(answer.status, 400, String(branch))
+    assert.equal(answer.body.error.code, 'bad-request', String(branch))
+  }
+  assert.equal(git(fixtureSwitch.repo, ['rev-parse', 'HEAD']), head)
+  assert.equal(git(fixtureSwitch.repo, ['symbolic-ref', '--short', 'HEAD']), 'main')
+  assert.equal(git(fixtureSwitch.repo, ['for-each-ref', '--format=%(refname)', 'refs/heads']), 'refs/heads/main\nrefs/heads/topic')
+})
+
+test('switch accepts only same-origin JSON POSTs for a switchable repository', async () => {
+  const fixtureSwitch = buildSwitchFixture('switch-request')
+  const body = { sessionId: fixtureSwitch.sessionId, repo: realpathSync(fixtureSwitch.repo) }
+  const head = git(fixtureSwitch.repo, ['rev-parse', 'HEAD'])
+
+  const cases = [
+    [await postSwitch(fixtureSwitch.handlers.switchBranch, body, { 'content-type': 'application/json' }, 'GET'), 400, 'bad-request'],
+    [await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch: 'topic' }, { 'content-type': 'text/plain' }), 400, 'bad-request'],
+    [await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch: 'topic' }, { 'content-type': 'application/x-www-form-urlencoded' }), 400, 'bad-request'],
+    [await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch: 'topic' }, { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' }), 403, 'forbidden'],
+    [await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch: 'topic' }, { 'content-type': 'application/json', 'sec-fetch-site': 'same-site' }), 403, 'forbidden'],
+    [await postSwitch(fixtureSwitch.handlers.switchBranch, '{not json'), 400, 'bad-request'],
+    [await postSwitch(fixtureSwitch.handlers.switchBranch, [body]), 400, 'bad-request'],
+    [await postSwitch(fixtureSwitch.handlers.switchBranch, { sessionId: fixtureSwitch.sessionId, branch: 'topic' }), 400, 'bad-request'],
+    [await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch: 'topic', sessionId: 's-missing' }), 409, 'no-session'],
+    [await postSwitch(fixtureSwitch.handlers.switchBranch, { ...body, branch: 'topic', repo: plainPath }), 400, 'not-a-repo'],
+  ]
+  for (const [answer, status, code] of cases) {
+    assert.equal(answer.status, status, code)
+    assert.equal(answer.body.error.code, code)
+  }
+  assert.equal(git(fixtureSwitch.repo, ['rev-parse', 'HEAD']), head)
+  assert.equal(git(fixtureSwitch.repo, ['symbolic-ref', '--short', 'HEAD']), 'main')
+})
+
+test('switch is refused for Jujutsu, which has no branch to check out', { skip: !HAS_JJ }, async () => {
+  const before = jj(fixture.jj, ['op', 'log', '--no-graph', '-T', 'id', '--limit', '1'])
+  const branches = await call(handlers.branches, route('/api/vcs.branches', { sessionId: 's-jj', repo: jjPath }))
+  assert.equal(branches.status, 400)
+  assert.equal(branches.body.error.code, 'bad-request')
+  const answer = await postSwitch(handlers.switchBranch, { sessionId: 's-jj', repo: jjPath, branch: 'main' })
+  assert.equal(answer.status, 400)
+  assert.equal(answer.body.error.code, 'bad-request')
+  assert.equal(jj(fixture.jj, ['op', 'log', '--no-graph', '-T', 'id', '--limit', '1']), before)
+})
+
+test('a write in flight blocks both a second switch and a sync', async () => {
+  const { createBackends } = await import('../lib/vcs/index.js')
+  const fixtureSwitch = buildSwitchFixture('switch-lock')
+  const host = createHost()
+  const real = createBackends(host)
+  let release
+  let started = 0
+  const gate = new Promise(resolve => { release = resolve })
+  const gated = Object.create(real.get('git'))
+  gated.switchBranch = async () => {
+    started += 1
+    await gate
+    return { branch: 'topic' }
+  }
+  const gatedHandlers = createHandlers(host, {
+    backends: { get: id => (id === 'git' ? gated : real.get(id)), list: () => real.list() },
+  })
+  const body = { sessionId: fixtureSwitch.sessionId, repo: realpathSync(fixtureSwitch.repo) }
+
+  const first = postSwitch(gatedHandlers.switchBranch, { ...body, branch: 'topic' })
+  while (started === 0) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const second = await postSwitch(gatedHandlers.switchBranch, { ...body, branch: 'main' })
+  assert.equal(second.status, 409)
+  assert.equal(second.body.error.code, 'busy')
+  const sync = await postSync(gatedHandlers.sync, body)
+  assert.equal(sync.status, 409)
+  assert.equal(sync.body.error.code, 'busy')
+  release()
+  assert.equal((await first).status, 200)
+
+  // The lock is released with the answer, so the next write can run.
+  const next = await postSwitch(gatedHandlers.switchBranch, { ...body, branch: 'main' })
+  assert.equal(next.status, 200)
+  assert.equal(started, 2)
 })
 
 // Sync ----------------------------------------------------------------------

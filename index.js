@@ -1,14 +1,16 @@
 /**
  * Host half of `dsh-vcs-panel`.
  *
- * Seven authenticated read routes under `/api/vcs.*` expose one repository's
- * working changes, a single file's hunks, its history, and each turn's
- * recorded head and change totals. One write route, `POST /api/vcs.sync`,
- * brings a Git branch level with its upstream by fetching and then either
- * fast-forwarding or pushing; nothing stages, commits, checks out, merges,
- * rebases, force-pushes, or rewrites bookmarks. The backend is chosen by the
- * repository's marker (Jujutsu or Git) and runs through the injected
- * subprocess service with fixed argv.
+ * Eight authenticated read routes under `/api/vcs.*` expose one repository's
+ * working changes, a single file's hunks, its history, each turn's recorded
+ * head and change totals, and its local branches. Two write routes settle what
+ * the panel shows: `POST /api/vcs.sync` brings a Git branch level with its
+ * upstream by fetching and then either fast-forwarding or pushing, and
+ * `POST /api/vcs.switch` checks out an existing local branch. Nothing stages,
+ * commits, merges, rebases, force-pushes, discards changes, creates branches,
+ * or rewrites bookmarks. The backend is chosen by the repository's marker
+ * (Jujutsu or Git) and runs through the injected subprocess service with fixed
+ * argv.
  */
 
 import { createHandlers } from './lib/handlers.js'
@@ -26,19 +28,21 @@ export const inject = ['connection', 'sessions', 'subprocess', 'fs']
 
 /**
  * One entry per registered route, in the order the client asks for them.
- * A read follows the browser request and stops when the browser leaves; the
+ * A read follows the browser request and stops when the browser leaves; a
  * write runs to completion once started, bounded only by the plugin lifetime,
- * so a closed tab never cuts a push or fast-forward short.
+ * so a closed tab never cuts a push, fast-forward, or switch short.
  */
 const ROUTES = [
   { path: '/api/vcs.repositories', key: 'repositories', method: 'GET' },
   { path: '/api/vcs.status', key: 'status', method: 'GET' },
+  { path: '/api/vcs.branches', key: 'branches', method: 'GET' },
   { path: '/api/vcs.untracked', key: 'untracked', method: 'GET' },
   { path: '/api/vcs.diff', key: 'diff', method: 'GET' },
   { path: '/api/vcs.log', key: 'log', method: 'GET' },
   { path: '/api/vcs.commit', key: 'commit', method: 'GET' },
   { path: '/api/vcs.turn', key: 'turn', method: 'GET' },
   { path: '/api/vcs.sync', key: 'sync', method: 'POST' },
+  { path: '/api/vcs.switch', key: 'switchBranch', method: 'POST' },
 ]
 
 /**

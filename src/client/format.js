@@ -148,6 +148,8 @@ const ERROR_KEYS = {
   diverged: 'error.diverged',
   'pull-blocked': 'error.pullBlocked',
   'remote-failed': 'error.remoteFailed',
+  'switch-blocked': 'error.switchBlocked',
+  'switch-failed': 'error.switchFailed',
 }
 
 /**
@@ -178,4 +180,16 @@ export function syncMessage(t, result, locale) {
   if (pulled === 1) return t('sync.pulledOne', { upstream })
   if (pulled > 1) return t('sync.pulledMany', { upstream, count: formatCount(pulled, locale) })
   return t('sync.level', { upstream })
+}
+
+/**
+ * Localized outcome of one branch switch: the branch now checked out.
+ * @param {Function} t - the panel's translate function.
+ * @param {{ branch?: unknown } | null} result - the switch answer.
+ * @param {string} requested - the branch the user picked, for a malformed answer.
+ * @returns {string} browser-facing copy.
+ */
+export function switchMessage(t, result, requested) {
+  const branch = typeof result?.branch === 'string' && result.branch !== '' ? result.branch : requested
+  return t('switch.done', { branch })
 }

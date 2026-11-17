@@ -6,18 +6,20 @@
 
 ### 注册与路由
 
-Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessions', 'subprocess', 'fs']`。`apply` 仅在配置显式为字面量 `enabled: false` 时跳过路由注册（如需同时移除前端页签，需在 Plugins 中停用整个 bundle）。七条只读 `GET` 路由与一条写路由 `POST /api/vcs.sync` 注册在 `ctx.connection.fetch` 的认证栅栏内。读取的请求 `signal` 与插件生命周期 `AbortController` 组合，取消的请求保留 `AbortError`，不转为错误 JSON；同步只接插件生命周期的 `signal`，浏览器离开不会中断已开始的抓取、快进或推送。
+Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessions', 'subprocess', 'fs']`。`apply` 仅在配置显式为字面量 `enabled: false` 时跳过路由注册（如需同时移除前端页签，需在 Plugins 中停用整个 bundle）。八条只读 `GET` 路由与两条写路由 `POST /api/vcs.sync`、`POST /api/vcs.switch` 注册在 `ctx.connection.fetch` 的认证栅栏内。读取的请求 `signal` 与插件生命周期 `AbortController` 组合，取消的请求保留 `AbortError`，不转为错误 JSON；两条写路由只接插件生命周期的 `signal`，浏览器离开不会中断已开始的抓取、快进、推送或切换。
 
 | 路由 | 查询参数 | 应答字段 |
 | --- | --- | --- |
 | `GET /api/vcs.repositories` | `sessionId` | `cwd`、`repositories[]`（`path`、`name`、`enclosing`、`vcs`、`capabilities`）、`truncated` |
 | `GET /api/vcs.status` | `sessionId`、`repo` | `repo`、`vcs`、`capabilities`、`defaultNode`、`branch`、`workingCopy?`、`groups`、`total`、`truncated` |
+| `GET /api/vcs.branches` | `sessionId`、`repo` | `branches[]`（`name`、`current`）、`truncated`（仅 `capabilities.branchSwitch` 为真时可用） |
 | `GET /api/vcs.untracked` | `sessionId`、`repo`、`path`（`/` 结尾） | `path`、`entries[]`（`name`、`path`、`type`）、`truncated`（仅 `capabilities.untracked` 为真时可用） |
 | `GET /api/vcs.diff` | `sessionId`、`repo`、`scope`、`path`、`oldPath?`、`rev?` | `VcsFileDiff` |
 | `GET /api/vcs.log` | `sessionId`、`repo`、`ref`、`limit`、`skip` | `commits[]`、`truncated`、`nextSkip` |
 | `GET /api/vcs.commit` | `sessionId`、`repo`、`sha` | `commit`（`CommitDetail`，不含 patch）、`truncated` |
 | `GET /api/vcs.turn` | `sessionId`、`turn`、`seq?` | `turn`、`head`（`TurnHead \| null`）、`changed`、`added`、`deleted` |
 | `POST /api/vcs.sync` | JSON 请求体 `{ sessionId, repo }` | `upstream`、`pulled`、`pushed`（仅 `capabilities.sync` 为真时可用） |
+| `POST /api/vcs.switch` | JSON 请求体 `{ sessionId, repo, branch }` | `branch`（仅 `capabilities.branchSwitch` 为真时可用） |
 
 ### 输入校验与路径边界
 
@@ -26,7 +28,7 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 - **会话与仓库白名单**：`sessionId` 必须命中带有效 `header.cwd` 的活跃会话；`repo` 必须命中当次 `discoverRepositories` 的结果（`sameRepoPath`）。
 - **仓库发现与符号链接收敛**：从 `cwd` 向上最多 64 层查找最近的仓库标记，再扫描 `cwd` 下一层子目录（忽略 `node_modules`，不递归）。标记用 `lstat` 检测且 `.jj` 优先于 `.git`，兼容 linked worktree 的 `.git` 文件与 submodule。根路径经 `ctx.fs.resolve` 规范化，子仓库规范路径必须仍在 `cwd` 内；读取文件前再经 `containPath` 做 `realpath` 校验，确保目标留在仓库根内。
 - **路径与修订号净化**：`validateRelPath` 拒绝绝对路径、反斜杠、空段、`.`、`..`、`-` 前缀与控制字符，Git 侧再包 `:(literal)` pathspec，Jujutsu 侧用 `file:"..."` fileset。提交 ID 先做 7–64 位十六进制校验；Git 再经 `rev-parse --verify <sha>^{commit}` 解析，Jujutsu 仅接受 `@` 或十六进制 ID。
-- **写请求栅栏**：`vcs.sync` 只接受 `POST`，`content-type` 必须是 `application/json`（跨站页面不经 CORS 预检发不出），`Sec-Fetch-Site` 存在且不是 `same-origin` / `none` 时返回 `403 forbidden`；请求体中的 `sessionId` 与 `repo` 再走与读取相同的会话与仓库白名单。同一仓库根同时只允许一次同步，第二次返回 `409 busy`。
+- **写请求栅栏**：`vcs.sync` 与 `vcs.switch` 只接受 `POST`，`content-type` 必须是 `application/json`（跨站页面不经 CORS 预检发不出），`Sec-Fetch-Site` 存在且不是 `same-origin` / `none` 时返回 `403 forbidden`；请求体中的 `sessionId` 与 `repo` 再走与读取相同的会话与仓库白名单。切换的 `branch` 必须是字符串：拒绝空串、超过 255 字符、空白或控制字符、`-` 前缀，随后还必须命中该仓库的本地分支列表，才传给 `git switch`。同一仓库根同时只允许一次写操作，第二次返回 `409 busy`；同步与切换互相排斥。
 
 失败统一返回 `{ error: { code, message } }`，不携带宿主绝对路径、原始命令或堆栈：
 
@@ -38,14 +40,16 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 | `output-too-large` | 413 | 子进程输出超出字节上限（`lossy`） |
 | `vcs-missing` / `timeout` | 503 | 宿主缺少 `git`/`jj` 可执行文件，或命令超时 |
 | `internal` | 500 | 未预期的后端失败 |
-| `forbidden` | 403 | 浏览器声明为跨站的同步请求 |
-| `busy` | 409 | 同一仓库已有同步在进行 |
+| `forbidden` | 403 | 浏览器声明为跨站的写请求 |
+| `busy` | 409 | 同一仓库已有写操作在进行 |
 | `no-upstream` | 409 | 分离头指针、分支没有上游，或上游在远程上不存在 |
 | `diverged` | 409 | 分支与上游各有新提交 |
 | `pull-blocked` | 409 | 快进被拒绝（通常是本地改动会被覆盖） |
 | `remote-failed` | 502 | 抓取或推送失败：远程不可达、凭据或远程钩子拒绝、与其他推送者竞争 |
+| `switch-blocked` | 409 | 切换被拒绝（本地改动或未跟踪文件会被覆盖、分支已在别的工作树检出） |
+| `switch-failed` | 409 | 切换命令因其他原因失败 |
 
-同步失败时，`stderr` 末尾三行去掉 URL 中的凭据后只写入 Host 日志（`VcsError.detail`），不进入应答。
+写操作失败时，`stderr` 末尾三行去掉 URL 中的凭据后只写入 Host 日志（`VcsError.detail`），不进入应答。
 
 ### 命令隔离与后端能力
 
@@ -54,12 +58,12 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 - **Git**：固定 `-c core.quotepath=false`，环境设 `GIT_CONFIG_COUNT=0`、`GIT_TERMINAL_PROMPT=0`、`GIT_OPTIONAL_LOCKS=0`；比较命令加 `--no-pager`、`--no-ext-diff`、`--no-color`、`-U3`。
 - **Jujutsu**：固定 `--color=never`、`--no-pager`，环境设 `JJ_EDITOR=true`；除工作副本快照外的读取均带 `--ignore-working-copy`。
 
-每个后端实现 `require`、`head`、`status`、`log`、`commit`、`diff`（可选 `untracked`、`sync`）并声明 `capabilities`；Client 仅按能力对象驱动布局，不按后端名称分支：
+每个后端实现 `require`、`head`、`status`、`log`、`commit`、`diff`（可选 `untracked`、`sync`、`branches` / `switchBranch`）并声明 `capabilities`；Client 仅按能力对象驱动布局，不按后端名称分支：
 
 | 能力字段 | Git | Jujutsu |
 | --- | --- | --- |
 | `workingCopy` / `workingCopyNode` | `'row'` / `null` | `'commit'` / `'@'` |
-| `staging` / `untracked` / `aheadBehind` / `sync` | `true` | `false` |
+| `staging` / `untracked` / `aheadBehind` / `sync` / `branchSwitch` | `true` | `false` |
 | `changeId` / `snapshots` | `false` | `true` |
 | `ranges`（`defaultRange`） | **`HEAD`**、`all` | **`@`**、`all` |
 
@@ -67,6 +71,7 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 
 - **Git**：`head` 仅读取 `symbolic-ref -q --short HEAD` 与 `rev-parse -q --verify HEAD^{commit}`，不扫描索引与工作区；`status` 组合 `status --porcelain=v2 -z --branch --untracked-files=normal` 与两次 `diff --numstat -z`（index 与工作区），按 `XY` 拆成 `staged`、`unstaged`、`untracked`（两侧均改时各出现一次，冲突标 `U`）。`diff` 按 `staged`（对 `HEAD`）、`unstaged`（对 index）、`untracked`（按新文件合成）、`commit`（对第一父，root 对空树）取值；空仓库读取 `HEAD` 日志视为空历史而非错误。
 - **Git 同步**（`lib/sync.js`）：从 `symbolic-ref` 与 `branch.<name>.remote` / `branch.<name>.merge` 读出分支与上游（远程名拒绝 `-` 前缀与控制字符，上游必须是 `refs/heads/…`），远程不是 `.` 时执行 `fetch --quiet <remote>`，再用 `rev-list --left-right --count HEAD...@{upstream}` 比较：两侧都有提交返回 `diverged`；只落后执行 `merge --ff-only --quiet @{upstream}`；只领先执行 `push --porcelain <remote> refs/heads/<branch>:<merge>`。不带 `--force`，不跳过钩子，抓取与推送使用远程命令超时。
+- **Git 分支切换**：`branches` 用 `for-each-ref --sort=-committerdate --count 501 --format=%(refname:short)%00%(HEAD) refs/heads` 读取本地分支，`current` 来自 `%(HEAD)`；只列 `refs/heads`，远程跟踪分支不在其中，也不会被检出为新的本地分支。`switchBranch` 先在同一列表中确认目标，再用 `git switch --no-guess --quiet <branch>`；不带 `--force`、不贮藏、不丢弃改动，Git 自己拒绝会覆盖本地或未跟踪文件的切换，该拒绝映射为 `switch-blocked`。目标已是当前分支时直接返回，不执行命令。
 - **Jujutsu**：每次 `status` 刷新执行一次 `jj log --no-graph -r @ -T commit_id` 快照工作副本（并发请求复用同一 Promise，失败清空缓存），其余读取（含轮末 `head` 读取 `change_id`）均带 `--ignore-working-copy` 复用已记录状态，不触发额外快照。`log` 使用 `::@ ~ root()` 或 `all() ~ root()`；`diff` 使用 `jj diff --git -r <rev>`，输出含 NUL 或 `U+FFFD` 时按二进制处理。
 - **每轮摘要与头指针记录**：`createTurnTracker`（`lib/turns.js`）监听活跃会话的 `session/event`、`agent/turn-stopping`、`tools/pre-execute` 与 `session/disposed`，在有工具执行或 `workspace/changes` 的轮次结束时串行读取外围仓库的 `head`（下一轮工具执行前等待上一轮完成，防止跨轮切分支串台）。`vcs.turn` 通过 `ctx.get('workspaceChanges')` 可选读取宿主的每轮 `{ total, added, deleted }`（校验 `turn` 与 `seq` 归属一致，剔除宿主路径与文件明细），并与该轮 `head` 合并返回；两者均不存在（如 Host 重启后的历史轮次）时返回 `404 not-found`。
 
@@ -169,7 +174,7 @@ type TurnSummary = {
 | 项目 | 上限 | 执行位置 |
 | --- | --- | --- |
 | 单会话列出的仓库数 | 50 | Host `discoverRepositories` |
-| 每组状态文件数（Git）/ 单提交详情文件数 / 未跟踪目录展开条目数 | 各 500 | Host `status` / `commit` / `untracked` |
+| 每组状态文件数（Git）/ 单提交详情文件数 / 未跟踪目录展开条目数 / 本地分支列表 | 各 500 | Host `status` / `commit` / `untracked` / `branches` |
 | 单文件 diff 输出 / 渲染行数 | 2 MB / 5,000 行 | Host `diff`、Client `FileDiff` |
 | “全部展开”的 diff 预算 | 单文件 1,000 行；单节点累计 20,000 行 | Client `budgetFolds`、`expandedFileFolds` |
 | diff 请求并发 / 视口预载距离 / 结果缓存 | 4 个并发 / 800 px / 最近 300 条 | Client 请求队列与缓存 |
@@ -203,6 +208,8 @@ Client 顶层注入 `['slots', 'locale', 'uiConversation']`，在四处与 DSH �
 会话状态保存在 `sessionStorage` 的 `vcs:<sessionId>`，包含 `repo`、`node`、`nodeChosen`、`ref`、`dirs`、`collapsed`、`folds`、`anchor`（`{ key, offset }`）、`split`、`wrap`、`sidebarWidth` 与 `timelineScroll`；内存另外按仓库记住切换前的选中节点、目录折叠与历史范围。
 
 `folds` 只为用户显式操作过的文件保存布尔值：空记录表示文件全部收起，也就是详情的默认形态。行键前缀白名单为 `staged|`、`unstaged|`、`commit|`；`sanitizeState` 在读取时丢弃未知字段与旧版遗留的 `untracked|` 键。数据刷新、折叠全部文件或收起吸顶文件头时，统一先记录锚点行与行内像素偏移，重排后恢复；锚点行未渲染时沿“文件行 → 父目录链 → 分组行”降级。
+
+顶部栏的分支菜单不进入持久化状态：每次打开菜单都重新读取本地分支（分支可能在面板外被创建或改名），上一份列表在重读期间保留。切换成功后，选中节点、折叠记录、未跟踪目录展开、阅读锚点与 diff 缓存一并清空，由状态应答按新分支重新选择默认节点；切换被拒绝时只显示提示，视图保持原样。
 
 ### 图布局与变更树管线
 
