@@ -1642,3 +1642,188 @@ test('VcsView keeps one icon turning from a sync click until its refresh returns
     restore()
   }
 })
+
+test('VcsView layout toggle shows the timeline beside the changes or one column at a time', async () => {
+  const sha = 'd'.repeat(40)
+  const json = body => ({ ok: true, status: 200, async json() { return body } })
+  const fetchImpl = async url => {
+    const parsed = new URL(url, 'http://127.0.0.1')
+    if (parsed.pathname === '/api/vcs.repositories') {
+      return json({
+        cwd: '/repo',
+        truncated: false,
+        repositories: [{ path: '/repo', name: 'repo', enclosing: true, vcs: 'git', capabilities: GIT_CAPABILITIES }],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.status') {
+      return json({
+        repo: { path: '/repo', name: 'repo' },
+        vcs: 'git',
+        capabilities: GIT_CAPABILITIES,
+        defaultNode: sha,
+        branch: { name: 'main', oid: sha, detached: false, unborn: false, upstream: null, ahead: 0, behind: 0 },
+        groups: { staged: [], unstaged: [], untracked: [] },
+        total: 0,
+        truncated: false,
+      })
+    }
+    if (parsed.pathname === '/api/vcs.log') {
+      return json({
+        truncated: false,
+        nextSkip: null,
+        commits: [{ sha, parents: [], refs: [{ name: 'main', kind: 'branch', current: true }], author: 'Ada', authorTime: 1_700_000_000_000, subject: 'only' }],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.commit') {
+      return json({
+        truncated: false,
+        commit: { sha, parents: [], refs: [], author: 'Ada', authorTime: 1_700_000_000_000, committer: 'Ada', committerTime: 1_700_000_000_000, subject: 'only', message: '', files: [] },
+      })
+    }
+    return json({ kind: 'text', path: 'a.js', before: true, after: true, hunks: [] })
+  }
+  // The panel remembers the layout per Session; keep it in a store the test can read.
+  const stored = new Map()
+  const storage = {
+    getItem: key => stored.get(key) ?? null,
+    setItem: (key, value) => { stored.set(key, String(value)) },
+  }
+  const savedFetch = globalThis.fetch
+  const savedStorage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
+  globalThis.fetch = fetchImpl
+  Object.defineProperty(globalThis, 'sessionStorage', { value: storage, configurable: true, writable: true })
+  /** The columns and controls the layout decides. */
+  const columns = body => ({
+    root: body.querySelector('.vcs-root'),
+    toggle: body.querySelector('.vcs-columns-toggle'),
+    timeline: body.querySelector('.vcs-sidebar'),
+    detail: body.querySelector('.vcs-content'),
+    resizer: body.querySelector('.vcs-resizer'),
+    back: body.querySelector('[aria-label="detail.back"]'),
+  })
+  try {
+    // A wide panel: two columns by default; the toggle puts the timeline away.
+    {
+      const harness = createHarness({ width: 1000 })
+      const restore = harness.installGlobals()
+      try {
+        const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+        harness.mount(harness.react.createElement(VcsView, { sessionId: 'session-columns', t, locale: 'en-US' }))
+        await harness.settle()
+        const body = harness.document.body
+
+        let view = columns(body)
+        assert.notEqual(view.toggle, null, 'the header carries the layout toggle')
+        assert.equal(view.toggle.attributes.get('aria-label'), 'top.twoColumns')
+        assert.equal(view.toggle.attributes.get('aria-pressed'), 'true')
+        assert.equal(view.toggle.attributes.get('title'), 'top.twoColumnsOff', 'the tooltip names what a click does')
+        assert.equal(view.root.attributes.get('data-single-column'), undefined)
+        assert.notEqual(view.timeline, null)
+        assert.notEqual(view.detail, null)
+        assert.notEqual(view.resizer, null)
+        assert.equal(view.back, null, 'two columns need no way back')
+
+        // One column at a time: the selected node's changes stay in front.
+        view.toggle.props.onClick()
+        await harness.settle()
+        view = columns(body)
+        assert.equal(view.toggle.attributes.get('aria-pressed'), 'false')
+        assert.equal(view.toggle.attributes.get('title'), 'top.twoColumnsOn')
+        assert.equal(view.root.attributes.get('data-single-column'), 'true')
+        assert.equal(view.root.attributes.get('data-narrow'), undefined, 'a wide header keeps its single row')
+        assert.equal(view.timeline, null)
+        assert.notEqual(view.detail, null, 'the changes take the full width')
+        assert.equal(view.resizer, null)
+        assert.notEqual(view.back, null)
+        assert.equal(JSON.parse(stored.get('vcs:session-columns')).twoColumns, false, 'the choice is kept for the Session')
+
+        // Back opens the timeline at full width; opening a node returns to its changes.
+        view.back.props.onClick()
+        await harness.settle()
+        view = columns(body)
+        assert.notEqual(view.timeline, null)
+        assert.equal(view.timeline.props.style, undefined, 'the single timeline is not held to the column width')
+        assert.equal(view.detail, null)
+        const row = body.querySelector('[data-timeline-index="0"]')
+        assert.notEqual(row, null)
+        harness.keyDown(row, 'ArrowRight')
+        await harness.settle()
+        view = columns(body)
+        assert.equal(view.timeline, null)
+        assert.notEqual(view.detail, null)
+        harness.keyDown(view.detail, 'Escape')
+        await harness.settle()
+        view = columns(body)
+        assert.notEqual(view.timeline, null, 'Escape returns to the timeline')
+        assert.equal(view.detail, null)
+
+        // Beside again: both columns and the divider come back.
+        view.toggle.props.onClick()
+        await harness.settle()
+        view = columns(body)
+        assert.equal(view.toggle.attributes.get('aria-pressed'), 'true')
+        assert.notEqual(view.timeline, null)
+        assert.notEqual(view.detail, null)
+        assert.notEqual(view.resizer, null)
+        assert.equal(view.back, null)
+        assert.equal(JSON.parse(stored.get('vcs:session-columns')).twoColumns, true)
+
+        // A Session that put the timeline away opens one column at a time.
+        view.toggle.props.onClick()
+        await harness.settle()
+      } finally {
+        harness.unmount()
+        restore()
+      }
+    }
+    {
+      const harness = createHarness({ width: 1000 })
+      const restore = harness.installGlobals()
+      try {
+        const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+        harness.mount(harness.react.createElement(VcsView, { sessionId: 'session-columns', t, locale: 'en-US' }))
+        await harness.settle()
+        const view = columns(harness.document.body)
+        assert.equal(view.toggle.attributes.get('aria-pressed'), 'false', 'the restored panel keeps one column')
+        assert.notEqual(view.timeline, null, 'a restored single column starts on the timeline')
+        assert.equal(view.detail, null)
+      } finally {
+        harness.unmount()
+        restore()
+      }
+    }
+    // A narrow panel is one column whatever the preference; the toggle says so.
+    {
+      const harness = createHarness({ width: 620 })
+      const restore = harness.installGlobals()
+      try {
+        const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+        harness.mount(harness.react.createElement(VcsView, { sessionId: 'session-columns-narrow', t, locale: 'en-US' }))
+        await harness.settle()
+        const body = harness.document.body
+        let view = columns(body)
+        assert.equal(view.root.attributes.get('data-narrow'), 'true')
+        assert.equal(view.root.attributes.get('data-single-column'), 'true')
+        assert.equal(view.toggle.attributes.get('aria-pressed'), 'true', 'the toggle keeps showing the preference')
+        assert.equal(view.toggle.attributes.get('title'), 'top.twoColumnsNarrow')
+        assert.notEqual(view.timeline, null)
+        assert.equal(view.detail, null)
+
+        view.toggle.props.onClick()
+        await harness.settle()
+        view = columns(body)
+        assert.equal(view.toggle.attributes.get('aria-pressed'), 'false')
+        assert.equal(view.toggle.attributes.get('title'), 'top.twoColumnsNarrow')
+        assert.notEqual(view.timeline, null, 'a narrow panel stays on the column it showed')
+        assert.equal(view.detail, null)
+      } finally {
+        harness.unmount()
+        restore()
+      }
+    }
+  } finally {
+    globalThis.fetch = savedFetch
+    if (savedStorage === undefined) delete globalThis.sessionStorage
+    else Object.defineProperty(globalThis, 'sessionStorage', savedStorage)
+  }
+})

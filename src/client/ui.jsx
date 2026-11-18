@@ -293,6 +293,21 @@ export function CompareSplitIcon() {
   )
 }
 
+/**
+ * A pane with a narrow column on its left: the timeline beside the changes.
+ * The column is filled while the timeline stands beside the changes and left
+ * empty while the panel shows one column at a time.
+ */
+export function TimelineBesideIcon({ beside }) {
+  return (
+    <svg className="vcs-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      {beside ? <rect x="2" y="3" width="4" height="10" rx="0.6" fill="currentColor" opacity="0.4" /> : null}
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" strokeWidth="1" />
+      <path d="M6.5 2.5v11" stroke="currentColor" strokeWidth="1" />
+    </svg>
+  )
+}
+
 /** Wrapped lines: the wrap toggle shows it while wrapping is off, from DSH's `wrap-fill` icon. */
 export function WrapIcon() {
   return (

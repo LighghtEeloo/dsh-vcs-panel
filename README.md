@@ -6,7 +6,7 @@ Version control in the DeepSeek Harness right Sidebar. Adds a `VCS` tab to inspe
 
 ## Features
 
-- **In the Sidebar.** The panel lives in a `VCS` tab beside files and terminals, with a card on the Sidebar guide. The Turn banner and the shortcut open the same tab.
+- **In the Sidebar.** The panel lives in a `VCS` tab beside files and terminals, with a card on the Sidebar guide. The Turn banner and the shortcut open the same tab. A header toggle shows the timeline beside the changes, or one column at a time so a wide Sidebar gives the diff its full width.
 - **Timeline & lane graph.** Working changes (`Working tree` in Git, `@` in Jujutsu) sit above topological commit history with branches, bookmarks, tags, and scope toggle (`HEAD` / `@` or all commits). Supports multi-repository workspaces.
 - **Inline change tree.** Browse changed files as a collapsible list, or expand any file to read its diff in place with sticky headers, unified or split view, and line wrapping.
 - **Git & Jujutsu native.** Shows staged and unstaged groups (`?` for untracked items) and ahead/behind in Git; shows `@`, change IDs, and bookmarks in Jujutsu.

@@ -1,7 +1,7 @@
 /**
  * The panel header, left to right: repository choice, history range,
  * working-state facts with sync and branch switching, the panel's message,
- * then the read-only marker and refresh.
+ * then the column layout toggle, the read-only marker, and refresh.
  *
  * A backend with a separate working tree shows its branch; when it can sync,
  * the ahead/behind counts sit on the sync button beside the branch, so the
@@ -16,7 +16,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Arrow, BranchIcon, CheckIcon, Chevron, IconButton, LockIcon, RefreshIcon, RefBadge, Segmented, SyncIcon, Turning,
+  Arrow, BranchIcon, CheckIcon, Chevron, IconButton, LockIcon, RefreshIcon, RefBadge, Segmented, SyncIcon,
+  TimelineBesideIcon, Turning,
 } from './ui.jsx'
 import { errorMessage, formatCount, shortChangeId } from './format.js'
 import { BRANCH_BUSY_KEYS } from './branch.js'
@@ -306,14 +307,17 @@ function SyncButton({ branch, syncing, onSync, t, locale }) {
  * one icon turns from the click until the counts it settles are back;
  * `switching` is a branch switch, `branchBusy` one of the other branch
  * actions in flight, `tagBusy` one of the tag actions, and `commitBusy` one
- * of the commit actions.
- * @param {{ repositories: object[], repo: string | null, onRepoChange: Function, status: object | null, capabilities: object | null, refMode: string, onRefMode: (ref: string) => void, onRefresh: Function, refreshing: boolean, revalidating?: boolean, onSync: Function, syncing: boolean, branches?: object[], branchesStatus?: string, branchesError?: object | null, branchesTruncated?: boolean, onLoadBranches?: Function, onSwitchBranch?: Function, onBranchActions?: Function, switching?: boolean, branchBusy?: string | null, tagBusy?: string | null, commitBusy?: string | null, notice?: { tone: 'error' | 'info', text: string } | null, t: Function, locale?: string }} props - panel header state.
+ * of the commit actions. `twoColumns` is the user's layout preference and
+ * `twoColumnsFit` whether the panel is wide enough to honor it; the toggle
+ * keeps showing the preference and its tooltip says when the width overrides it.
+ * @param {{ repositories: object[], repo: string | null, onRepoChange: Function, status: object | null, capabilities: object | null, refMode: string, onRefMode: (ref: string) => void, onRefresh: Function, refreshing: boolean, revalidating?: boolean, onSync: Function, syncing: boolean, branches?: object[], branchesStatus?: string, branchesError?: object | null, branchesTruncated?: boolean, onLoadBranches?: Function, onSwitchBranch?: Function, onBranchActions?: Function, switching?: boolean, branchBusy?: string | null, tagBusy?: string | null, commitBusy?: string | null, notice?: { tone: 'error' | 'info', text: string } | null, twoColumns?: boolean, twoColumnsFit?: boolean, onTwoColumns?: (next: boolean) => void, t: Function, locale?: string }} props - panel header state.
  */
 export function TopBar({
   repositories, repo, onRepoChange, status, capabilities, refMode, onRefMode, onRefresh, refreshing,
   revalidating = false, onSync, syncing, branches = [], branchesStatus = 'idle', branchesError = null,
   branchesTruncated = false, onLoadBranches = () => {}, onSwitchBranch = () => {}, onBranchActions = () => {},
-  switching = false, branchBusy = null, tagBusy = null, commitBusy = null, notice, t, locale,
+  switching = false, branchBusy = null, tagBusy = null, commitBusy = null, notice,
+  twoColumns = true, twoColumnsFit = true, onTwoColumns = () => {}, t, locale,
 }) {
   // Work on data already on screen shows as one thin bar under the header,
   // whether the user asked for it (refresh, sync, switch, a branch, tag, or
@@ -432,6 +436,17 @@ export function TopBar({
         </p>
       )}
       <span className="vcs-topbar-spacer" />
+      <IconButton
+        label={t('top.twoColumns')}
+        pressed={twoColumns}
+        title={!twoColumnsFit
+          ? t('top.twoColumnsNarrow')
+          : twoColumns ? t('top.twoColumnsOff') : t('top.twoColumnsOn')}
+        onClick={() => { onTwoColumns(!twoColumns) }}
+        className="vcs-columns-toggle"
+      >
+        <TimelineBesideIcon beside={twoColumns} />
+      </IconButton>
       <span
         className="vcs-readonly"
         role="img"

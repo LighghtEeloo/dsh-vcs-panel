@@ -104,6 +104,15 @@ test('sanitizeState drops the old untracked row keys and keeps current ones', ()
   assert.equal(sanitizeState({ anchor: { key: 'unknown|a', offset: 1 } }).anchor, null)
 })
 
+test('sanitizeState keeps the timeline beside the changes unless one column was asked for', () => {
+  assert.equal(defaultState().twoColumns, true)
+  assert.equal(sanitizeState({}).twoColumns, true, 'older state without the field keeps two columns')
+  assert.equal(sanitizeState({ twoColumns: false }).twoColumns, false)
+  assert.equal(sanitizeState({ twoColumns: true }).twoColumns, true)
+  assert.equal(sanitizeState({ twoColumns: 0 }).twoColumns, true, 'only an explicit false asks for one column')
+  assert.equal(sanitizeState({ twoColumns: 'false' }).twoColumns, true)
+})
+
 test('sanitizeState rejects malformed selections, anchors, and ranges', () => {
   const state = sanitizeState({
     node: 'not-hex',

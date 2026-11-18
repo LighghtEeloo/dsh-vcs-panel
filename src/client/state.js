@@ -45,6 +45,7 @@ export function defaultState() {
     anchor: null,
     split: false,
     wrap: false,
+    twoColumns: true,
     sidebarWidth: 320,
     timelineScroll: 0,
   }
@@ -122,6 +123,8 @@ export function sanitizeState(raw) {
   state.anchor = anchorOrNull(raw.anchor)
   state.split = raw.split === true
   state.wrap = raw.wrap === true
+  // Two columns are the default; only an explicit `false` asks for one at a time.
+  state.twoColumns = raw.twoColumns !== false
   if (typeof raw.sidebarWidth === 'number' && Number.isFinite(raw.sidebarWidth)) {
     state.sidebarWidth = clamp(Math.round(raw.sidebarWidth), SIDEBAR_MIN, SIDEBAR_MAX)
   }

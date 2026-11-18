@@ -243,7 +243,7 @@ Client 顶层注入 `['slots', 'locale', 'uiConversation', 'sidebarRight', 'side
 
 ### 状态持久化与锚点恢复
 
-会话状态保存在 `sessionStorage` 的 `vcs:<sessionId>`，包含 `repo`、`node`、`nodeChosen`、`ref`、`dirs`、`collapsed`、`folds`、`anchor`（`{ key, offset }`）、`split`、`wrap`、`sidebarWidth` 与 `timelineScroll`；内存另外按仓库记住切换前的选中节点、目录折叠与历史范围。页签身份与右侧栏布局由宿主的 `sidebarRight` 存储按会话保存，应用重启后恢复；面板自己的阅读状态（含时间线宽度）单独保存。
+会话状态保存在 `sessionStorage` 的 `vcs:<sessionId>`，包含 `repo`、`node`、`nodeChosen`、`ref`、`dirs`、`collapsed`、`folds`、`anchor`（`{ key, offset }`）、`split`、`wrap`、`twoColumns`（默认 `true`，只有显式 `false` 表示单栏）、`sidebarWidth` 与 `timelineScroll`；内存另外按仓库记住切换前的选中节点、目录折叠与历史范围。页签身份与右侧栏布局由宿主的 `sidebarRight` 存储按会话保存，应用重启后恢复；面板自己的阅读状态（含时间线宽度）单独保存。
 
 `folds` 只为用户显式操作过的文件保存布尔值：空记录表示文件全部收起，也就是详情的默认形态。行键前缀白名单为 `staged|`、`unstaged|`、`commit|`；`sanitizeState` 在读取时丢弃未知字段与旧版遗留的 `untracked|` 键。数据刷新、折叠全部文件或收起吸顶文件头时，统一先记录锚点行与行内像素偏移，重排后恢复；锚点行未渲染时沿“文件行 → 父目录链 → 分组行”降级。
 
@@ -253,7 +253,7 @@ Client 顶层注入 `['slots', 'locale', 'uiConversation', 'sidebarRight', 'side
 
 - **时间线图布局**：`buildGraph` 接收拓扑序节点，按 `pass / goto / end` 遍历活动 lane（第一父延续当前 lane，其余父节点分配或复用侧 lane，lane 结束时回收颜色；Git 工作区虚节点以虚线连向 `HEAD`），输出路径与圆点坐标，与虚拟列表共用滚动容器渲染；分页追加时 O(n) 重算整图并按提交锚点恢复位置。
 - **变更树与请求调度**：客户端将 Git 的 `untracked` 条目并入 `unstaged` 分组（可按需展开的未跟踪目录不参与单子目录链压缩），生成单一扁平行列表供渲染、roving tabindex 键盘导航与滚动锚点共用；文件默认收起，只有展开的行才请求 `vcs.diff`。发起请求时仍按条目自身状态还原 `scope`（`?` 走 `untracked`，重命名带 `oldPath`）。变更树窄于 640 px（`SPLIT_MIN_WIDTH`）时将 `FileDiff` 的 `split` 置为 `false` 单栏渲染。展开文件由 `IntersectionObserver` 入队请求，离开视口时经 `AbortController` 取消。`↑` / `↓` 或 `j` / `k` 沿一条纵向列表移动：分组、目录、文件行与展开文件的 hunk header 共用同一光标，hunk header 设 `tabIndex=-1` 以便程序聚焦但仍沿用行的 roving tabindex；`[` / `]` 只按树行移动。滚动时按当前阅读位置把光标同步到所在行或 hunk，并保持阅读行、焦点和吸顶标题指向同一位置；`←` / `h` 在当前行是展开文件时先收起它，已收起时才回到时间线，`Esc` 保留为直接返回。键盘匹配排除 `AltGraph`，保证需要 AltGr 输入 `[` / `]` 的键盘布局可用。
-- **右侧栏布局**：`VcsView` 的根节点只按自身宽度决定单栏或双栏，不为对话输入框预留底部空间。窄栏（`< 760px`）顶部栏可换行、高度自适应，避免只读标识与刷新按钮被裁掉；时间线与详情沿用已有的单栏切换。
+- **右侧栏布局**：`VcsView` 按自身宽度与 `twoColumns` 偏好决定栏数：`singleColumn = narrow || !twoColumns`，`narrow` 为根节点宽度 `< 760px`（`NARROW_WIDTH`）；不为对话输入框预留底部空间。单栏时 `singleView`（`'timeline'` / `'detail'`）决定显示哪一栏，选中或进入节点切到详情，返回按钮与 `Esc` 回到时间线，切换仓库或会话时回到时间线。根节点的 `data-narrow` 只管窄栏顶部栏换行与高度自适应（避免右端控件被裁掉），`data-single-column` 让时间线在单栏时占满整宽。顶部栏开关（`.vcs-columns-toggle`）调用 `setTwoColumns`：宽栏里关掉时有选中节点则切到详情；窄栏只改偏好，不改正在显示的栏。
 
 ## 复用与来源
 

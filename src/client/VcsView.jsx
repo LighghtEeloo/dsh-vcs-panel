@@ -38,7 +38,7 @@ import { TimelineSkeleton, TreeSkeleton } from './skeleton.jsx'
 const PAGE_SIZE = 300
 /** Reload when the panel becomes visible after this idle time. */
 const STALE_MS = 30_000
-/** Below this width the panel shows one column at a time. */
+/** Below this width the panel shows one column at a time, whatever the preference. */
 const NARROW_WIDTH = 760
 /** Width of the divider between the timeline and the detail. */
 const RESIZER_WIDTH = 5
@@ -96,7 +96,8 @@ export function VcsView({
   // The control whose refresh is waiting for status: 'refresh', 'sync', or null.
   const [refreshing, setRefreshing] = useState(null)
   const [width, setWidth] = useState(0)
-  const [narrowDetail, setNarrowDetail] = useState(false)
+  // The column the single-column layout shows: 'timeline' or 'detail'.
+  const [singleView, setSingleView] = useState('timeline')
   const [dirChildren, setDirChildren] = useState({})
   const [loadingDirs, setLoadingDirs] = useState({})
   // The top bar's message, right of the branch and sync: `{ tone: 'error' | 'info', text }`.
@@ -163,9 +164,12 @@ export function VcsView({
   const hostFocusPendingRef = useRef(false)
 
   const narrow = width > 0 && width < NARROW_WIDTH
+  // One column at a time when the panel is too narrow for two, or when the
+  // user put the timeline away.
+  const singleColumn = narrow || !state.twoColumns
   const missingTool = status.status === 'error' && status.error?.code === 'vcs-missing'
-  const showTimeline = !narrow || !narrowDetail
-  const showDetail = !narrow || narrowDetail
+  const showTimeline = !singleColumn || singleView === 'timeline'
+  const showDetail = !singleColumn || singleView === 'detail'
   const repositoriesReady = repositories.status === 'ready'
   const repoInfo = repositories.list.find(entry => entry.path === state.repo) ?? null
   const capabilities = status.data?.capabilities ?? repoInfo?.capabilities ?? null
@@ -250,7 +254,7 @@ export function VcsView({
     const ref = ranges?.some(range => range.value === savedRef)
       ? savedRef
       : (nextCapabilities?.defaultRange ?? 'HEAD')
-    setNarrowDetail(false)
+    setSingleView('timeline')
     setNotice(null)
     setDirChildren({})
     setLoadingDirs({})
@@ -444,7 +448,7 @@ export function VcsView({
     setRepositories({ status: 'loading', list: [], truncated: false, error: null })
     setDirChildren({})
     setLoadingDirs({})
-    setNarrowDetail(false)
+    setSingleView('timeline')
     setNotice(null)
     setBranches({ status: 'idle', list: [], truncated: false, error: null })
     setSwitching(null)
@@ -1200,8 +1204,8 @@ export function VcsView({
     const node = nodeAt(log.commits, index, { worktreeRow, workingCopyNode })
     if (node === null) return
     selectNode(node, true)
-    if (narrow) setNarrowDetail(true)
-  }, [log.commits, narrow, selectNode, worktreeRow, workingCopyNode])
+    if (singleColumn) setSingleView('detail')
+  }, [log.commits, selectNode, singleColumn, worktreeRow, workingCopyNode])
 
   /** Keyboard movement along the timeline; the selection follows the cursor. */
   const moveTimeline = useCallback(delta => {
@@ -1215,7 +1219,7 @@ export function VcsView({
   /** Move the keyboard into the selected node's files, or wait while they load. */
   const openDetail = useCallback(() => {
     pendingDetailFocusRef.current = true
-    if (narrow) setNarrowDetail(true)
+    if (singleColumn) setSingleView('detail')
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         if (!pendingDetailFocusRef.current) return
@@ -1224,12 +1228,12 @@ export function VcsView({
           return
         }
         const active = typeof document === 'undefined' ? null : document.activeElement
-        if (narrow && (active === null || active === document.body || !rootRef.current?.contains(active))) {
+        if (singleColumn && (active === null || active === document.body || !rootRef.current?.contains(active))) {
           rootRef.current?.focus({ preventScroll: true })
         }
       })
     })
-  }, [narrow])
+  }, [singleColumn])
 
   /** Complete a deferred detail focus once the selected node's rows arrive. */
   const onDetailSettled = useCallback(hasRows => {
@@ -1244,19 +1248,30 @@ export function VcsView({
     detailControl.current?.focusNav()
   }, [])
 
-  /** Return the keyboard to the timeline, closing the narrow detail. */
+  /** Return the keyboard to the timeline, closing the single-column detail. */
   const leaveDetail = useCallback(() => {
     pendingDetailFocusRef.current = false
-    if (narrow) setNarrowDetail(false)
+    if (singleColumn) setSingleView('timeline')
     focusTimelineRow(selectedRow < 0 ? 0 : selectedRow)
-  }, [focusTimelineRow, narrow, selectedRow])
+  }, [focusTimelineRow, selectedRow, singleColumn])
+
+  /**
+   * Show the timeline beside the changes, or one column at a time. Putting the
+   * timeline away on a wide panel leaves the selected node's changes in front:
+   * reading them is what wants the width. A narrow panel already shows one
+   * column, so only the stored preference changes there.
+   */
+  const setTwoColumns = useCallback(next => {
+    if (!next && !narrow) setSingleView(stateRef.current.node === null ? 'timeline' : 'detail')
+    update({ twoColumns: next })
+  }, [narrow, update])
 
   /** Jump to a loaded commit named in the detail, such as a parent. */
   const selectCommit = useCallback(sha => {
     selectNode(sha, true)
     const index = commitIndex.get(sha)
-    if (index !== undefined && !narrow) focusTimelineRow(index + (worktreeRow ? 1 : 0))
-  }, [commitIndex, focusTimelineRow, narrow, selectNode, worktreeRow])
+    if (index !== undefined && !singleColumn) focusTimelineRow(index + (worktreeRow ? 1 : 0))
+  }, [commitIndex, focusTimelineRow, selectNode, singleColumn, worktreeRow])
 
   // Read through a ref so the detail's request effects do not restart on every status answer.
   const statusDataRef = useRef(null)
@@ -1304,9 +1319,9 @@ export function VcsView({
     }
   }, [api, log.commits.length, log.hasMore, log.loadingMore, state.repo, state.ref, t])
 
-  /** Escape closes the narrow detail from anywhere inside it. */
+  /** Escape closes the single-column detail from anywhere inside it. */
   const onKeyDown = event => {
-    if (event.key !== 'Escape' || !narrow || !narrowDetail) return
+    if (event.key !== 'Escape' || !singleColumn || singleView !== 'detail') return
     if (isEditableTarget(event.target)) return
     event.preventDefault()
     leaveDetail()
@@ -1346,6 +1361,7 @@ export function VcsView({
       ref={rootRef}
       className="vcs-root"
       data-narrow={narrow ? 'true' : undefined}
+      data-single-column={singleColumn ? 'true' : undefined}
       tabIndex={-1}
       onKeyDown={onKeyDown}
     >
@@ -1377,6 +1393,9 @@ export function VcsView({
         tagBusy={tagBusy}
         commitBusy={commitBusy}
         notice={notice}
+        twoColumns={state.twoColumns}
+        twoColumnsFit={!narrow}
+        onTwoColumns={setTwoColumns}
         t={t}
         locale={locale}
       />
@@ -1387,11 +1406,11 @@ export function VcsView({
         <div className="vcs-main">
           <section
             className="vcs-sidebar vcs-sidebar-loading"
-            style={narrow ? undefined : { width: `${state.sidebarWidth}px` }}
+            style={singleColumn ? undefined : { width: `${state.sidebarWidth}px` }}
           >
             <TimelineSkeleton rowHeight={ROW_HEIGHT} label={t('loading.repositories')} />
           </section>
-          {narrow ? null : <section className="vcs-content"><TreeSkeleton /></section>}
+          {singleColumn ? null : <section className="vcs-content"><TreeSkeleton /></section>}
         </div>
       ) : state.repo === null ? (
         <div className="vcs-center">
@@ -1407,7 +1426,7 @@ export function VcsView({
       ) : (
         <div className="vcs-main">
           {showTimeline ? (
-            <section className="vcs-sidebar" style={narrow ? undefined : { width: `${state.sidebarWidth}px` }}>
+            <section className="vcs-sidebar" style={singleColumn ? undefined : { width: `${state.sidebarWidth}px` }}>
               <Timeline
                 key={`${state.repo}|${state.ref}`}
                 commits={log.commits}
@@ -1440,7 +1459,7 @@ export function VcsView({
               />
             </section>
           ) : null}
-          {!narrow ? (
+          {!singleColumn ? (
             <div
               className="vcs-resizer"
               role="separator"
@@ -1487,7 +1506,7 @@ export function VcsView({
                   wrap={state.wrap}
                   onToggleSplit={split => { update({ split }) }}
                   onToggleWrap={wrap => { update({ wrap }) }}
-                  narrow={narrow}
+                  singleColumn={singleColumn}
                   onBack={leaveDetail}
                   onLeaveNav={leaveDetail}
                   onSelectCommit={selectCommit}

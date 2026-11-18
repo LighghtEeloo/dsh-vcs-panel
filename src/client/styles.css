@@ -1556,7 +1556,7 @@
   .vcs-chevron { transition: none; }
 }
 
-/* Narrow single-column layout -------------------------------------------- */
+/* Narrow panel and single-column layout ----------------------------------- */
 
 /* A narrow Sidebar keeps every header control reachable by wrapping instead of
    clipping the right end of the bar. */
@@ -1572,13 +1572,16 @@
   flex: 1 1 120px;
 }
 
-.vcs-root[data-narrow] .vcs-sidebar {
-  flex: 1;
-  width: auto;
-}
-
 .vcs-root[data-narrow] .vcs-repo-select {
   max-width: 150px;
+}
+
+/* One column at a time, because the panel is narrow or the user put the
+   timeline away: the timeline takes the full width while it is the column
+   on show. */
+.vcs-root[data-single-column] .vcs-sidebar {
+  flex: 1;
+  width: auto;
 }
 
 /* Working-copy state and bookmarks --------------------------------------- */

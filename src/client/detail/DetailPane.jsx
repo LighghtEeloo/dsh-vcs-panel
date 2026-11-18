@@ -138,7 +138,7 @@ export function DetailPane({
   api, repo, node, summary, status, statusState, statusError,
   dirChildren, loadingDirs, dirs, collapsed, onToggleDir,
   folds, onToggleFold, onSetFolds, split, wrap, onToggleSplit, onToggleWrap,
-  narrow, onBack, onLeaveNav, onSelectCommit, isLoaded, onMissing, onSettled,
+  singleColumn, onBack, onLeaveNav, onSelectCommit, isLoaded, onMissing, onSettled,
   revision, cache, initialAnchor, onReading, control, capabilities, t, locale,
 }) {
   const isWorktree = node === WORKTREE && capabilities?.workingCopy !== 'commit'
@@ -280,7 +280,7 @@ export function DetailPane({
   return (
     <div className="vcs-detail" ref={rootRef}>
       <div className="vcs-detail-toolbar">
-        {narrow ? <IconButton label={t('detail.back')} onClick={onBack}><BackIcon /></IconButton> : null}
+        {singleColumn ? <IconButton label={t('detail.back')} onClick={onBack}><BackIcon /></IconButton> : null}
         {isWorktree ? (
           <>
             <strong className="vcs-detail-title">{t('timeline.worktree')}</strong>
