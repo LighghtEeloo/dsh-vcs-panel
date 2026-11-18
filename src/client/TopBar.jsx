@@ -1,7 +1,7 @@
 /**
- * The panel header, left to right: repository and worktree choices, history range,
- * working-state facts with sync and branch switching, the panel's message,
- * then the column layout toggle, the read-only marker, and refresh.
+ * The panel header, left to right: repository and worktree menus, working-state
+ * facts with sync and branch switching, the panel's message, then the column
+ * layout toggle, the read-only marker, and refresh.
  *
  * A backend with a separate working tree shows its branch; when it can sync,
  * the ahead/behind counts sit on the sync button beside the branch, so the
@@ -10,13 +10,13 @@
  * hands the branch to the panel's shared actions menu. The message (a sync,
  * switch, or branch-action outcome, or a failure) follows them, so it reads
  * next to what it reports on. A backend whose working copy is a commit shows
- * `@`, its change id, and the refs pointing at it. The range options come from
- * the backend's capabilities, so a future backend only supplies labels.
+ * `@`, its change id, and the refs pointing at it. The worktree menu also
+ * offers the history ranges declared by the backend.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Arrow, BranchIcon, CheckIcon, Chevron, IconButton, LockIcon, RefreshIcon, RefBadge, Segmented, SyncIcon,
+  Arrow, BranchIcon, CheckIcon, Chevron, IconButton, LockIcon, RefreshIcon, RefBadge, SyncIcon,
   TimelineBesideIcon, Turning,
 } from './ui.jsx'
 import { errorMessage, formatCount, shortChangeId } from './format.js'
@@ -25,12 +25,6 @@ import { TAG_BUSY_KEYS } from './tag.js'
 import { COMMIT_BUSY_KEYS } from './commit.js'
 import { useFloatingMenu } from './useFloatingMenu.js'
 import { worktreeRefLabel } from './worktrees.js'
-
-/** Range choices when no backend has answered yet. */
-const FALLBACK_RANGES = [
-  { value: 'HEAD', label: 'history.head', title: 'history.headTitle' },
-  { value: 'all', label: 'history.all', title: 'history.allTitle' },
-]
 
 /** Ref badges shown in the header before the rest are left to the timeline. */
 const HEADER_REFS = 3
@@ -324,9 +318,26 @@ function HeaderPicker({ kind, label, summary, buttonLabel, title, disabled = fal
   )
 }
 
+/** One item in a single-selection menu group. */
+function PickerRadioItem({ checked, title, onClick, className, children }) {
+  return (
+    <button
+      type="button"
+      role="menuitemradio"
+      className={className ? `vcs-menu-item ${className}` : 'vcs-menu-item'}
+      tabIndex={-1}
+      aria-checked={checked}
+      title={title}
+      onClick={onClick}
+    >
+      <span className="vcs-menu-item-name">{children}</span>
+      {checked ? <CheckIcon /> : null}
+    </button>
+  )
+}
+
 /** The repository choice is exclusive; activating a row closes the menu. */
-function RepositoryPicker({ repositories, repo, onRepoChange, t }) {
-  const current = repositories.find(entry => entry.path === repo)
+function RepositoryPicker({ repositories, current, onRepoChange, t }) {
   const summary = current?.name ?? t('top.noRepository')
   return (
     <HeaderPicker
@@ -338,15 +349,12 @@ function RepositoryPicker({ repositories, repo, onRepoChange, t }) {
       disabled={repositories.length === 0}
     >
       {close => repositories.map(entry => {
-        const selected = entry.path === repo
+        const selected = entry === current
         return (
-          <button
+          <PickerRadioItem
             key={entry.path}
-            type="button"
-            role="menuitemradio"
-            className="vcs-menu-item vcs-repo-item"
-            tabIndex={-1}
-            aria-checked={selected}
+            className="vcs-repo-item"
+            checked={selected}
             title={entry.path}
             onClick={event => {
               const fromPointer = event.detail > 0
@@ -354,58 +362,85 @@ function RepositoryPicker({ repositories, repo, onRepoChange, t }) {
               close(selected || !fromPointer)
             }}
           >
-            <span className="vcs-menu-item-name">
-              {entry.name}
-              {entry.enclosing ? null : <small>{entry.path}</small>}
-            </span>
-            {selected ? <CheckIcon /> : null}
-          </button>
+            {entry.name}
+            {entry.enclosing ? null : <small>{entry.path}</small>}
+          </PickerRadioItem>
         )
       })}
     </HeaderPicker>
   )
 }
 
-/** A checklist changes the display only; keep it open for successive checks. */
-function WorktreeChecklist({ worktrees, checkedPaths, sessionPath, onToggle, t, locale }) {
+/** The choices affect what is displayed; keep the menu open for successive changes. */
+function WorktreePicker({
+  worktrees, checkedPaths, sessionPath, workingCopyChoice, onToggle, ranges, refMode, onRefMode, t, locale,
+}) {
+  const selectedPaths = workingCopyChoice === null ? checkedPaths : [workingCopyChoice.path]
+  const currentRange = ranges.find(range => range.value === refMode)
+  const rangeLabel = t('history.refLabel')
+  function renderOptions() {
+    // A worktree row or a working-copy commit describes the same UI choice,
+    // but only the former participates in worktree requests and selection.
+    const choices = workingCopyChoice === null
+      ? worktrees.map(tree => ({ path: tree.path, name: tree.name, refLabel: worktreeRefLabel(tree, t) }))
+      : [workingCopyChoice]
+    return (
+      <>
+        <div className="vcs-worktree-choices">
+          {choices.map(({ path, name, refLabel }) => {
+            const checked = selectedPaths.includes(path)
+            const last = checked && selectedPaths.length === 1
+            return (
+              <button
+                key={path}
+                type="button"
+                role="menuitemcheckbox"
+                className="vcs-menu-item vcs-worktree-item"
+                tabIndex={-1}
+                aria-checked={checked}
+                aria-disabled={last ? 'true' : undefined}
+                title={path}
+                onClick={() => { if (!last) onToggle(path) }}
+              >
+                <span className="vcs-worktree-check" aria-hidden="true">{checked ? <CheckIcon /> : null}</span>
+                <span className="vcs-menu-item-name">
+                  {name}
+                  {refLabel === null || refLabel === name ? null : <small>{refLabel}</small>}
+                </span>
+                {path === sessionPath ? <span className="vcs-worktree-current">{t('top.sessionWorktree')}</span> : null}
+              </button>
+            )
+          })}
+        </div>
+        {choices.length > 1 ? <p className="vcs-picker-menu-note">{t('top.keepWorktree')}</p> : null}
+        {ranges.length > 0 ? (
+          <div className="vcs-worktree-range" role="group" aria-label={rangeLabel}>
+            <p className="vcs-picker-menu-title" aria-hidden="true">{rangeLabel}</p>
+            {ranges.map(range => (
+              <PickerRadioItem
+                key={range.value}
+                checked={range.value === refMode}
+                title={t(range.title)}
+                onClick={() => { if (range.value !== refMode) onRefMode(range.value) }}
+              >
+                {t(range.label)}
+              </PickerRadioItem>
+            ))}
+          </div>
+        ) : null}
+      </>
+    )
+  }
+
   return (
     <HeaderPicker
       kind="worktree"
       label={t('top.worktrees')}
-      summary={t('top.worktreeSelection', { count: formatCount(checkedPaths.length, locale) })}
+      summary={t('top.worktreeSelection', { count: formatCount(selectedPaths.length, locale) })}
+      title={currentRange === undefined ? undefined : t(currentRange.title)}
       dismissOnScroll={false}
     >
-      {() => (
-        <>
-          {worktrees.map(tree => {
-            const checked = checkedPaths.includes(tree.path)
-            const last = checked && checkedPaths.length === 1
-            const label = worktreeRefLabel(tree, t)
-            return (
-              <button
-                key={tree.path}
-                type="button"
-                role="menuitemcheckbox"
-                className="vcs-menu-item vcs-worktree-item"
-                data-worktree-item=""
-                tabIndex={-1}
-                aria-checked={checked}
-                aria-disabled={last ? 'true' : undefined}
-                title={tree.path}
-                onClick={() => { if (!last) onToggle(tree.path) }}
-              >
-                <span className="vcs-worktree-check" aria-hidden="true">{checked ? <CheckIcon /> : null}</span>
-                <span className="vcs-menu-item-name">
-                  {tree.name}
-                  {label === null || label === tree.name ? null : <small>{label}</small>}
-                </span>
-                {tree.path === sessionPath ? <span className="vcs-worktree-current">{t('top.sessionWorktree')}</span> : null}
-              </button>
-            )
-          })}
-          <p className="vcs-picker-menu-note">{t('top.keepWorktree')}</p>
-        </>
-      )}
+      {renderOptions}
     </HeaderPicker>
   )
 }
@@ -472,6 +507,12 @@ export function TopBar({
   const branch = status?.branch
   const workingCopy = status?.workingCopy
   const showsWorkingCopy = capabilities?.workingCopy === 'commit'
+  const currentRepository = repositories.find(entry => entry.path === repo)
+  // Represent a commit-based working copy in the menu only, without a
+  // separate worktree row or any worktree requests.
+  const workingCopyChoice = showsWorkingCopy && currentRepository !== undefined
+    ? { path: currentRepository.path, name: currentRepository.name, refLabel: capabilities.workingCopyNode ?? null }
+    : null
   let branchText = ''
   if (branch !== undefined && branch !== null) {
     if (branch.unborn) branchText = t('top.unborn')
@@ -487,7 +528,7 @@ export function TopBar({
   const branchSwitchable = capabilities?.branchSwitch === true
     && branch !== undefined && branch !== null
     && branch.unborn !== true
-  const ranges = capabilities?.ranges ?? FALLBACK_RANGES
+  const ranges = capabilities?.ranges ?? []
   const capacity = capabilities
   const branchOps = capacity?.branchOps === true
   let readonlyLabel = t('top.readonly')
@@ -518,21 +559,22 @@ export function TopBar({
   }
   return (
     <div className="vcs-topbar">
-      <RepositoryPicker repositories={repositories} repo={repo} onRepoChange={onRepoChange} t={t} />
-      {worktrees.length > 0 ? (
-        <WorktreeChecklist key={repo} worktrees={worktrees} checkedPaths={checkedPaths} sessionPath={sessionPath}
-          onToggle={onToggleWorktree} t={t} locale={locale} />
+      <RepositoryPicker repositories={repositories} current={currentRepository} onRepoChange={onRepoChange} t={t} />
+      {worktrees.length > 0 || workingCopyChoice !== null ? (
+        <WorktreePicker
+          key={repo}
+          worktrees={worktrees}
+          checkedPaths={checkedPaths}
+          sessionPath={sessionPath}
+          workingCopyChoice={workingCopyChoice}
+          onToggle={onToggleWorktree}
+          ranges={ranges}
+          refMode={refMode}
+          onRefMode={onRefMode}
+          t={t}
+          locale={locale}
+        />
       ) : null}
-      <Segmented
-        value={refMode}
-        label={t('history.refLabel')}
-        options={ranges.map(range => ({
-          value: range.value,
-          label: t(range.label),
-          title: t(range.title),
-        }))}
-        onChange={onRefMode}
-      />
       {showsWorkingCopy ? (
         workingCopy === null || workingCopy === undefined ? null : (
           <span className="vcs-working-copy" title={t('top.workingCopyTitle')}>

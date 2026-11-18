@@ -3,7 +3,7 @@
  *
  * The Host policy forbids external plugins from loading Harness Client
  * packages, so this file keeps the few controls the panel needs (buttons,
- * segmented choices, ref badges, icons) local, styled with theme tokens.
+ * ref badges, icons) local, styled with theme tokens.
  */
 
 import { useEffect, useRef } from 'react'
@@ -128,29 +128,6 @@ export function Turning({ turning, restEvery = 360, children }) {
   }, [])
 
   return <span ref={elementRef} className="vcs-turning">{children}</span>
-}
-
-/**
- * Exclusive choice rendered as a row of buttons.
- * @param {{ value: string, options: Array<{ value: string, label: string, title?: string }>, onChange: (value: string) => void, label: string }} props - choice state.
- */
-export function Segmented({ value, options, onChange, label }) {
-  return (
-    <div className="vcs-segmented" role="group" aria-label={label}>
-      {options.map(option => (
-        <button
-          key={option.value}
-          type="button"
-          className="vcs-segmented-item"
-          aria-pressed={option.value === value}
-          title={option.title ?? option.label}
-          onClick={() => { onChange(option.value) }}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  )
 }
 
 /**

@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url'
 import { createApi } from '../src/client/api.js'
 import { buildNodeRows } from '../src/client/detail/tree.js'
 import { budgetFolds, streamSections } from '../src/client/detail/detail.js'
-import { GIT_CAPABILITIES, GIT_WORKTREE_CAPABILITIES } from '../lib/vcs/capabilities.js'
+import { GIT_CAPABILITIES, GIT_WORKTREE_CAPABILITIES, JUJUTSU_CAPABILITIES } from '../lib/vcs/capabilities.js'
 
 const require = createRequire(import.meta.url)
 const { build } = require('esbuild')
@@ -2490,7 +2490,7 @@ test('VcsView scopes in-flight writes per repository without locking another rep
   }
 })
 
-test('VcsView overlays the checked trees, preserves repository history across all-range checks, and isolates diffs', async () => {
+test('VcsView combines Git worktree and range choices and isolates diffs by worktree', async () => {
   const harness = createHarness({ width: 1000 })
   const restore = harness.installGlobals()
   const fakeWin = installFakeWindow()
@@ -2561,8 +2561,11 @@ test('VcsView overlays the checked trees, preserves repository history across al
     const body = harness.document.body
     const chooseRepo = body.querySelector('.vcs-repo-button')
     const button = body.querySelector('.vcs-worktree-button')
-    const items = () => body.querySelectorAll('[data-worktree-item]')
+    const menu = () => body.querySelector('.vcs-worktree-menu')
+    const items = () => menu().querySelectorAll('[role="menuitemcheckbox"]')
+    const ranges = () => menu().querySelectorAll('[role="menuitemradio"]')
     const rows = () => body.querySelectorAll('.vcs-worktree-row')
+    assert.equal(body.querySelector('[aria-label="history.refLabel"]'), null, 'the closed menu leaves no range control in the header')
     harness.mouseClick(chooseRepo)
     await harness.settle()
     const repoOptions = body.querySelector('.vcs-repo-menu').querySelectorAll('[role="menuitemradio"]')
@@ -2572,6 +2575,8 @@ test('VcsView overlays the checked trees, preserves repository history across al
     button.focus()
     harness.keyDown(button, 'ArrowDown')
     await harness.settle()
+    assert.deepEqual(ranges().map(item => textOf(item)), ['history.selectedWorktrees', 'history.all'])
+    assert.deepEqual(ranges().map(item => item.attributes.get('aria-checked')), ['true', 'false'])
     assert.equal(harness.document.activeElement, items()[0])
     assert.equal(items()[0].attributes.get('aria-checked'), 'true')
     assert.equal(items()[0].attributes.get('aria-disabled'), 'true')
@@ -2593,7 +2598,7 @@ test('VcsView overlays the checked trees, preserves repository history across al
     harness.keyDown(items()[1], 'Escape')
     await harness.settle()
     assert.equal(harness.document.activeElement, button)
-    assert.equal(body.querySelector('.vcs-worktree-menu'), null)
+    assert.equal(menu(), null)
 
     rows()[0].props.onClick()
     await harness.settle()
@@ -2615,19 +2620,29 @@ test('VcsView overlays the checked trees, preserves repository history across al
     await harness.settle()
     assert.deepEqual(requestedDiff, { sessionId: 'worktree-session', repo: source, worktree: sibling, scope: 'untracked', path: 'drafts/preview.txt' })
 
-    body.querySelectorAll('.vcs-segmented-item')[1].props.onClick()
+    harness.mouseClick(button)
     await harness.settle()
-    const requestCount = historyReads.length
+    harness.keyDown(harness.document.activeElement, 'End')
+    const all = ranges()[1]
+    assert.equal(harness.document.activeElement, all)
+    harness.keyClick(all)
+    await harness.settle()
     assert.deepEqual(historyReads.at(-1), { ref: 'all', paths: [] })
-    button.props.onClick()
-    await harness.settle()
-    items()[0].props.onClick()
+    assert.deepEqual(ranges().map(item => item.attributes.get('aria-checked')), ['false', 'true'])
+    assert.equal(harness.document.activeElement, all, 'switching range keeps focus in the menu')
+    assert.equal(button.attributes.get('title'), 'history.allTitle')
+    assert.equal(rows().length, 2)
+    const requestCount = historyReads.length
+    harness.keyClick(all)
+    harness.keyDown(all, 'Home')
+    harness.keyClick(items()[0], ' ')
     await harness.settle()
     assert.equal(historyReads.length, requestCount, 'checking changes only the worktree rows in all-history scope')
     assert.equal(rows().length, 1)
     assert.equal(rows()[0].attributes.get('title'), sibling)
     assert.match(textOf(body.querySelector('.vcs-timeline')), /main-only commit/u)
     assert.equal(body.querySelector('.vcs-branch-button'), null, 'a single sibling stays read-only')
+    harness.keyDown(items()[0], 'Escape')
 
     offered = false
     body.querySelector('[aria-label="top.refresh"]').props.onClick()
@@ -2635,12 +2650,92 @@ test('VcsView overlays the checked trees, preserves repository history across al
     assert.equal(chooseRepo.attributes.get('title'), source)
     assert.equal(rows().length, 1)
     assert.equal(rows()[0].attributes.get('title'), source, 'a removed selection falls back to the session worktree')
+    assert.deepEqual(historyReads.at(-1), { ref: 'all', paths: [] }, 'refresh preserves the chosen history range')
     assert.notEqual(body.querySelector('.vcs-branch-button'), null)
     assert.deepEqual(writes, [])
   } finally {
     releaseMainDirectory?.()
     harness.unmount()
     fakeWin.restore()
+    restore()
+    globalThis.fetch = savedFetch
+  }
+})
+
+test('VcsView uses the same menu for Jujutsu with only the current working copy', async () => {
+  const harness = createHarness({ width: 320 })
+  const restore = harness.installGlobals()
+  const savedFetch = globalThis.fetch
+  const path = '/jj-repo'
+  const copy = {
+    sha: 'a'.repeat(40), changeId: 'abcxyz', parents: [], refs: [], author: 'Ada',
+    authorTime: 1_700_000_000_000, subject: 'Working copy', workingCopy: true,
+  }
+  const historyReads = []
+  const statusReads = []
+  const json = body => ({ ok: true, status: 200, async json() { return body } })
+  globalThis.fetch = async (url, init) => {
+    const { pathname, searchParams: params } = new URL(url, 'http://127.0.0.1')
+    assert.equal(init.method, 'GET')
+    assert.deepEqual(params.getAll('worktree'), [], 'a worktree choice in the menu is not a backend worktree')
+    if (pathname === '/api/vcs.repositories') {
+      return json({ repositories: [{ path, name: 'jj-repo', enclosing: true, capabilities: JUJUTSU_CAPABILITIES }] })
+    }
+    assert.equal(params.get('repo'), path)
+    if (pathname === '/api/vcs.status') {
+      statusReads.push(path)
+      const { sha: commitId, changeId, refs } = copy
+      return json({
+        defaultNode: '@', capabilities: JUJUTSU_CAPABILITIES,
+        workingCopy: { node: '@', commitId, changeId, refs, summary: { changed: 0, added: 0, deleted: 0 } },
+      })
+    }
+    if (pathname === '/api/vcs.log') {
+      historyReads.push(params.get('ref'))
+      return json({ commits: [copy] })
+    }
+    if (pathname === '/api/vcs.commit') return json({ commit: { ...copy, files: [] } })
+    throw new Error(`unexpected route: ${pathname}`)
+  }
+  try {
+    const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+    harness.mount(harness.react.createElement(VcsView, { sessionId: 'jj-range-menu', t }))
+    await harness.settle()
+    const body = harness.document.body
+    const trigger = body.querySelector('.vcs-worktree-button')
+    assert.equal(textOf(trigger), t('top.worktreeSelection', { count: '1' }))
+    assert.equal(body.querySelector('.vcs-worktree-row'), null)
+    assert.equal(body.querySelector('[aria-label="history.refLabel"]'), null)
+    trigger.focus()
+    harness.keyDown(trigger, 'ArrowDown')
+    await harness.settle()
+    const menu = body.querySelector('.vcs-worktree-menu')
+    const choices = menu.querySelectorAll('[role="menuitemcheckbox"]')
+    assert.equal(choices.length, 1)
+    const [workingCopy] = choices
+    assert.match(textOf(workingCopy), /jj-repo@/u)
+    assert.equal(workingCopy.attributes.get('aria-checked'), 'true')
+    assert.equal(workingCopy.attributes.get('aria-disabled'), 'true')
+    harness.keyClick(workingCopy)
+    await harness.settle()
+    assert.deepEqual(statusReads, [path])
+    assert.deepEqual(historyReads, ['@'])
+
+    const ranges = menu.querySelectorAll('[role="menuitemradio"]')
+    assert.deepEqual(ranges.map(textOf), ['history.workingCopy', 'history.all'])
+    assert.deepEqual(ranges.map(item => item.attributes.get('aria-checked')), ['true', 'false'])
+    harness.keyDown(workingCopy, 'End')
+    harness.keyClick(ranges[1])
+    await harness.settle()
+    assert.deepEqual(historyReads, ['@', 'all'])
+    assert.deepEqual(ranges.map(item => item.attributes.get('aria-checked')), ['false', 'true'])
+    assert.equal(harness.document.activeElement, ranges[1])
+    assert.equal(workingCopy.attributes.get('aria-checked'), 'true')
+    harness.keyDown(ranges[1], 'Escape')
+    assert.equal(harness.document.activeElement, trigger)
+    assert.equal(body.querySelector('.vcs-worktree-menu'), null)
+  } finally {
+    harness.unmount()
     restore()
     globalThis.fetch = savedFetch
   }
@@ -2868,7 +2963,7 @@ test('VcsView keeps keyboard navigation flowing across button clicks and Tab act
     await harness.settle()
     assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
 
-    // Clicking Sync, Refresh, All/HEAD range toggle, and Load More keeps focus on the timeline stop.
+    // Clicking Sync, Refresh, and Load More keeps focus on the timeline stop.
     harness.mouseClick(body.querySelector('.vcs-sync'))
     await harness.settle()
     assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
@@ -2877,11 +2972,20 @@ test('VcsView keeps keyboard navigation flowing across button clicks and Tab act
     await harness.settle()
     assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
 
-    harness.mouseClick(body.querySelector('[title="history.allTitle"]'))
+    // Range changes keep the menu focused without changing the selected commit.
+    const worktreeButton = body.querySelector('.vcs-worktree-button')
+    harness.mouseClick(worktreeButton)
     await harness.settle()
-    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1', 'chosen commit survives range switch')
-
-    harness.mouseClick(body.querySelector('[title="history.headTitle"]'))
+    const [selectedWorktrees, allCommits] = body.querySelector('.vcs-worktree-menu').querySelectorAll('[role="menuitemradio"]')
+    harness.mouseClick(allCommits)
+    await harness.settle()
+    assert.equal(harness.document.activeElement, allCommits)
+    assert.equal(body.querySelector('[data-timeline-index="1"]').attributes.get('aria-current'), 'true')
+    harness.mouseClick(selectedWorktrees)
+    await harness.settle()
+    harness.keyDown(selectedWorktrees, 'Escape')
+    assert.equal(harness.document.activeElement, worktreeButton)
+    harness.keyDown(worktreeButton, 'Escape')
     await harness.settle()
     assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
 

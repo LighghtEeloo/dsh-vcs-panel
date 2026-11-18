@@ -249,6 +249,20 @@
   height: 12px;
 }
 
+/* Long worktree lists scroll independently, leaving the range choices visible. */
+.vcs-worktree-choices {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.vcs-worktree-range {
+  flex: none;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
 .vcs-repo-item,
 .vcs-worktree-item {
   min-height: 32px;
@@ -1349,31 +1363,6 @@
 /* Busy: clicks wait for the work, the look stays as it was when clicked. */
 .vcs-icon-button[aria-busy='true'] {
   cursor: default;
-}
-
-.vcs-segmented {
-  display: inline-flex;
-  flex: none;
-  padding: 2px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm, 6px);
-}
-
-.vcs-segmented-item {
-  height: 20px;
-  padding: 0 8px;
-  border: none;
-  border-radius: 4px;
-  color: var(--dsw-alias-label-secondary);
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.vcs-segmented-item[aria-pressed='true'] {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-2);
 }
 
 /* States ------------------------------------------------------------------ */
