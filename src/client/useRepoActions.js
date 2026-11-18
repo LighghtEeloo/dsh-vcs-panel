@@ -19,6 +19,7 @@ import { commitBranchRelation, reachableCommits } from './history/commits.js'
 import {
   branchOpMessage, commitOpMessage, errorMessage, shortSha, switchMessage, syncMessage, tagOpMessage,
 } from './format.js'
+import { hasClass } from './keys.js'
 
 /** Empty remote listing for the tag push dialog. */
 function idleRemotes() {
@@ -41,7 +42,7 @@ function checkedOutBranch(statusData) {
  */
 export function useRepoActions({
   api, sessionId, repo, stateRef, sessionRef, statusData, capabilities,
-  commits, commitIndex, head, rootRef, t, locale,
+  commits, commitIndex, head, rootRef, onRestoreFocus, t, locale,
   refresh, resetReadingForNewHead, setNotice, clearBranches, abortBranches,
 }) {
   const [inFlight, setInFlight] = useState({})
@@ -76,14 +77,28 @@ export function useRepoActions({
     menuReturnRef.current = null
   }, [])
 
-  /** Restore focus to the menu/dialog opener or its domain fallback. */
-  const restoreFocus = useCallback((domainOverride) => {
+  /** Restore focus to a cancelled keyboard/badge opener or back to panel navigation. */
+  const restoreFocus = useCallback((cancelled = false) => {
     const entry = menuReturnRef.current
     menuReturnRef.current = null
-    const domain = domainOverride ?? entry?.domain
+    const domain = entry?.domain
     requestAnimationFrame(() => {
-      if (entry?.element !== null && entry?.element !== undefined && entry.element.isConnected === true) {
+      if (
+        cancelled === true
+        && entry?.element !== null
+        && entry?.element !== undefined
+        && entry.element.isConnected === true
+        && (
+          hasClass(entry.element, 'vcs-branch-button')
+          || hasClass(entry.element, 'vcs-ref-button')
+          || hasClass(entry.element, 'vcs-timeline-row')
+        )
+      ) {
         entry.element.focus({ preventScroll: true })
+        return
+      }
+      if (typeof onRestoreFocus === 'function') {
+        onRestoreFocus()
         return
       }
       const root = rootRef.current
@@ -95,7 +110,7 @@ export function useRepoActions({
         ?? root?.querySelector('.vcs-timeline-row')
       row?.focus({ preventScroll: true })
     })
-  }, [rootRef])
+  }, [onRestoreFocus, rootRef])
 
   /**
    * Run one write operation under the repository's client-side single-flight guard.
@@ -275,7 +290,7 @@ export function useRepoActions({
   /** Close the open actions menu. */
   const closeMenu = useCallback(restore => {
     setMenu(null)
-    if (restore) restoreFocus()
+    if (restore) restoreFocus(true)
     else menuReturnRef.current = null
   }, [restoreFocus])
 
@@ -298,7 +313,7 @@ export function useRepoActions({
     if (action === 'checkout-remote') resetReadingForNewHead()
     refresh('branch')
     setNotice({ tone: 'info', text: branchOpMessage(t, action, branch, run.value) })
-    if (action !== 'push') restoreFocus('branch')
+    if (action !== 'push') restoreFocus(false)
   }, [api, clearBranches, refresh, resetReadingForNewHead, restoreFocus, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
 
   /** Execute one tag action (`delete` or `push`). */
@@ -318,7 +333,7 @@ export function useRepoActions({
     setTagRemotes(idleRemotes())
     refresh('tag')
     setNotice({ tone: 'info', text: tagOpMessage(t, action, tag, run.value) })
-    restoreFocus('tag')
+    restoreFocus(false)
   }, [api, refresh, restoreFocus, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
 
   /** Execute one commit action (`tag`, `branch`, `checkout`, `cherry-pick`, `revert`, `drop`, `merge`, `rebase`, `reset`). */
@@ -345,7 +360,7 @@ export function useRepoActions({
     }
     refresh('commit')
     setNotice({ tone: 'info', text: commitOpMessage(t, action, target, run.value) })
-    restoreFocus('commit')
+    restoreFocus(false)
   }, [api, clearBranches, refresh, resetReadingForNewHead, restoreFocus, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
 
   /** Handle selecting an item from the shared actions menu. */
@@ -369,7 +384,7 @@ export function useRepoActions({
         return
       }
       if (action === 'checkout' || action === 'push') {
-        restoreFocus('branch')
+        restoreFocus(false)
         if (action === 'checkout') void switchBranch(target.name)
         else void runBranchAction('push', target.name)
         return
@@ -422,10 +437,9 @@ export function useRepoActions({
       tagRemotesControllerRef.current = null
       setTagRemotes(idleRemotes())
     }
-    const domain = dialog?.domain
     setDialog(null)
     setDialogError(null)
-    restoreFocus(domain)
+    restoreFocus(true)
   }, [dialog, dialogWriting, restoreFocus])
 
   return {

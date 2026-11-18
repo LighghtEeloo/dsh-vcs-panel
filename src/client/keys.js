@@ -75,3 +75,164 @@ export function isEditableTarget(target) {
   const tag = typeof target.tagName === 'string' ? target.tagName.toUpperCase() : ''
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable === true
 }
+
+/**
+ * Walk `node` and its `parentElement` ancestors until `stop` (exclusive)
+ * looking for the nearest node satisfying `predicate`.
+ * @param {unknown} node - starting element.
+ * @param {unknown} stop - ancestor boundary (not visited), or null.
+ * @param {(candidate: any) => boolean} predicate - match test.
+ * @returns {any | null} the matching ancestor, or null.
+ */
+export function findAncestor(node, stop, predicate) {
+  let current = node
+  while (current !== null && current !== undefined && current !== stop) {
+    if (predicate(current)) return current
+    current = current.parentElement ?? null
+  }
+  return null
+}
+
+/**
+ * Whether an element carries CSS class `token` (safe on DOM and test stubs).
+ * @param {unknown} element - candidate element.
+ * @param {string} token - class name.
+ * @returns {boolean} true when present.
+ */
+export function hasClass(element, token) {
+  return element?.classList?.contains?.(token) === true
+}
+
+/**
+ * Whether an element carries attribute `name` (optionally matching `value`).
+ * Supports both real DOM Elements and `FakeElement` in tests.
+ * @param {unknown} element - candidate element.
+ * @param {string} name - attribute name.
+ * @param {string} [value] - expected value when provided.
+ * @returns {boolean} true when present (and equal to `value`, if given).
+ */
+export function hasAttr(element, name, value) {
+  if (element === null || element === undefined || typeof element !== 'object') return false
+  if (typeof element.getAttribute === 'function') {
+    if (value === undefined) return element.hasAttribute?.(name) ?? element.getAttribute(name) !== null
+    return element.getAttribute(name) === value
+  }
+  if (typeof element.attributes?.has === 'function') {
+    if (!element.attributes.has(name)) return false
+    return value === undefined ? true : element.attributes.get(name) === value
+  }
+  return false
+}
+
+/**
+ * Which keyboard navigation zone (`'timeline'` or `'tree'`) contains
+ * `element`, stopping before `stop`.
+ * @param {unknown} element - target or focused element.
+ * @param {unknown} [stop=null] - panel root boundary.
+ * @returns {'timeline' | 'tree' | null} the owning navigation zone.
+ */
+export function zoneOf(element, stop = null) {
+  const found = findAncestor(element, stop, node => (
+    node?.dataset?.zone === 'timeline'
+    || node?.dataset?.timelineIndex !== undefined
+    || node?.dataset?.zone === 'tree'
+    || node?.dataset?.rowKey !== undefined
+    || hasAttr(node, 'data-diff-hunk-header')
+  ))
+  if (found === null) return null
+  if (found.dataset?.zone === 'timeline' || found.dataset?.timelineIndex !== undefined) return 'timeline'
+  return 'tree'
+}
+
+/**
+ * Whether `element` is (or sits inside) a cursor stop: a timeline row,
+ * a change-tree row, or a diff hunk header.
+ * @param {unknown} element - candidate element.
+ * @param {unknown} [stop=null] - panel root boundary.
+ * @returns {boolean} true for navigation stops.
+ */
+export function isNavigationStop(element, stop = null) {
+  return findAncestor(element, stop, node => (
+    hasClass(node, 'vcs-timeline-row')
+    || hasClass(node, 'vcs-tree-row')
+    || hasAttr(node, 'data-diff-hunk-header')
+  )) !== null
+}
+
+/**
+ * Whether `element` lives inside a modal dialog, floating menu, or the branch
+ * switcher button that owns its own dropdown keyboard behavior.
+ * @param {unknown} element - candidate element.
+ * @param {unknown} [stop=null] - panel root boundary.
+ * @returns {boolean} true for overlay/menu controls.
+ */
+export function isOverlayOrMenuTarget(element, stop = null) {
+  return findAncestor(element, stop, node => (
+    hasClass(node, 'vcs-dialog-layer')
+    || hasClass(node, 'vcs-branch-menu')
+    || hasClass(node, 'vcs-ref-ops')
+    || hasClass(node, 'vcs-branch-button')
+    || hasClass(node, 'vcs-ref-button')
+  )) !== null
+}
+
+/**
+ * Whether `element` is (or sits inside) a discrete action button inside the
+ * panel (such as sync, refresh, split/wrap/fold toggles, SHA copy, parent
+ * commit jump, load more, or retry) rather than a navigation row or menu.
+ * @param {unknown} element - candidate element.
+ * @param {unknown} [stop=null] - panel root boundary.
+ * @returns {boolean} true for discrete action buttons.
+ */
+export function isDiscreteActionButton(element, stop = null) {
+  const button = findAncestor(element, stop, node => (
+    typeof node?.tagName === 'string' && node.tagName.toUpperCase() === 'BUTTON'
+  ))
+  if (button === null) return false
+  return !isNavigationStop(element, stop) && !isOverlayOrMenuTarget(element, stop)
+}
+
+/**
+ * Whether the panel can claim keyboard focus for its active navigation stop
+ * when becoming visible or when the browser/app window regains focus, without
+ * stealing focus from an external input, modal dialog, or another pane.
+ * @param {unknown} active - current `document.activeElement`.
+ * @param {unknown} root - the panel's `.vcs-root` element.
+ * @returns {boolean} true when claiming focus for VCS navigation is safe.
+ */
+export function canClaimFocusFrom(active, root) {
+  if (root === null || root === undefined) return false
+  const doc = root.ownerDocument ?? (typeof document === 'undefined' ? null : document)
+  const isModalNode = node => hasAttr(node, 'aria-modal', 'true') || hasAttr(node, 'role', 'dialog')
+  const activeModal = findAncestor(active, null, isModalNode)
+  if (activeModal !== null && !root.contains?.(activeModal) && !activeModal.contains?.(root)) {
+    return false
+  }
+  const modals = doc?.body?.querySelectorAll?.('[aria-modal="true"]')
+  if (modals !== undefined && modals !== null) {
+    for (const modal of modals) {
+      if (!root.contains?.(modal) && !modal.contains?.(root)) return false
+    }
+  }
+  if (active === null || active === undefined || active === doc?.body || active === doc?.documentElement || active === root) {
+    return true
+  }
+  if (root.contains?.(active)) {
+    if (findAncestor(active, root, node => (
+      hasClass(node, 'vcs-dialog-layer')
+      || hasClass(node, 'vcs-branch-menu')
+      || hasClass(node, 'vcs-ref-ops')
+    )) !== null) {
+      return false
+    }
+    return !isEditableTarget(active)
+  }
+  if (hasClass(active, 'vcs-turn-banner') || hasAttr(active, 'data-dockkit-pane') || hasAttr(active, 'data-dockkit-float')) {
+    return true
+  }
+  const pane = findAncestor(root, null, node => hasAttr(node, 'data-dockkit-pane') || hasAttr(node, 'data-dockkit-float'))
+  if (pane !== null && pane.contains?.(active) && !isEditableTarget(active)) {
+    return true
+  }
+  return false
+}

@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 /** Load the generated bundle with a stub module loader and React. */
-function loadBundle({ onEffect } = {}) {
+function loadBundle({ onEffect, reactOverrides } = {}) {
   let registered
   new Function('window', readFileSync(new URL('../client.js', import.meta.url), 'utf8'))({
     __ModuleLoader__: {
@@ -22,6 +22,7 @@ function loadBundle({ onEffect } = {}) {
     memo: component => component,
     useRef: value => ({ current: value }),
     useState: initial => [typeof initial === 'function' ? initial() : initial, () => undefined],
+    ...reactOverrides,
   }
   const jsxRuntime = {
     Fragment: Symbol('Fragment'),
@@ -557,4 +558,101 @@ test('the change tree exposes disclosure semantics and one tab stop', () => {
   assert.match(tree, /data-diff-hunk-header/u)
   // The file head sticks below the group head, so at most two rows hold the top.
   assert.match(css, /\.vcs-tree\[data-grouped\] \.vcs-tree-file-head-wrap \{\s*top: var\(--vcs-row-height\);/u)
+})
+
+test('SidebarVcsView passes visible and bumps focusRequest on visibility transitions even at revision 0', () => {
+  const createRunner = () => {
+    const hooks = []
+    let hookIndex = 0
+    const pendingEffects = []
+    const sameDeps = (a, b) => a !== undefined && b !== undefined && a.length === b.length
+      && a.every((v, i) => Object.is(v, b[i]))
+    const reactOverrides = {
+      useState(initial) {
+        const idx = hookIndex++
+        if (idx >= hooks.length) hooks.push({ value: typeof initial === 'function' ? initial() : initial })
+        const slot = hooks[idx]
+        return [slot.value, action => {
+          slot.value = typeof action === 'function' ? action(slot.value) : action
+        }]
+      },
+      useRef(initial) {
+        const idx = hookIndex++
+        if (idx >= hooks.length) hooks.push({ current: initial })
+        return hooks[idx]
+      },
+      useEffect(create, deps) {
+        const idx = hookIndex++
+        const prev = hooks[idx]
+        if (prev === undefined || !sameDeps(prev.deps, deps)) {
+          const entry = { create, deps }
+          hooks[idx] = entry
+          pendingEffects.push(entry)
+        }
+      },
+    }
+    const { plugin } = loadBundle({ reactOverrides })
+    const registrations = []
+    const previousDocument = globalThis.document
+    globalThis.document = {
+      head: { appendChild() {} },
+      createElement() { return { dataset: {}, textContent: '', remove() {} } },
+    }
+    try {
+      plugin.apply({
+        inject() { return () => undefined },
+        effect(fn) { return fn() },
+        locale: localeStub('en'),
+        uiConversation: { events: { register() { return () => undefined } } },
+        sidebarRight: { mounted: { getSnapshot: () => 's1' }, isExpanded: () => false, active: () => undefined, openTab() {} },
+        sidebarRightTabs: { register() { return () => undefined } },
+        slots: {
+          inject(_key, callback) { return callback() },
+          register(options, component) { registrations.push({ options, component }); return () => undefined },
+        },
+      })
+    } finally {
+      globalThis.document = previousDocument
+    }
+    const SidebarVcsView = registrations.find(entry => entry.options.name === 'sidebar.right.pane.tab').component
+    return {
+      render(tab) {
+        hookIndex = 0
+        const tree = SidebarVcsView({ sessionId: 's1', useTabInfo: () => ({ tab }) })
+        while (pendingEffects.length > 0) {
+          pendingEffects.shift().create()
+        }
+        hookIndex = 0
+        return SidebarVcsView({ sessionId: 's1', useTabInfo: () => ({ tab }) }).props.children.props
+      },
+    }
+  }
+
+  // Case 1: starts hidden at revision 0, then becomes visible via tab-chip click (revision stays 0).
+  {
+    const runner = createRunner()
+    const hidden = runner.render({ visible: false, navigation: { revision: 0 } })
+    assert.equal(hidden.visible, false)
+    assert.equal(hidden.focusRequest, 0)
+
+    const revealed = runner.render({ visible: true, navigation: { revision: 0 } })
+    assert.equal(revealed.visible, true)
+    assert.equal(revealed.focusRequest, 1, 'revealing a tab bumps focusRequest even at revision 0')
+
+    const hiddenAgain = runner.render({ visible: false, navigation: { revision: 0 } })
+    assert.equal(hiddenAgain.visible, false)
+    assert.equal(hiddenAgain.focusRequest, 1)
+  }
+
+  // Case 2: restored visible at revision 0 keeps focusRequest at 0, then increments on navigation.
+  {
+    const runner = createRunner()
+    const restored = runner.render({ visible: true, navigation: { revision: 0 } })
+    assert.equal(restored.visible, true)
+    assert.equal(restored.focusRequest, 0, 'reload restoration keeps focusRequest at 0')
+
+    const navigated = runner.render({ visible: true, navigation: { revision: 1 } })
+    assert.equal(navigated.visible, true)
+    assert.equal(navigated.focusRequest, 1)
+  }
 })

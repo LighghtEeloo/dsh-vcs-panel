@@ -18,7 +18,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { FileDiff, isValidDiff } from '../diff/FileDiff.jsx'
 import { formatCount, lineCounts, splitPath, statusKey } from '../format.js'
-import { BACK, DOWN, FORWARD, isEditableTarget, movement, rowStep, UP } from '../keys.js'
+import {
+  BACK, DOWN, findAncestor, FORWARD, hasAttr, hasClass, isDiscreteActionButton, isEditableTarget,
+  isNavigationStop, movement, rowStep, unmodified, UP,
+} from '../keys.js'
 import { Chevron } from '../ui.jsx'
 import { Bar, barWidth } from '../skeleton.jsx'
 import {
@@ -75,13 +78,6 @@ function ancestorKeys(key) {
   }
   candidates.push(group)
   return candidates
-}
-
-/** Whether an element is a focusable hunk header of an open comparison. */
-function isHunkHeader(element) {
-  if (element === null || element === undefined) return false
-  if (element.attributes?.has?.('data-diff-hunk-header') === true) return true
-  return typeof element.hasAttribute === 'function' && element.hasAttribute('data-diff-hunk-header')
 }
 
 /**
@@ -438,41 +434,6 @@ export function ChangeTree({
     onToggleRow(row, !expanded)
   }, [alignmentTop, flowTop, onToggleRow])
 
-  /** `→` / `l`: expand a collapsed row, or step into an expanded group or directory. */
-  const forward = useCallback(() => {
-    const index = Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))
-    const row = navRows[index]
-    if (row === undefined) return
-    lastInputRef.current = 'keyboard'
-    if (!isExpanded(row)) {
-      onToggleRow(row, true)
-      return
-    }
-    if (row.kind !== 'group' && row.kind !== 'dir') return
-    const child = navRows[index + 1]
-    if (child === undefined) return
-    const inside = row.kind === 'group' ? child.kind !== 'group' : child.depth > row.depth
-    if (inside) focusRowAt(index + 1)
-  }, [focusRowAt, isExpanded, navRows, onToggleRow])
-
-  /**
-   * `←` / `h`: close the focused file when it is open, so the first back
-   * step leaves the diff level. A closed file row has nothing below it, so the
-   * same key then leaves the tree.
-   */
-  const back = useCallback(() => {
-    const index = Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))
-    const row = navRows[index]
-    if (row?.kind === 'file' && isExpanded(row)) {
-      setCursorAt(index, -1)
-      toggle(row, true)
-      focusRowElement(row.key)
-      markReading(row, 0)
-      return
-    }
-    onLeave()
-  }, [focusRowElement, isExpanded, markReading, navRows, onLeave, setCursorAt, toggle])
-
   /** Top offsets of the hunk headers inside one file's comparison. */
   const hunkOffsets = useCallback(row => {
     const body = bodyEls.current.get(row.key)
@@ -507,7 +468,7 @@ export function ChangeTree({
   }, [hunkOffsets, isRowFolded])
 
   // The cursor stays inside the rendered rows and their loaded hunks.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (navRows.length === 0) {
       const current = cursorRef.current
       if (current.row !== 0 || current.hunk !== -1) setCursorAt(0, -1)
@@ -552,6 +513,66 @@ export function ChangeTree({
     markReading(row, 0)
   }, [alignRow, focusHunkElement, flowTop, focusRowElement, grouped, hunkOffsets, isRowFolded, markReading, navRows, scrollRowIntoView, setCursorAt])
 
+  /** Restore DOM focus to the current stop without changing scrollTop. */
+  const restoreFocus = useCallback(() => {
+    if (navRows.length === 0) return false
+    const rowIndex = Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))
+    const row = navRows[rowIndex]
+    if (row === undefined) return false
+    const offsets = cursorRef.current.hunk >= 0 && row.kind === 'file' && !isRowFolded(row)
+      ? hunkOffsets(row)
+      : []
+    if (cursorRef.current.hunk >= 0 && cursorRef.current.hunk < offsets.length) {
+      focusHunkElement(row.key, cursorRef.current.hunk)
+    } else {
+      focusRowElement(row.key)
+    }
+    return true
+  }, [focusHunkElement, focusRowElement, hunkOffsets, isRowFolded, navRows])
+
+  /** `→` / `l`: expand a collapsed row, enter an open file's first hunk, or step into an expanded group or directory. */
+  const forward = useCallback(() => {
+    const index = Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))
+    const row = navRows[index]
+    if (row === undefined) return
+    lastInputRef.current = 'keyboard'
+    if (!isExpanded(row)) {
+      onToggleRow(row, true)
+      return
+    }
+    if (row.kind === 'file') {
+      if (cursorRef.current.hunk < 0) {
+        const offsets = hunkOffsets(row)
+        if (offsets.length > 0) focusStop(index, 0)
+      }
+      return
+    }
+    if (row.kind !== 'group' && row.kind !== 'dir') return
+    const child = navRows[index + 1]
+    if (child === undefined) return
+    const inside = row.kind === 'group' ? child.kind !== 'group' : child.depth > row.depth
+    if (inside) focusRowAt(index + 1)
+  }, [focusRowAt, focusStop, hunkOffsets, isExpanded, navRows, onToggleRow])
+
+  /**
+   * `←` / `h`: close the focused file when it is open, so the first back
+   * step leaves the diff level. A closed file row has nothing below it, so the
+   * same key then leaves the tree. Returns `'left'` when it exits the tree.
+   */
+  const back = useCallback(() => {
+    const index = Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))
+    const row = navRows[index]
+    if (row?.kind === 'file' && isExpanded(row)) {
+      setCursorAt(index, -1)
+      toggle(row, true)
+      focusRowElement(row.key)
+      markReading(row, 0)
+      return 'collapsed'
+    }
+    onLeave()
+    return 'left'
+  }, [focusRowElement, isExpanded, markReading, navRows, onLeave, setCursorAt, toggle])
+
   /** Move the cursor through rows and the hunk headers of open files as one list. */
   const moveStop = useCallback(direction => {
     if (navRows.length === 0) return
@@ -585,93 +606,215 @@ export function ChangeTree({
       const previous = navRows[rowIndex - 1]
       const previousOffsets = previous.kind === 'file' && !isRowFolded(previous) ? hunkOffsets(previous) : []
       focusStop(rowIndex - 1, previousOffsets.length > 0 ? previousOffsets.length - 1 : -1)
+      return
     }
-  }, [focusStop, hunkOffsets, isRowFolded, navRows])
+    if (scrollRef.current !== null && scrollRef.current.scrollTop > 0) {
+      lastInputRef.current = 'keyboard'
+      scrollRef.current.scrollTop = 0
+      focusRowElement(row.key)
+      report()
+    }
+  }, [focusRowElement, focusStop, hunkOffsets, isRowFolded, navRows, report])
 
   /** Move one tree row, skipping the hunk level. */
   const moveRow = useCallback(direction => {
     if (navRows.length === 0) return
     const current = Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))
     const target = Math.max(0, Math.min(current + direction, navRows.length - 1))
-    if (target === current) return
+    if (target === current) {
+      if (direction < 0 && current === 0 && cursorRef.current.hunk < 0
+        && scrollRef.current !== null && scrollRef.current.scrollTop > 0) {
+        lastInputRef.current = 'keyboard'
+        scrollRef.current.scrollTop = 0
+        focusRowElement(navRows[0].key)
+        report()
+      }
+      return
+    }
     focusStop(target, -1, cursorRef.current.hunk >= 0)
-  }, [focusStop, navRows.length])
+  }, [focusRowElement, focusStop, navRows, report])
 
-  /** A click on a hunk header moves the same cursor as the keyboard. */
-  const onTreeClick = event => {
-    let node = event.target
-    while (node !== null && node !== undefined && node !== event.currentTarget) {
-      if (isHunkHeader(node)) break
-      node = node.parentElement
-    }
-    if (!isHunkHeader(node)) return
-    let file = node
-    while (file !== null && file !== undefined && file !== event.currentTarget) {
-      if (file.dataset?.fileKey !== undefined) break
-      file = file.parentElement
-    }
-    const key = file?.dataset?.fileKey
-    const index = key === undefined ? undefined : navIndexByKey.get(key)
+  /** Sync the cursor (and tree focus when inside) to the current scroll reading position. */
+  const syncCursorToScroll = useCallback(() => {
+    const root = scrollRef.current
+    if (root === null) return
+    const key = readingRef.current
+    if (key === null) return
+    const index = navIndexByKey.get(key)
     if (index === undefined) return
     const row = navRows[index]
-    const hunk = hunkOffsets(row).indexOf(flowTop(node))
-    if (hunk < 0) return
+    if (row === undefined) return
+    const line = root.scrollTop + (grouped ? ROW_HEIGHT : 0) + ROW_HEIGHT
+    const hunk = hunkAtLine(row, line)
+    if (index === cursorRef.current.row && hunk === cursorRef.current.hunk) return
+    setCursorAt(index, hunk)
+    const active = typeof document === 'undefined' ? null : document.activeElement
+    const focusInside = active !== null
+      && root.contains(active)
+      && (hasClass(active, 'vcs-tree-row') || hasAttr(active, 'data-diff-hunk-header'))
+    if (!focusInside) return
+    if (hunk >= 0) focusHunkElement(key, hunk)
+    else focusRowElement(key)
+  }, [focusHunkElement, focusRowElement, grouped, hunkAtLine, navIndexByKey, navRows, setCursorAt])
+
+  /** Clicks on hunk headers or diff lines adopt the corresponding stop; header/empty clicks keep focus ready. */
+  const onTreeClick = event => {
+    const hunkNode = findAncestor(event.target, event.currentTarget, node => hasAttr(node, 'data-diff-hunk-header'))
+    if (hunkNode !== null) {
+      const file = findAncestor(hunkNode, event.currentTarget, node => node?.dataset?.fileKey !== undefined)
+      const key = file?.dataset?.fileKey
+      const index = key === undefined ? undefined : navIndexByKey.get(key)
+      if (index === undefined) return
+      const row = navRows[index]
+      const hunk = hunkOffsets(row).indexOf(flowTop(hunkNode))
+      if (hunk < 0) return
+      setCursorAt(index, hunk)
+      lastInputRef.current = 'keyboard'
+      hunkNode.focus?.({ preventScroll: true })
+      const element = rowEls.current.get(key)
+      const root = scrollRef.current
+      const offset = root === null || element === undefined ? 0 : Math.max(0, root.scrollTop - flowTop(element))
+      markReading(row, offset)
+      return
+    }
+    if (isEditableTarget(event.target)) return
+    const interactive = findAncestor(event.target, event.currentTarget, node => {
+      const tag = typeof node?.tagName === 'string' ? node.tagName.toUpperCase() : ''
+      return tag === 'BUTTON' || tag === 'A'
+    })
+    if (interactive !== null) return
+    const selection = typeof window === 'undefined' ? null : window.getSelection?.()
+    if (selection !== null && selection !== undefined && selection.isCollapsed === false && String(selection) !== '') {
+      return
+    }
+    const file = findAncestor(event.target, event.currentTarget, node => node?.dataset?.fileKey !== undefined)
+    if (file === null) {
+      restoreFocus()
+      return
+    }
+    const key = file.dataset.fileKey
+    const index = key === undefined ? undefined : navIndexByKey.get(key)
+    if (index === undefined) {
+      restoreFocus()
+      return
+    }
+    const row = navRows[index]
+    const hunkSection = findAncestor(event.target, file, node => hasClass(node, 'vcs-diff-hunk'))
+    const hunkHeaderEl = hunkSection?.querySelector?.('[data-diff-hunk-header]') ?? null
+    const hunk = hunkHeaderEl === null ? -1 : hunkOffsets(row).indexOf(flowTop(hunkHeaderEl))
     setCursorAt(index, hunk)
     lastInputRef.current = 'keyboard'
-    node.focus?.({ preventScroll: true })
+    if (hunk >= 0) focusHunkElement(key, hunk)
+    else focusRowElement(key)
     const element = rowEls.current.get(key)
     const root = scrollRef.current
     const offset = root === null || element === undefined ? 0 : Math.max(0, root.scrollTop - flowTop(element))
     markReading(row, offset)
   }
 
-  const onKeyDown = event => {
-    if (isEditableTarget(event.target)) return
-    if (event.isComposing === true) return
+  const runKeyDown = useCallback((event, { fromOutside = false } = {}) => {
+    if (isEditableTarget(event.target)) return false
+    if (event.isComposing === true) return false
+    if ((event.key === 'Enter' || event.key === ' ') && !fromOutside && isDiscreteActionButton(event.target, scrollRef.current)) {
+      return false
+    }
     // Hunk headers are not buttons, so Space/Enter act on their owning file.
     if (cursorRef.current.hunk >= 0 && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault()
-      back()
-      return
+      return back()
+    }
+    if (fromOutside && (event.key === 'Enter' || event.key === ' ') && navRows.length > 0) {
+      event.preventDefault()
+      const rowIndex = Math.max(0, Math.min(cursorRef.current.row, navRows.length - 1))
+      const row = navRows[rowIndex]
+      if (row !== undefined) {
+        toggle(row, isExpanded(row))
+        focusRowElement(row.key)
+      }
+      return true
     }
     const row = rowStep(event)
     if (row !== 0) {
       event.preventDefault()
       moveRow(row)
-      return
+      return true
+    }
+    if (unmodified(event) && navRows.length > 0) {
+      if (event.key === 'Home') {
+        event.preventDefault()
+        lastInputRef.current = 'keyboard'
+        if (scrollRef.current !== null) scrollRef.current.scrollTop = 0
+        setCursorAt(0, -1)
+        focusRowElement(navRows[0].key)
+        report()
+        return true
+      }
+      if (event.key === 'End') {
+        event.preventDefault()
+        const last = navRows.length - 1
+        const lastRow = navRows[last]
+        const lastOffsets = lastRow.kind === 'file' && !isRowFolded(lastRow) ? hunkOffsets(lastRow) : []
+        focusStop(last, lastOffsets.length > 0 ? lastOffsets.length - 1 : -1, true)
+        return true
+      }
+      if (event.key === 'PageUp' || event.key === 'PageDown') {
+        const root = scrollRef.current
+        if (root !== null && root.clientHeight > 0) {
+          event.preventDefault()
+          lastInputRef.current = 'scroll'
+          const step = Math.max(ROW_HEIGHT, root.clientHeight - ROW_HEIGHT * 2)
+          const delta = event.key === 'PageDown' ? step : -step
+          const maxTop = typeof root.scrollHeight === 'number' && root.scrollHeight > root.clientHeight
+            ? root.scrollHeight - root.clientHeight
+            : Number.POSITIVE_INFINITY
+          root.scrollTop = Math.max(0, Math.min(maxTop, root.scrollTop + delta))
+          report()
+          if (readingRef.current === null && event.key === 'PageUp') {
+            setCursorAt(0, -1)
+            const active = typeof document === 'undefined' ? null : document.activeElement
+            if (isNavigationStop(active, root)) focusRowElement(navRows[0].key)
+          } else {
+            syncCursorToScroll()
+          }
+          return true
+        }
+      }
     }
     const direction = movement(event)
     if (direction === DOWN) {
       event.preventDefault()
       moveStop(1)
-      return
+      return true
     }
     if (direction === UP) {
       event.preventDefault()
       moveStop(-1)
-      return
+      return true
     }
     if (direction === FORWARD) {
       event.preventDefault()
       forward()
-      return
+      return true
     }
     if (direction === BACK) {
       event.preventDefault()
       event.stopPropagation()
-      back()
-      return
+      return back()
     }
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
       onLeave()
-      return
+      return 'left'
     }
-    // Paging keys scroll the tree themselves; the cursor follows the reading row.
-    if (event.key === 'PageUp' || event.key === 'PageDown' || event.key === 'Home' || event.key === 'End') {
-      lastInputRef.current = 'scroll'
-    }
+    return false
+  }, [
+    back, focusRowElement, focusStop, forward, hunkOffsets, isExpanded, isRowFolded, moveRow, moveStop,
+    navRows, onLeave, report, setCursorAt, syncCursorToScroll, toggle,
+  ])
+
+  const onKeyDown = event => {
+    runKeyDown(event)
   }
 
   // Wheel and trackpad scrolling is the user moving the reading position.
@@ -692,25 +835,8 @@ export function ChangeTree({
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = 0
       report()
-      const root = scrollRef.current
-      if (lastInputRef.current !== 'scroll' || root === null) return
-      const key = readingRef.current
-      if (key === null) return
-      const index = navIndexByKey.get(key)
-      if (index === undefined) return
-      const row = navRows[index]
-      if (row === undefined) return
-      const line = root.scrollTop + (grouped ? ROW_HEIGHT : 0) + ROW_HEIGHT
-      const hunk = hunkAtLine(row, line)
-      if (index === cursorRef.current.row && hunk === cursorRef.current.hunk) return
-      setCursorAt(index, hunk)
-      const active = typeof document === 'undefined' ? null : document.activeElement
-      const focusInside = active !== null
-        && root.contains(active)
-        && (active.classList?.contains('vcs-tree-row') || isHunkHeader(active))
-      if (!focusInside) return
-      if (hunk >= 0) focusHunkElement(key, hunk)
-      else focusRowElement(key)
+      if (lastInputRef.current !== 'scroll') return
+      syncCursorToScroll()
     })
   }
 
@@ -823,7 +949,7 @@ export function ChangeTree({
     report()
   })
 
-  /** Expose the tree's focus and bulk-fold hooks to the detail pane. */
+  /** Expose the tree's focus, keyboard, and bulk-fold hooks to the detail pane. */
   useLayoutEffect(() => {
     control.current = {
       focusReading() {
@@ -832,17 +958,29 @@ export function ChangeTree({
         focusStop(row, cursorRef.current.hunk)
         return true
       },
+      restoreFocus,
+      handleKeyDown(event) {
+        const fromOutside = !scrollRef.current?.contains?.(event.target)
+        const result = runKeyDown(event, { fromOutside })
+        if (result === false) return false
+        if (result !== 'left') {
+          const active = typeof document === 'undefined' ? null : document.activeElement
+          if (!isNavigationStop(active, scrollRef.current)) restoreFocus()
+        }
+        return true
+      },
       bulkFold(mode) {
         preserve(() => { onBulkFold(mode) })
       },
     }
     return () => { control.current = null }
-  }, [control, focusStop, navRows.length, onBulkFold, preserve])
+  }, [control, focusStop, navRows.length, onBulkFold, preserve, restoreFocus, runKeyDown])
 
-  /** The click handler every row shares: move the cursor and flip the row. */
+  /** The click handler every row shares: move the cursor, focus it, and flip the row. */
   const activateRow = (row, expanded) => {
     const index = navIndexByKey.get(row.key)
     if (index !== undefined) setCursorAt(index)
+    focusRowElement(row.key)
     toggle(row, expanded)
   }
 

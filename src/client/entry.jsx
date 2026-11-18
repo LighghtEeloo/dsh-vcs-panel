@@ -10,7 +10,7 @@
  * remote-branch, tag, or commit actions.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import shellStyles from './styles.css'
 import diffStyles from './diff/FileDiff.css'
@@ -166,15 +166,22 @@ export function apply(ctx) {
     const locale = useActiveLocale()
     const { tab } = props.useTabInfo()
     const [focusRequest, setFocusRequest] = useState(0)
+    const navRevision = tab.navigation?.revision ?? 0
+    const wasVisibleRef = useRef(tab.visible)
+    const lastRevisionRef = useRef(0)
 
     useEffect(() => {
-      if (!tab.visible || tab.navigation.revision === 0) return
-      setFocusRequest(value => value + 1)
-    }, [tab.navigation.revision, tab.visible])
+      const becameVisible = tab.visible && !wasVisibleRef.current
+      wasVisibleRef.current = tab.visible
+      if (!tab.visible) return
+      const navigated = navRevision > 0 && navRevision !== lastRevisionRef.current
+      if (navRevision > 0) lastRevisionRef.current = navRevision
+      if (becameVisible || navigated) setFocusRequest(value => value + 1)
+    }, [navRevision, tab.visible])
 
     return (
       <ViewErrorBoundary key={props.sessionId} t={t}>
-        <VcsView {...props} locale={locale} focusRequest={focusRequest} />
+        <VcsView {...props} locale={locale} visible={tab.visible} focusRequest={focusRequest} />
       </ViewErrorBoundary>
     )
   }

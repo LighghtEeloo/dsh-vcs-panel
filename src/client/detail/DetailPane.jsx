@@ -129,6 +129,17 @@ function WorktreeHeader({ status, statusState, statusError, t }) {
   )
 }
 
+/** Maximum commit details kept across node switches of the same revision. */
+const COMMIT_CACHE_LIMIT = 200
+
+/** Store one commit detail, evicting the oldest past {@link COMMIT_CACHE_LIMIT}. */
+function rememberCommit(cache, key, value) {
+  if (cache === undefined || cache === null) return
+  cache.delete(key)
+  cache.set(key, value)
+  while (cache.size > COMMIT_CACHE_LIMIT) cache.delete(cache.keys().next().value)
+}
+
 /**
  * Render the detail of one node. The parent keys this component by node, so
  * every node starts with fresh local state.
@@ -139,12 +150,19 @@ export function DetailPane({
   dirChildren, loadingDirs, dirs, collapsed, onToggleDir,
   folds, onToggleFold, onSetFolds, split, wrap, onToggleSplit, onToggleWrap,
   singleColumn, onBack, onLeaveNav, onSelectCommit, isLoaded, onMissing, onSettled,
-  revision, cache, initialAnchor, onReading, control, capabilities, onRefActions, t, locale,
+  revision, cache, commitCache, initialAnchor, onReading, control, capabilities, onRefActions, t, locale,
 }) {
   const isWorktree = node === WORKTREE && capabilities?.workingCopy !== 'commit'
   const workingCopyNode = capabilities?.workingCopyNode ?? null
   const isWorkingCopy = workingCopyNode !== null && node === workingCopyNode
-  const [commitState, setCommitState] = useState({ status: 'idle', commit: null, truncated: false, error: null })
+  const commitCacheKey = `${repo}|${node}|${revision}`
+  const [commitState, setCommitState] = useState(() => {
+    if (!isWorktree && commitCache !== undefined && commitCache !== null) {
+      const cached = commitCache.get(commitCacheKey)
+      if (cached !== undefined) return cached
+    }
+    return { status: 'idle', commit: null, truncated: false, error: null }
+  })
   const [attempt, setAttempt] = useState(0)
   const [width, setWidth] = useState(0)
   const rootRef = useRef(null)
@@ -152,6 +170,13 @@ export function DetailPane({
 
   useEffect(() => {
     if (isWorktree) return undefined
+    if (attempt === 0 && commitCache !== undefined && commitCache !== null) {
+      const cached = commitCache.get(commitCacheKey)
+      if (cached !== undefined) {
+        setCommitState(cached)
+        return undefined
+      }
+    }
     const controller = new AbortController()
     setCommitState(previous => ({ ...previous, status: previous.commit === null ? 'loading' : 'refreshing', error: null }))
     api.commit(repo, node, controller.signal).then(answer => {
@@ -160,14 +185,16 @@ export function DetailPane({
         setCommitState({ status: 'error', commit: null, truncated: false, error: null })
         return
       }
-      setCommitState({ status: 'ready', commit: answer.commit, truncated: answer.truncated === true, error: null })
+      const next = { status: 'ready', commit: answer.commit, truncated: answer.truncated === true, error: null }
+      rememberCommit(commitCache, commitCacheKey, next)
+      setCommitState(next)
     }).catch(error => {
       if (error?.name === 'AbortError' || controller.signal.aborted) return
       if (error?.code === 'not-found') onMissing()
       setCommitState({ status: 'error', commit: null, truncated: false, error })
     })
     return () => { controller.abort() }
-  }, [api, attempt, isWorktree, node, onMissing, repo, revision])
+  }, [api, attempt, commitCache, commitCacheKey, isWorktree, node, onMissing, repo, revision])
 
   // The tree's own width decides whether a side-by-side comparison fits.
   useLayoutEffect(() => {
@@ -222,18 +249,28 @@ export function DetailPane({
     else bulkFold(mode)
   }
 
+  const settled = isWorktree
+    ? status !== null || statusState === 'error'
+    : commitState.commit !== null || commitState.status === 'error'
+
   useLayoutEffect(() => {
     control.current = {
       focusNav() {
         return treeControl.current?.focusReading() === true
       },
+      restoreFocus() {
+        return treeControl.current?.restoreFocus() === true
+      },
+      handleKeyDown(event) {
+        return treeControl.current?.handleKeyDown(event) === true
+      },
+      isSettled() {
+        return settled
+      },
     }
     return () => { control.current = null }
-  }, [control])
+  }, [control, settled])
 
-  const settled = isWorktree
-    ? status !== null || statusState === 'error'
-    : commitState.commit !== null || commitState.status === 'error'
   useEffect(() => {
     if (!settled) return
     onSettled?.(rows.length > 0)

@@ -65,22 +65,26 @@ function AheadBehind({ ahead, behind }) {
  */
 function BranchSwitcher({
   branch, branchText, branches, branchesStatus, branchesError, branchesTruncated,
-  onOpen, onSwitch, onOpenActions, switching, busy, canOps, syncable, t, locale,
+  onOpen, onSwitch, onOpenActions, onRestoreFocus = () => {}, switching, busy, canOps, syncable, t, locale,
 }) {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState(null)
   const triggerRef = useRef(null)
   const menuRef = useRef(null)
+  const openedByKeyboardRef = useRef(false)
   // The checked-out branch's name, or null on a detached HEAD.
   const currentName = branch?.detached === true || typeof branch?.name !== 'string' ? null : branch.name
 
-  const close = useCallback(returnFocus => {
+  const close = useCallback((returnFocus, toNav = false) => {
     setOpen(false)
     setPosition(null)
-    if (returnFocus) {
-      requestAnimationFrame(() => { triggerRef.current?.focus() })
+    if (!returnFocus) return
+    if (toNav || !openedByKeyboardRef.current) {
+      onRestoreFocus()
+      return
     }
-  }, [])
+    requestAnimationFrame(() => { triggerRef.current?.focus() })
+  }, [onRestoreFocus])
 
   const { onKeyDown: onMenuKeyDown, onBlur: onWrapBlur } = useFloatingMenu({
     open,
@@ -90,11 +94,12 @@ function BranchSwitcher({
     onClose: close,
   })
 
-  const toggle = () => {
+  const toggle = (event, keyboard = false) => {
     if (open) {
-      close(true)
+      close(true, !openedByKeyboardRef.current || (event !== undefined && event.detail > 0))
       return
     }
+    openedByKeyboardRef.current = keyboard || (event !== undefined && event.detail === 0)
     const rect = triggerRef.current?.getBoundingClientRect()
     if (rect !== undefined) {
       const viewport = typeof window === 'undefined' ? rect.left + MENU_WIDTH + MENU_MARGIN * 2 : window.innerWidth
@@ -135,11 +140,11 @@ function BranchSwitcher({
         aria-label={t('top.switchBranchLabel', { branch: branchText })}
         title={t('top.switchBranchHint')}
         aria-busy={switching || busy ? 'true' : undefined}
-        onClick={toggle}
+        onClick={event => { toggle(event, false) }}
         onContextMenu={event => {
           if (!canOps || currentName === null) return
           event.preventDefault()
-          openActions({ name: currentName, current: true }, event, triggerRef.current)
+          openActions({ name: currentName, current: true }, event, null)
         }}
         onKeyDown={event => {
           if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
@@ -159,7 +164,7 @@ function BranchSwitcher({
           }
           if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
           event.preventDefault()
-          if (!open) toggle()
+          if (!open) toggle(undefined, true)
         }}
       >
         <Turning turning={switching || busy}><BranchIcon /></Turning>
@@ -197,15 +202,16 @@ function BranchSwitcher({
               data-branch-item=""
               data-branch-current={entry.current ? 'true' : undefined}
               title={entry.name}
-              onClick={() => {
-                if (!entry.current) onSwitch(entry.name)
-                close(true)
+              onClick={event => {
+                const switched = !entry.current
+                if (switched) onSwitch(entry.name)
+                close(true, switched || !openedByKeyboardRef.current || (event !== undefined && event.detail > 0))
               }}
               onContextMenu={event => {
                 if (!canOps) return
                 event.preventDefault()
                 event.stopPropagation()
-                openActions(entry, event, event.currentTarget)
+                openActions(entry, event, null)
               }}
               onKeyDown={event => {
                 if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
@@ -213,7 +219,11 @@ function BranchSwitcher({
                 event.stopPropagation()
                 const rect = event.currentTarget.getBoundingClientRect()
                 const bottom = rect.bottom ?? (rect.top + rect.height)
-                openActions(entry, { clientX: rect.left + 12, clientY: bottom }, event.currentTarget)
+                openActions(
+                  entry,
+                  { clientX: rect.left + 12, clientY: bottom },
+                  openedByKeyboardRef.current ? triggerRef.current : null,
+                )
               }}
             >
               <span className="vcs-menu-item-name">{entry.name}</span>
@@ -280,9 +290,10 @@ export function TopBar({
   repositories, repo, onRepoChange, status, capabilities, refMode, onRefMode, onRefresh, refreshing,
   revalidating = false, onSync, syncing, branches = [], branchesStatus = 'idle', branchesError = null,
   branchesTruncated = false, onLoadBranches = () => {}, onSwitchBranch = () => {}, onBranchActions = () => {},
-  switching = false, branchBusy = null, tagBusy = null, commitBusy = null, notice,
+  onRestoreFocus = () => {}, switching = false, branchBusy = null, tagBusy = null, commitBusy = null, notice,
   twoColumns = true, twoColumnsFit = true, onTwoColumns = () => {}, t, locale,
 }) {
+  const repoPointerRef = useRef(false)
   // Work on data already on screen shows as one thin bar under the header,
   // whether the user asked for it (refresh, sync, switch, a branch, tag, or
   // commit action) or the panel did (a refresh on becoming visible); the
@@ -341,7 +352,15 @@ export function TopBar({
         aria-label={t('top.repositories')}
         value={repo ?? ''}
         disabled={repositories.length === 0}
-        onChange={event => { onRepoChange(event.currentTarget.value === '' ? null : event.currentTarget.value) }}
+        onPointerDown={() => { repoPointerRef.current = true }}
+        onMouseDown={() => { repoPointerRef.current = true }}
+        onKeyDown={() => { repoPointerRef.current = false }}
+        onChange={event => {
+          const fromPointer = repoPointerRef.current
+          repoPointerRef.current = false
+          onRepoChange(event.currentTarget.value === '' ? null : event.currentTarget.value, fromPointer)
+          if (fromPointer) event.currentTarget.blur?.()
+        }}
       >
         {repositories.length === 0 ? <option value="">{t('top.noRepository')}</option> : null}
         {repositories.map(entry => (
@@ -382,6 +401,7 @@ export function TopBar({
           onOpen={onLoadBranches}
           onSwitch={onSwitchBranch}
           onOpenActions={onBranchActions}
+          onRestoreFocus={onRestoreFocus}
           switching={switching}
           busy={branchBusy !== null}
           canOps={branchOps}

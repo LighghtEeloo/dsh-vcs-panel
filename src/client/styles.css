@@ -767,7 +767,8 @@
   color: var(--dsw-alias-label-primary);
 }
 
-.vcs-load-more:disabled {
+.vcs-load-more:disabled,
+.vcs-load-more[aria-disabled='true'] {
   cursor: default;
   opacity: 0.6;
 }

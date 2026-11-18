@@ -86,10 +86,18 @@ class FakeElement {
     this.ownerDocument.activeElement = this
   }
 
+  blur() {
+    if (this.ownerDocument.activeElement === this) {
+      this.ownerDocument.activeElement = this.ownerDocument.body
+    }
+  }
+
   select() {}
 
   get isConnected() {
-    return this === this.ownerDocument.body || this.ownerDocument.body.contains(this)
+    let cursor = this
+    while (cursor.parentElement !== null && cursor.parentElement !== undefined) cursor = cursor.parentElement
+    return cursor === this.ownerDocument.body || cursor === this.ownerDocument.documentElement
   }
 
   contains(target) {
@@ -117,7 +125,7 @@ class FakeElement {
       top += cursor.offsetTop - (cursor.parentElement?.scrollTop ?? 0)
       cursor = cursor.parentElement
     }
-    return { top, left: 0, width: this.clientWidth, height: 28 }
+    return { top, left: 0, width: this.clientWidth, height: 28, bottom: top + 28 }
   }
 
   matchesSelector(selector) {
@@ -173,15 +181,38 @@ function createHarness({ width = 1000 } = {}) {
   const MEMO = Symbol('memo')
   let activeInstance = null
 
+  const docListeners = new Map()
+  const winListeners = new Map()
+  let selection = { isCollapsed: true, toString: () => '' }
+
+  const addListener = (map, type, fn) => {
+    if (!map.has(type)) map.set(type, new Set())
+    map.get(type).add(fn)
+  }
+  const removeListener = (map, type, fn) => {
+    map.get(type)?.delete(fn)
+  }
+
   const document = {
     visibilityState: 'visible',
+    documentElement: null,
     body: null,
     activeElement: null,
-    addEventListener() {},
-    removeEventListener() {},
+    addEventListener(type, fn) { addListener(docListeners, type, fn) },
+    removeEventListener(type, fn) { removeListener(docListeners, type, fn) },
   }
+  document.documentElement = new FakeElement('html', document)
   document.body = new FakeElement('body', document)
+  document.body.parentElement = document.documentElement
   document.activeElement = document.body
+
+  const win = {
+    innerWidth: width,
+    innerHeight: 800,
+    addEventListener(type, fn) { addListener(winListeners, type, fn) },
+    removeEventListener(type, fn) { removeListener(winListeners, type, fn) },
+    getSelection() { return selection },
+  }
 
   const frames = []
   const intersections = []
@@ -276,7 +307,7 @@ function createHarness({ width = 1000 } = {}) {
       if (prev === undefined || !sameDeps(prev.deps, deps)) {
         const entry = { create, deps, cleanup: prev?.cleanup }
         inst.hooks[idx] = entry
-        pendingLayout.push(entry)
+        inst.localLayout.push(entry)
       }
     },
     useEffect(create, deps) {
@@ -286,7 +317,7 @@ function createHarness({ width = 1000 } = {}) {
       if (prev === undefined || !sameDeps(prev.deps, deps)) {
         const entry = { create, deps, cleanup: prev?.cleanup }
         inst.hooks[idx] = entry
-        pendingPassive.push(entry)
+        inst.localPassive.push(entry)
       }
     },
   }
@@ -386,6 +417,8 @@ function createHarness({ width = 1000 } = {}) {
         prev.dirty = false
         prev.props = vnode.props
         prev.hookIndex = 0
+        prev.localLayout = []
+        prev.localPassive = []
         const saved = activeInstance
         activeInstance = prev
         let rendered
@@ -394,11 +427,25 @@ function createHarness({ width = 1000 } = {}) {
         } finally {
           activeInstance = saved
         }
+        const localLayout = prev.localLayout
+        const localPassive = prev.localPassive
         prev.child = reconcile(prev.child, rendered)
+        pendingLayout.push(...localLayout)
+        pendingPassive.push(...localPassive)
         return prev
       }
       unmountNode(prev)
-      const inst = { kind: 'component', fn, key: vnode.key, props: vnode.props, hooks: [], hookIndex: 0, child: null }
+      const inst = {
+        kind: 'component',
+        fn,
+        key: vnode.key,
+        props: vnode.props,
+        hooks: [],
+        hookIndex: 0,
+        child: null,
+        localLayout: [],
+        localPassive: [],
+      }
       const saved = activeInstance
       activeInstance = inst
       let rendered
@@ -407,7 +454,11 @@ function createHarness({ width = 1000 } = {}) {
       } finally {
         activeInstance = saved
       }
+      const localLayout = inst.localLayout
+      const localPassive = inst.localPassive
       inst.child = reconcile(null, rendered)
+      pendingLayout.push(...localLayout)
+      pendingPassive.push(...localPassive)
       return inst
     }
 
@@ -506,12 +557,15 @@ function createHarness({ width = 1000 } = {}) {
   const installGlobals = () => {
     const saved = {
       document: globalThis.document,
+      window: globalThis.window,
+      hasWindow: 'window' in globalThis,
       IntersectionObserver: globalThis.IntersectionObserver,
       ResizeObserver: globalThis.ResizeObserver,
       requestAnimationFrame: globalThis.requestAnimationFrame,
       cancelAnimationFrame: globalThis.cancelAnimationFrame,
     }
     globalThis.document = document
+    globalThis.window = win
     globalThis.IntersectionObserver = FakeIntersectionObserver
     globalThis.ResizeObserver = FakeResizeObserver
     globalThis.requestAnimationFrame = callback => {
@@ -523,6 +577,8 @@ function createHarness({ width = 1000 } = {}) {
     globalThis.cancelAnimationFrame = id => { frameMap.delete(id) }
     return () => {
       globalThis.document = saved.document
+      if (saved.hasWindow) globalThis.window = saved.window
+      else delete globalThis.window
       globalThis.IntersectionObserver = saved.IntersectionObserver
       globalThis.ResizeObserver = saved.ResizeObserver
       globalThis.requestAnimationFrame = saved.requestAnimationFrame
@@ -534,9 +590,23 @@ function createHarness({ width = 1000 } = {}) {
     react,
     jsxRuntime,
     document,
+    window: win,
     intersections,
     resizes,
     installGlobals,
+    setSelection(text) {
+      selection = text
+        ? { isCollapsed: false, toString: () => text }
+        : { isCollapsed: true, toString: () => '' }
+    },
+    dispatchWindow(type, event = {}) {
+      for (const fn of [...(winListeners.get(type) ?? [])]) fn(event)
+      renderNow()
+    },
+    dispatchDocument(type, event = {}) {
+      for (const fn of [...(docListeners.get(type) ?? [])]) fn(event)
+      renderNow()
+    },
     mount(vnode) {
       rootElement = vnode
       renderNow()
@@ -576,6 +646,7 @@ function createHarness({ width = 1000 } = {}) {
         altKey: false,
         shiftKey: false,
         isComposing: false,
+        get defaultPrevented() { return prevented },
         preventDefault() { prevented = true },
         stopPropagation() { stopped = true },
         ...extra,
@@ -590,6 +661,89 @@ function createHarness({ width = 1000 } = {}) {
       }
       renderNow()
       return { prevented, stopped }
+    },
+    mouseClick(target, extra = {}) {
+      for (const fn of [...(docListeners.get('pointerdown') ?? [])]) {
+        fn({ target, button: 0, clientX: 20, clientY: 20 })
+      }
+      let downPrevented = false
+      let downStopped = false
+      const downEvent = {
+        button: 0,
+        target,
+        currentTarget: target,
+        clientX: 20,
+        clientY: 20,
+        get defaultPrevented() { return downPrevented },
+        preventDefault() { downPrevented = true },
+        stopPropagation() { downStopped = true },
+      }
+      let cursor = target
+      while (cursor !== null && cursor !== undefined && !downStopped) {
+        if (typeof cursor.props?.onMouseDown === 'function') {
+          downEvent.currentTarget = cursor
+          cursor.props.onMouseDown(downEvent)
+        }
+        cursor = cursor.parentElement
+      }
+      if (!downPrevented) {
+        let focusable = target
+        while (focusable !== null && focusable !== undefined) {
+          if (focusable.tagName === 'BUTTON' || focusable.tagName === 'SELECT' || focusable.tagName === 'INPUT') {
+            document.activeElement = focusable
+            break
+          }
+          focusable = focusable.parentElement
+        }
+      }
+      let prevented = false
+      let stopped = false
+      const clickEvent = {
+        detail: 1,
+        clientX: 20,
+        clientY: 20,
+        target,
+        currentTarget: target,
+        get defaultPrevented() { return prevented },
+        preventDefault() { prevented = true },
+        stopPropagation() { stopped = true },
+        ...extra,
+      }
+      cursor = target
+      while (cursor !== null && cursor !== undefined && !stopped) {
+        if (typeof cursor.props?.onClick === 'function') {
+          clickEvent.currentTarget = cursor
+          cursor.props.onClick(clickEvent)
+        }
+        cursor = cursor.parentElement
+      }
+      renderNow()
+      return { downPrevented, prevented, stopped }
+    },
+    keyClick(target, key = 'Enter') {
+      const result = this.keyDown(target, key)
+      if (!result.prevented) {
+        let stopped = false
+        let prevented = false
+        const clickEvent = {
+          detail: 0,
+          target,
+          currentTarget: target,
+          get defaultPrevented() { return prevented },
+          preventDefault() { prevented = true },
+          stopPropagation() { stopped = true },
+        }
+        let cursor = target
+        while (cursor !== null && cursor !== undefined && !stopped) {
+          if (typeof cursor.props?.onClick === 'function') {
+            clickEvent.currentTarget = cursor
+            cursor.props.onClick(clickEvent)
+          }
+          cursor = cursor.parentElement
+        }
+        renderNow()
+      }
+      return result
     },
   }
 }
@@ -2351,5 +2505,771 @@ test('BranchDialog, TagDialog, and CommitDialog cover blocked state, unmerged fo
   } finally {
     harness.unmount()
     restore()
+  }
+})
+
+
+test('VcsView keeps keyboard navigation flowing across button clicks and Tab activation', async () => {
+  const commits = Array.from({ length: 300 }, (_, i) => {
+    const sha = i.toString(16).padStart(40, '0')
+    const parent = i + 1 < 300 ? [(i + 1).toString(16).padStart(40, '0')] : []
+    return {
+      sha,
+      parents: parent,
+      refs: i === 0 ? [{ name: 'main', kind: 'branch', current: true }] : [],
+      author: 'Ada',
+      authorTime: 1_700_000_000_000 - i * 1000,
+      subject: `commit-${i}`,
+    }
+  })
+  const extraSha = (300).toString(16).padStart(40, '0')
+  const json = body => ({ ok: true, status: 200, async json() { return body } })
+  const fetchImpl = async url => {
+    const parsed = new URL(url, 'http://127.0.0.1')
+    if (parsed.pathname === '/api/vcs.repositories') {
+      return json({
+        cwd: '/repo',
+        truncated: false,
+        repositories: [{ path: '/repo', name: 'repo', enclosing: true, vcs: 'git', capabilities: GIT_CAPABILITIES }],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.status') {
+      return json({
+        repo: { path: '/repo', name: 'repo' },
+        vcs: 'git',
+        capabilities: GIT_CAPABILITIES,
+        defaultNode: 'worktree',
+        branch: { name: 'main', oid: commits[0].sha, detached: false, unborn: false, upstream: 'origin/main', ahead: 1, behind: 0 },
+        groups: { staged: [], unstaged: [{ path: 'src/a.js', status: 'M', added: 2, deleted: 1 }], untracked: [] },
+        total: 1,
+        truncated: false,
+      })
+    }
+    if (parsed.pathname === '/api/vcs.log') {
+      const skip = Number(parsed.searchParams.get('skip') ?? '0')
+      if (skip === 0) return json({ truncated: false, nextSkip: 300, commits })
+      return json({
+        truncated: false,
+        nextSkip: null,
+        commits: [{ sha: extraSha, parents: [], refs: [], author: 'Ada', authorTime: 1_699_000_000_000, subject: 'extra' }],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.sync') {
+      return json({ upstream: 'origin/main', pulled: 0, pushed: 1 })
+    }
+    if (parsed.pathname === '/api/vcs.commit') {
+      const sha = parsed.searchParams.get('sha')
+      const entry = commits.find(c => c.sha === sha) ?? commits[0]
+      return json({
+        truncated: false,
+        commit: {
+          sha: entry.sha,
+          parents: entry.parents,
+          refs: [],
+          author: 'Ada',
+          authorTime: entry.authorTime,
+          committer: 'Ada',
+          committerTime: entry.authorTime,
+          subject: entry.subject,
+          message: '',
+          files: [{ path: 'a.js', status: 'M', added: 2, deleted: 1 }],
+        },
+      })
+    }
+    return json({
+      kind: 'text',
+      path: parsed.searchParams.get('path') ?? 'a.js',
+      before: true,
+      after: true,
+      hunks: [
+        { oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines: ['-old1', '+new1'] },
+        { oldStart: 10, oldLines: 2, newStart: 10, newLines: 2, lines: ['-old2', '+new2'] },
+      ],
+    })
+  }
+
+  const savedFetch = globalThis.fetch
+  const savedClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, 'clipboard')
+  globalThis.fetch = fetchImpl
+  let copiedText = null
+  Object.defineProperty(globalThis.navigator, 'clipboard', {
+    value: { async writeText(text) { copiedText = text } },
+    configurable: true,
+  })
+  const harness = createHarness({ width: 1000 })
+  const restore = harness.installGlobals()
+  try {
+    const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+    harness.mount(harness.react.createElement(VcsView, { sessionId: 'session-buttons', t, locale: 'en-US', focusRequest: 1 }))
+    await harness.settle()
+    const body = harness.document.body
+    const triggerAllDiffs = () => {
+      for (const observer of harness.intersections) observer.trigger(() => true)
+    }
+    triggerAllDiffs()
+    await harness.settle()
+
+    // Start in timeline and step down to commit-0 (row 1).
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '0')
+    harness.keyDown(harness.document.activeElement, 'j')
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
+
+    // Clicking Sync, Refresh, All/HEAD range toggle, and Load More keeps focus on the timeline stop.
+    harness.mouseClick(body.querySelector('.vcs-sync'))
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
+
+    harness.mouseClick(body.querySelector('[aria-label="top.refresh"]'))
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
+
+    harness.mouseClick(body.querySelector('[title="history.allTitle"]'))
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1', 'chosen commit survives range switch')
+
+    harness.mouseClick(body.querySelector('[title="history.headTitle"]'))
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
+
+    const loadMore = body.querySelector('.vcs-load-more')
+    assert.notEqual(loadMore, null)
+    harness.mouseClick(loadMore)
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
+
+    // Keyboard flow in timeline still steps smoothly after button clicks.
+    harness.keyDown(harness.document.activeElement, 'j')
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '2')
+    harness.keyDown(harness.document.activeElement, 'k')
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
+
+    // Enter ChangeTree, unfold a.js, and step onto its hunk header.
+    const assignHunkGeometry = () => {
+      const tree = body.querySelector('.vcs-tree')
+      const headers = tree.querySelectorAll('[data-diff-hunk-header]')
+      headers.forEach((header, index) => {
+        header.offsetTop = (index % 2) * 200 + 40
+      })
+      return { tree, headers }
+    }
+
+    harness.keyDown(harness.document.activeElement, 'ArrowRight')
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'commit|a.js')
+    harness.keyDown(harness.document.activeElement, 'ArrowRight')
+    triggerAllDiffs()
+    await harness.settle()
+    assignHunkGeometry()
+    harness.keyDown(harness.document.activeElement, 'ArrowDown')
+    assert.notEqual(harness.document.activeElement?.attributes?.get('data-diff-hunk-header'), undefined)
+
+    // Copy SHA keeps tree hunk focus.
+    harness.mouseClick(body.querySelector('.vcs-sha-button'))
+    await harness.settle()
+    assert.equal(copiedText, commits[0].sha)
+    assert.notEqual(harness.document.activeElement?.attributes?.get('data-diff-hunk-header'), undefined)
+
+    // Wrap and Split toggles keep tree hunk focus.
+    harness.mouseClick(body.querySelector('[aria-label="diff.wrapAria"]'))
+    await harness.settle()
+    assert.notEqual(harness.document.activeElement?.attributes?.get('data-diff-hunk-header'), undefined)
+
+    harness.mouseClick(body.querySelector('.vcs-diff-split'))
+    await harness.settle()
+    assert.notEqual(harness.document.activeElement?.attributes?.get('data-diff-hunk-header'), undefined)
+
+    // Collapse All while on a hunk falls back synchronously to the owning file row.
+    harness.mouseClick(body.querySelector('[aria-label="tree.collapseAll"]'))
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'commit|a.js')
+
+    // Expand All restores expansion without stealing focus to the button.
+    harness.mouseClick(body.querySelector('[aria-label="tree.expandAll"]'))
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.rowKey, 'commit|a.js')
+
+    // Parent commit link jumps timeline selection and puts focus on that parent row.
+    harness.mouseClick(body.querySelector('.vcs-parent-link'))
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '2')
+
+    // Tab focus + Enter keeps focus on the button; subsequent movement keys route back to navigation.
+    const refreshBtn = body.querySelector('[aria-label="top.refresh"]')
+    refreshBtn.focus()
+    harness.keyClick(refreshBtn, 'Enter')
+    await harness.settle()
+    assert.equal(harness.document.activeElement, refreshBtn, 'keyboard Enter keeps focus on Tab-focused button')
+    harness.keyDown(refreshBtn, 'j')
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '3', 'movement key routes back to navigation stop')
+  } finally {
+    harness.unmount()
+    restore()
+    globalThis.fetch = savedFetch
+    if (savedClipboard === undefined) delete globalThis.navigator.clipboard
+    else Object.defineProperty(globalThis.navigator, 'clipboard', savedClipboard)
+  }
+})
+
+test('VcsView returns focus cleanly after branch switch, push, and Escape on branch menu', async () => {
+  const sha1 = 'e'.repeat(40)
+  const sha2 = 'f'.repeat(40)
+  let currentBranch = 'main'
+  const json = body => ({ ok: true, status: 200, async json() { return body } })
+  const fetchImpl = async (url, init) => {
+    const parsed = new URL(url, 'http://127.0.0.1')
+    if (parsed.pathname === '/api/vcs.repositories') {
+      return json({
+        cwd: '/repo',
+        truncated: false,
+        repositories: [{ path: '/repo', name: 'repo', enclosing: true, vcs: 'git', capabilities: GIT_CAPABILITIES }],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.status') {
+      return json({
+        repo: { path: '/repo', name: 'repo' },
+        vcs: 'git',
+        capabilities: GIT_CAPABILITIES,
+        defaultNode: sha1,
+        branch: { name: currentBranch, oid: sha1, detached: false, unborn: false, upstream: `origin/${currentBranch}`, ahead: 0, behind: 0 },
+        groups: { staged: [], unstaged: [], untracked: [] },
+        total: 0,
+        truncated: false,
+      })
+    }
+    if (parsed.pathname === '/api/vcs.log') {
+      return json({
+        truncated: false,
+        nextSkip: null,
+        commits: [
+          { sha: sha1, parents: [sha2], refs: [{ name: currentBranch, kind: 'branch', current: true }], author: 'Ada', authorTime: 1_700_000_000_000, subject: 'head' },
+          { sha: sha2, parents: [], refs: [], author: 'Ada', authorTime: 1_699_000_000_000, subject: 'base' },
+        ],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.branches') {
+      return json({
+        truncated: false,
+        branches: [
+          { name: 'main', current: currentBranch === 'main' },
+          { name: 'feature', current: currentBranch === 'feature' },
+        ],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.switch') {
+      const payload = JSON.parse(init.body)
+      currentBranch = payload.branch
+      return json({ branch: payload.branch })
+    }
+    if (parsed.pathname === '/api/vcs.branch') {
+      const payload = JSON.parse(init.body)
+      return json({ branch: payload.branch, remote: 'origin' })
+    }
+    if (parsed.pathname === '/api/vcs.commit') {
+      const sha = parsed.searchParams.get('sha')
+      return json({
+        truncated: false,
+        commit: { sha, parents: [], refs: [], author: 'Ada', authorTime: 1_700_000_000_000, committer: 'Ada', committerTime: 1_700_000_000_000, subject: 'head', message: '', files: [] },
+      })
+    }
+    return json({ kind: 'text', path: 'a.js', before: true, after: true, hunks: [] })
+  }
+
+  const savedFetch = globalThis.fetch
+  globalThis.fetch = fetchImpl
+  const harness = createHarness({ width: 1000 })
+  const restore = harness.installGlobals()
+  try {
+    const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+    harness.mount(harness.react.createElement(VcsView, { sessionId: 'session-branch', t, locale: 'en-US', focusRequest: 1 }))
+    await harness.settle()
+    const body = harness.document.body
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
+
+    // Pointer-open branch switcher and switch to `feature`: focus returns to timeline stop, so `j` moves commits.
+    const branchBtn = body.querySelector('.vcs-branch-button')
+    harness.mouseClick(branchBtn)
+    await harness.settle()
+    const featureItem = body.querySelector('[title="feature"]')
+    assert.notEqual(featureItem, null)
+    harness.mouseClick(featureItem)
+    await harness.settle()
+    assert.equal(body.querySelector('.vcs-branch-name')?.props?.children, 'feature')
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
+    harness.keyDown(harness.document.activeElement, 'j')
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '2', 'j steps commit instead of reopening menu')
+
+    // Context-menu Push on branch button: focus returns to navigation stop after Push.
+    body.querySelector('.vcs-branch-button').props.onContextMenu({
+      clientX: 30,
+      clientY: 30,
+      preventDefault() {},
+      stopPropagation() {},
+    })
+    await harness.settle()
+    const pushItem = body.querySelector('[title="branch.push"]')
+    assert.notEqual(pushItem, null)
+    harness.mouseClick(pushItem)
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '2')
+
+    // Keyboard-opened branch menu returns to .vcs-branch-button on Escape, and Escape there returns to navigation stop.
+    const activeBranchBtn = body.querySelector('.vcs-branch-button')
+    activeBranchBtn.focus()
+    harness.keyDown(activeBranchBtn, 'ArrowDown')
+    await harness.settle()
+    const menu = body.querySelector('.vcs-branch-menu')
+    assert.notEqual(menu, null)
+    harness.keyDown(menu, 'Escape')
+    await harness.settle()
+    assert.equal(harness.document.activeElement, activeBranchBtn)
+    harness.keyDown(activeBranchBtn, 'Escape')
+    await harness.settle()
+    assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '2')
+  } finally {
+    harness.unmount()
+    restore()
+    globalThis.fetch = savedFetch
+  }
+})
+
+test('VcsView claims keyboard readiness on window focus and visibility without stealing active inputs or modals', async () => {
+  const sha = 'b'.repeat(40)
+  const json = body => ({ ok: true, status: 200, async json() { return body } })
+  const fetchImpl = async url => {
+    const parsed = new URL(url, 'http://127.0.0.1')
+    if (parsed.pathname === '/api/vcs.repositories') {
+      return json({
+        cwd: '/repo',
+        truncated: false,
+        repositories: [{ path: '/repo', name: 'repo', enclosing: true, vcs: 'git', capabilities: GIT_CAPABILITIES }],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.status') {
+      return json({
+        repo: { path: '/repo', name: 'repo' },
+        vcs: 'git',
+        capabilities: GIT_CAPABILITIES,
+        defaultNode: sha,
+        branch: { name: 'main', oid: sha, detached: false, unborn: false, upstream: null, ahead: 0, behind: 0 },
+        groups: { staged: [], unstaged: [], untracked: [] },
+        total: 0,
+        truncated: false,
+      })
+    }
+    if (parsed.pathname === '/api/vcs.log') {
+      return json({
+        truncated: false,
+        nextSkip: null,
+        commits: [{ sha, parents: [], refs: [{ name: 'main', kind: 'branch', current: true }], author: 'Ada', authorTime: 1_700_000_000_000, subject: 'head' }],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.commit') {
+      return json({
+        truncated: false,
+        commit: {
+          sha,
+          parents: [],
+          refs: [],
+          author: 'Ada',
+          authorTime: 1_700_000_000_000,
+          committer: 'Ada',
+          committerTime: 1_700_000_000_000,
+          subject: 'head',
+          message: '',
+          files: [{ path: 'a.js', status: 'M', added: 1, deleted: 1 }],
+        },
+      })
+    }
+    return json({
+      kind: 'text',
+      path: 'a.js',
+      before: true,
+      after: true,
+      hunks: [{ oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines: ['-a', '+b'] }],
+    })
+  }
+
+  const savedFetch = globalThis.fetch
+  globalThis.fetch = fetchImpl
+  try {
+    // Hidden tab never claims focus, even with focusRequest > 0 or window focus.
+    {
+      const harness = createHarness({ width: 1000 })
+      const restore = harness.installGlobals()
+      try {
+        const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+        harness.mount(harness.react.createElement(VcsView, { sessionId: 'session-hidden', t, locale: 'en-US', visible: false, focusRequest: 1 }))
+        await harness.settle()
+        assert.equal(harness.document.activeElement, harness.document.body)
+        harness.dispatchWindow('focus')
+        assert.equal(harness.document.activeElement, harness.document.body)
+      } finally {
+        harness.unmount()
+        restore()
+      }
+    }
+
+    // Visible tab claims idle focus at focusRequest 0, and respects external textarea / modal + tree scrollTop.
+    {
+      const harness = createHarness({ width: 1000 })
+      const restore = harness.installGlobals()
+      try {
+        const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+        const ModalShell = ({ showModal, visible = true }) => {
+          const children = [
+            harness.react.createElement('textarea', { key: 'composer', className: 'external-composer' }),
+            harness.react.createElement(VcsView, { key: 'vcs', sessionId: 'session-ready', t, locale: 'en-US', visible, focusRequest: 0 }),
+          ]
+          if (showModal) {
+            children.push(harness.react.createElement('div', { key: 'modal', 'aria-modal': 'true' }))
+          }
+          return harness.react.createElement('div', null, ...children)
+        }
+
+        harness.mount(harness.react.createElement(ModalShell, { showModal: false }))
+        await harness.settle()
+        assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1', 'visible panel claims idle body focus')
+
+        // External composer textarea must never lose focus on window focus or visibilitychange.
+        const composer = harness.document.body.querySelector('.external-composer')
+        composer.focus()
+        harness.dispatchWindow('focus')
+        harness.dispatchDocument('visibilitychange')
+        assert.equal(harness.document.activeElement, composer)
+
+        // External modal dialog blocks background focus stealing even when body holds focus.
+        harness.document.body.focus?.()
+        harness.document.activeElement = harness.document.body
+        harness.mount(harness.react.createElement(ModalShell, { showModal: true }))
+        await harness.settle()
+        harness.dispatchWindow('focus')
+        assert.equal(harness.document.activeElement, harness.document.body)
+
+        // With modal gone, enter ChangeTree, scroll, drop focus to body, and return to the window.
+        harness.mount(harness.react.createElement(ModalShell, { showModal: false }))
+        await harness.settle()
+        harness.dispatchWindow('focus')
+        assert.equal(harness.document.activeElement?.dataset?.timelineIndex, '1')
+        harness.keyDown(harness.document.activeElement, 'ArrowRight')
+        await harness.settle()
+        for (const observer of harness.intersections) observer.trigger(() => true)
+        await harness.settle()
+        assert.equal(harness.document.activeElement?.dataset?.rowKey, 'commit|a.js')
+
+        const treeEl = harness.document.body.querySelector('.vcs-tree')
+        treeEl.scrollTop = 75
+        harness.document.activeElement = harness.document.body
+        harness.dispatchWindow('focus')
+        harness.document.visibilityState = 'visible'
+        harness.dispatchDocument('visibilitychange')
+        assert.equal(harness.document.activeElement?.dataset?.rowKey, 'commit|a.js')
+        assert.equal(treeEl.scrollTop, 75, 'restoring window focus does not reset scroll position')
+      } finally {
+        harness.unmount()
+        restore()
+      }
+    }
+  } finally {
+    globalThis.fetch = savedFetch
+  }
+})
+
+test('Timeline virtualization, paging, ChangeTree hunk entry, header scroll-back, diff clicks/selection, narrow empty commit, and commitCache', async () => {
+  // Part A: Timeline keeps focusRow mounted across large scroll offsets and handles PageUp/PageDown/Home/End.
+  {
+    const harness = createHarness()
+    const restore = harness.installGlobals()
+    try {
+      const { Timeline, ROW_HEIGHT } = await loadClientModule('src/client/history/Timeline.jsx', harness)
+      const commits = Array.from({ length: 50 }, (_, i) => ({
+        sha: i.toString(16).padStart(40, '1'),
+        parents: [],
+        refs: [],
+        author: 'Ada',
+        authorTime: 1_700_000_000_000 - i * 1000,
+        subject: `c-${i}`,
+      }))
+      const layout = { width: 1, rows: commits.map((_, i) => ({ x: 0, color: 0, lines: [], up: [], down: [], row: i + 1 })) }
+      let selected = 1
+      const renderTimeline = () => {
+        harness.mount(harness.react.createElement(Timeline, {
+          commits,
+          layout,
+          status: null,
+          statusState: 'ready',
+          worktreeRow: true,
+          selectedRow: selected,
+          onSelectRow(idx) { selected = idx; renderTimeline() },
+          onMove(delta) {
+            selected = Math.max(0, Math.min(commits.length, selected + delta))
+            renderTimeline()
+          },
+          onOpen() {},
+          t,
+          locale: 'en-US',
+          loading: false,
+          loadingMore: false,
+          error: null,
+          hasMore: false,
+          truncated: false,
+          onLoadMore() {},
+          onRetry() {},
+        }))
+      }
+      renderTimeline()
+      const scrollEl = harness.document.body.querySelector('.vcs-timeline-scroll')
+      scrollEl.clientHeight = ROW_HEIGHT * 4
+      for (const ro of harness.resizes) ro.callback()
+
+      const row1 = scrollEl.querySelector('[data-timeline-index="1"]')
+      row1.focus()
+      scrollEl.scrollTop = 1800
+      scrollEl.props.onScroll({ currentTarget: scrollEl })
+      const mountedRow1 = scrollEl.querySelector('[data-timeline-index="1"]')
+      assert.notEqual(mountedRow1, null, 'focused row stays mounted past overscan')
+      assert.equal(harness.document.activeElement, mountedRow1)
+
+      harness.keyDown(mountedRow1, 'j')
+      assert.equal(selected, 2)
+      assert.equal(scrollEl.scrollTop, 2 * ROW_HEIGHT, 'selectedRow scrolls back into view synchronously')
+      scrollEl.querySelector('[data-timeline-index="2"]').focus()
+
+      harness.keyDown(harness.document.activeElement, 'PageDown')
+      assert.equal(selected, 5)
+      harness.keyDown(harness.document.activeElement, 'End')
+      assert.equal(selected, commits.length)
+      scrollEl.querySelector(`[data-timeline-index="${selected}"]`).focus()
+      harness.keyDown(harness.document.activeElement, 'PageUp')
+      assert.equal(selected, commits.length - 3)
+      harness.keyDown(harness.document.activeElement, 'Home')
+      assert.equal(selected, 0)
+    } finally {
+      harness.unmount()
+      restore()
+    }
+  }
+
+  // Part B: ChangeTree `→` enters hunk 0, `↑`/`[` at top row scroll header to 0, PageUp/PageDown/Home/End, diff click vs selection.
+  {
+    const harness = createHarness()
+    const restore = harness.installGlobals()
+    try {
+      const { ChangeTree } = await loadClientModule('src/client/detail/ChangeTree.jsx', harness)
+      const groups = [{
+        id: 'unstaged',
+        header: true,
+        entries: [
+          { path: 'a.js', status: 'M', added: 2, deleted: 2 },
+          { path: 'b.js', status: 'M', added: 1, deleted: 1 },
+        ],
+      }]
+      const rows = buildNodeRows(groups)
+      const budget = budgetFolds(streamSections(groups, {}, null))
+      const control = { current: null }
+      const api = {
+        async diff(_repo, target) {
+          return {
+            kind: 'text',
+            path: target.path,
+            before: true,
+            after: true,
+            hunks: [
+              { oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines: ['-a1', '+b1'] },
+              { oldStart: 20, oldLines: 2, newStart: 20, newLines: 2, lines: ['-a2', '+b2'] },
+            ],
+          }
+        },
+      }
+      harness.mount(harness.react.createElement(ChangeTree, {
+        api,
+        repo: '/repo',
+        rev: null,
+        rows,
+        budget,
+        folds: { 'unstaged|a.js': false, 'unstaged|b.js': false },
+        split: false,
+        wrap: false,
+        revision: 0,
+        cache: new Map(),
+        initialAnchor: null,
+        onReading() {},
+        onToggleRow() {},
+        onBulkFold() {},
+        onLeave() {},
+        control,
+        t,
+        locale: 'en-US',
+      }))
+      harness.intersections[0].trigger(() => true)
+      await harness.settle()
+
+      const treeEl = harness.document.body.querySelector('.vcs-tree')
+      treeEl.scrollHeight = 1500
+      const groupWrap = treeEl.querySelector('.vcs-tree-group')
+      const [fileA, fileB] = treeEl.querySelectorAll('.vcs-tree-file')
+      const headers = treeEl.querySelectorAll('[data-diff-hunk-header]')
+      groupWrap.offsetTop = 80
+      groupWrap.offsetParent = treeEl
+      fileA.offsetTop = 120
+      fileA.offsetParent = treeEl
+      fileB.offsetTop = 700
+      fileB.offsetParent = treeEl
+      headers[0].offsetTop = 44
+      headers[1].offsetTop = 260
+      headers[2].offsetTop = 44
+      headers[3].offsetTop = 260
+
+      // Row 0 (`group`) scrolled down -> `[` / `ArrowUp` scrolls scrollTop back to 0 for the commit header.
+      const groupBtn = treeEl.querySelector('.vcs-tree-group-head')
+      groupBtn.focus()
+      treeEl.scrollTop = 80
+      harness.keyDown(groupBtn, 'ArrowUp')
+      assert.equal(treeEl.scrollTop, 0, 'ArrowUp on top row scrolls header into view')
+
+      // `]` onto open file a.js, then `ArrowRight` enters hunk 0 directly.
+      harness.keyDown(groupBtn, ']')
+      assert.equal(harness.document.activeElement?.dataset?.rowKey, 'unstaged|a.js')
+      harness.keyDown(harness.document.activeElement, 'ArrowRight')
+      assert.equal(harness.document.activeElement, headers[0], 'Right on open file steps into its first hunk')
+
+      // PageDown, PageUp, End, Home.
+      harness.keyDown(headers[0], 'PageDown')
+      assert.equal(treeEl.scrollTop > 0, true)
+      harness.keyDown(harness.document.activeElement, 'End')
+      assert.equal(harness.document.activeElement, headers[3])
+      harness.keyDown(harness.document.activeElement, 'PageUp')
+      assert.equal(treeEl.scrollTop < 1000, true)
+      harness.keyDown(harness.document.activeElement, 'Home')
+      assert.equal(treeEl.scrollTop, 0)
+      assert.equal(harness.document.activeElement, groupBtn)
+
+      // Clicking a diff line focuses its hunk stop; a non-collapsed text selection keeps selection intact.
+      const diffLineA1 = fileA.querySelector('[data-diff-line]')
+      harness.mouseClick(diffLineA1)
+      assert.equal(harness.document.activeElement, headers[0])
+
+      harness.setSelection('copied diff text')
+      const fileBLine = fileB.querySelector('[data-diff-line]')
+      harness.mouseClick(fileBLine)
+      assert.equal(harness.document.activeElement, headers[0], 'text selection preserves focus/selection instead of jumping')
+      harness.setSelection('')
+    } finally {
+      harness.unmount()
+      restore()
+    }
+  }
+
+  // Part C: Narrow single-column 0-file commit row click -> detail (`←` returns to timeline) + DetailPane commitCache.
+  {
+    const c1 = '1'.repeat(40)
+    const c2 = '2'.repeat(40)
+    const commitCalls = new Map()
+    const json = body => ({ ok: true, status: 200, async json() { return body } })
+    const fetchImpl = async url => {
+      const parsed = new URL(url, 'http://127.0.0.1')
+      if (parsed.pathname === '/api/vcs.repositories') {
+        return json({
+          cwd: '/repo',
+          truncated: false,
+          repositories: [{ path: '/repo', name: 'repo', enclosing: true, vcs: 'git', capabilities: GIT_CAPABILITIES }],
+        })
+      }
+      if (parsed.pathname === '/api/vcs.status') {
+        return json({
+          repo: { path: '/repo', name: 'repo' },
+          vcs: 'git',
+          capabilities: GIT_CAPABILITIES,
+          defaultNode: c1,
+          branch: { name: 'main', oid: c1, detached: false, unborn: false, upstream: null, ahead: 0, behind: 0 },
+          groups: { staged: [], unstaged: [], untracked: [] },
+          total: 0,
+          truncated: false,
+        })
+      }
+      if (parsed.pathname === '/api/vcs.log') {
+        return json({
+          truncated: false,
+          nextSkip: null,
+          commits: [
+            { sha: c1, parents: [c2], refs: [{ name: 'main', kind: 'branch', current: true }], author: 'Ada', authorTime: 1_700_000_000_000, subject: 'first' },
+            { sha: c2, parents: [], refs: [], author: 'Ada', authorTime: 1_699_000_000_000, subject: 'empty' },
+          ],
+        })
+      }
+      if (parsed.pathname === '/api/vcs.commit') {
+        const sha = parsed.searchParams.get('sha')
+        commitCalls.set(sha, (commitCalls.get(sha) ?? 0) + 1)
+        return json({
+          truncated: false,
+          commit: {
+            sha,
+            parents: sha === c1 ? [c2] : [],
+            refs: [],
+            author: 'Ada',
+            authorTime: 1_700_000_000_000,
+            committer: 'Ada',
+            committerTime: 1_700_000_000_000,
+            subject: sha === c1 ? 'first' : 'empty',
+            message: '',
+            files: [],
+          },
+        })
+      }
+      return json({ kind: 'text', path: 'a.js', before: true, after: true, hunks: [] })
+    }
+
+    const savedFetch = globalThis.fetch
+    globalThis.fetch = fetchImpl
+    const harnessNarrow = createHarness({ width: 620 })
+    const restoreNarrow = harnessNarrow.installGlobals()
+    try {
+      const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harnessNarrow)
+      harnessNarrow.mount(harnessNarrow.react.createElement(VcsView, { sessionId: 'session-narrow-empty', t, locale: 'en-US', focusRequest: 1 }))
+      await harnessNarrow.settle()
+      const body = harnessNarrow.document.body
+      harnessNarrow.mouseClick(body.querySelector('[data-timeline-index="2"]'))
+      await harnessNarrow.settle()
+      assert.equal(body.querySelector('.vcs-content') !== null, true)
+      assert.equal(body.querySelector('.vcs-root').contains(harnessNarrow.document.activeElement), true)
+      harnessNarrow.keyDown(harnessNarrow.document.activeElement, 'ArrowLeft')
+      await harnessNarrow.settle()
+      assert.equal(harnessNarrow.document.activeElement?.dataset?.timelineIndex, '2', 'Left on 0-file commit detail returns to timeline')
+    } finally {
+      harnessNarrow.unmount()
+      restoreNarrow()
+    }
+
+    // Wide layout: commitCache prevents refetching visited commits on j/k until Refresh.
+    commitCalls.clear()
+    const harnessWide = createHarness({ width: 1000 })
+    const restoreWide = harnessWide.installGlobals()
+    try {
+      const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harnessWide)
+      harnessWide.mount(harnessWide.react.createElement(VcsView, { sessionId: 'session-cache', t, locale: 'en-US', focusRequest: 1 }))
+      await harnessWide.settle()
+      assert.equal(commitCalls.get(c1), 1)
+      harnessWide.keyDown(harnessWide.document.activeElement, 'j')
+      await harnessWide.settle()
+      assert.equal(commitCalls.get(c2), 1)
+      harnessWide.keyDown(harnessWide.document.activeElement, 'k')
+      await harnessWide.settle()
+      harnessWide.keyDown(harnessWide.document.activeElement, 'j')
+      await harnessWide.settle()
+      assert.equal(commitCalls.get(c1), 1, 'revisiting c1 hits commitCache')
+      assert.equal(commitCalls.get(c2), 1, 'revisiting c2 hits commitCache')
+
+      harnessWide.mouseClick(harnessWide.document.body.querySelector('[aria-label="top.refresh"]'))
+      await harnessWide.settle()
+      assert.equal(commitCalls.get(c2), 2, 'Refresh clears commitCache and refetches selected commit')
+    } finally {
+      harnessWide.unmount()
+      restoreWide()
+      globalThis.fetch = savedFetch
+    }
   }
 })

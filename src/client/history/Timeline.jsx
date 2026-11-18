@@ -10,13 +10,13 @@
  * width, and refs, id, author, and time share the second line.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { graphWidth, Graph } from './Graph.jsx'
 import { DEFAULT_ROW_HEIGHT } from './layout.js'
 import { hasSeveralAuthors } from './commits.js'
 import { worktreeSummary } from './timeline.js'
 import { errorMessage, formatCommitTime, formatCount, shortChangeId, shortSha } from '../format.js'
-import { DOWN, FORWARD, movement, unmodified, UP } from '../keys.js'
+import { DOWN, findAncestor, FORWARD, hasClass, isDiscreteActionButton, isEditableTarget, movement, unmodified, UP } from '../keys.js'
 import { RefBadge } from '../ui.jsx'
 import { Bar, TimelineSkeleton } from '../skeleton.jsx'
 
@@ -60,11 +60,11 @@ function WorktreeMeta({ status, statusState, t, locale }) {
 
 /**
  * Render the timeline.
- * @param {{ commits: object[], layout: object, status: object | null, statusState: string, worktreeRow?: boolean, selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, onRefActions?: Function, onCommitActions?: Function, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
+ * @param {{ commits: object[], layout: object, status: object | null, statusState: string, worktreeRow?: boolean, selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, onRefActions?: Function, onCommitActions?: Function, control?: { current: object | null }, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
  */
 export function Timeline({
   commits, layout, status, statusState, worktreeRow = true, selectedRow, onSelectRow, onMove, onOpen,
-  onRefActions, onCommitActions, t, locale,
+  onRefActions, onCommitActions, control, t, locale,
   loading, loadingMore, error, hasMore, truncated, onLoadMore, onRetry,
   initialScrollTop = 0, onScrollOffset,
 }) {
@@ -72,6 +72,8 @@ export function Timeline({
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState(0)
   const restoreRef = useRef(initialScrollTop)
+  const onScrollOffsetRef = useRef(onScrollOffset)
+  onScrollOffsetRef.current = onScrollOffset
 
   useLayoutEffect(() => {
     const element = scrollRef.current
@@ -96,13 +98,19 @@ export function Timeline({
   }, [commits.length])
 
   // Keep the selected row in view; appending a page must not move the list.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = scrollRef.current
-    if (element === null || selectedRow < 0) return
+    if (element === null || selectedRow < 0 || element.clientHeight <= 0) return
     const top = selectedRow * ROW_HEIGHT
     const bottom = top + ROW_HEIGHT
-    if (top < element.scrollTop) element.scrollTop = top
-    else if (bottom > element.scrollTop + element.clientHeight) element.scrollTop = bottom - element.clientHeight
+    let nextTop = element.scrollTop
+    if (top < element.scrollTop) nextTop = top
+    else if (bottom > element.scrollTop + element.clientHeight) nextTop = Math.max(0, bottom - element.clientHeight)
+    if (nextTop !== element.scrollTop) {
+      element.scrollTop = nextTop
+      setScrollTop(nextTop)
+      onScrollOffsetRef.current?.(nextTop)
+    }
   }, [selectedRow])
 
   const rowCount = commits.length + (worktreeRow ? 1 : 0)
@@ -110,12 +118,11 @@ export function Timeline({
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
   const last = Math.min(rowCount, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN)
   const showAuthor = useMemo(() => hasSeveralAuthors(commits), [commits])
-  const focusRow = selectedRow >= 0 ? selectedRow : 0
+  const focusRow = rowCount === 0 ? -1 : Math.min(rowCount - 1, selectedRow >= 0 ? selectedRow : 0)
   const now = Date.now()
 
   const workingSummary = status?.workingCopy?.summary ?? null
-  const rows = []
-  for (let index = first; index < last; index += 1) {
+  const renderRow = index => {
     const commit = worktreeRow && index === 0 ? null : commits[worktreeRow ? index - 1 : index]
     const common = {
       type: 'button',
@@ -123,19 +130,21 @@ export function Timeline({
       'aria-current': index === selectedRow ? 'true' : undefined,
       tabIndex: index === focusRow ? 0 : -1,
       style: { top: `${index * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px`, paddingLeft: `${gutter + 8}px` },
-      onClick: () => { onSelectRow(index) },
+      onClick: event => {
+        event?.currentTarget?.focus?.({ preventScroll: true })
+        onSelectRow(index)
+      },
     }
     if (commit === null) {
       const clean = status !== null && (status.total ?? 0) === 0
-      rows.push(
+      return (
         <button key="worktree" className="vcs-timeline-row vcs-worktree-row" data-clean={clean ? 'true' : undefined} {...common}>
           <span className="vcs-timeline-title">{t('timeline.worktree')}</span>
           <span className="vcs-timeline-meta">
             <WorktreeMeta status={status} statusState={statusState} t={t} locale={locale} />
           </span>
-        </button>,
+        </button>
       )
-      continue
     }
     const workingCopy = commit.workingCopy === true
     const shortId = typeof commit.changeId === 'string' && commit.changeId !== ''
@@ -159,7 +168,7 @@ export function Timeline({
         )
       },
     }
-    rows.push(
+    return (
       <button
         key={commit.sha}
         className={`vcs-timeline-row${workingCopy ? ' vcs-working-copy-row' : ''}`}
@@ -181,7 +190,8 @@ export function Timeline({
                   onRefActions(
                     target,
                     event,
-                    event.currentTarget.closest?.('.vcs-timeline-row') ?? event.currentTarget,
+                    findAncestor(event.currentTarget, scrollRef.current, node => hasClass(node, 'vcs-timeline-row'))
+                      ?? event.currentTarget,
                   )
                 }}
             />
@@ -206,24 +216,88 @@ export function Timeline({
           {showAuthor ? <span className="vcs-timeline-author">{commit.author}</span> : null}
           <span className="vcs-timeline-time">{formatCommitTime(commit.authorTime, now, locale)}</span>
         </span>
-      </button>,
+      </button>
     )
   }
 
-  /** Keys of the timeline: move, open the selected node's files. */
-  const onKeyDown = event => {
-    if (!unmodified(event)) return
+  const indices = []
+  if (focusRow >= 0 && focusRow < first) indices.push(focusRow)
+  for (let index = first; index < last; index += 1) indices.push(index)
+  if (focusRow >= last && focusRow < rowCount) indices.push(focusRow)
+  const rows = indices.map(renderRow)
+
+  const pageStep = Math.max(1, Math.floor((viewport > 0 ? viewport : ROW_HEIGHT * 8) / ROW_HEIGHT) - 1)
+
+  /** Keys of the timeline: move, page, jump to ends, or open the selected node's files. */
+  const runKeyDown = useCallback(event => {
+    if (!unmodified(event)) return false
+    if (event.isComposing === true || isEditableTarget(event.target)) return false
+    if (event.key === 'Enter' && isDiscreteActionButton(event.target, scrollRef.current)) return false
     const direction = movement(event)
     if (direction === DOWN) {
       event.preventDefault()
       onMove(1)
-    } else if (direction === UP) {
+      return true
+    }
+    if (direction === UP) {
       event.preventDefault()
       onMove(-1)
-    } else if (direction === FORWARD || event.key === 'Enter') {
+      return true
+    }
+    if (event.key === 'PageDown') {
+      event.preventDefault()
+      onMove(pageStep)
+      return true
+    }
+    if (event.key === 'PageUp') {
+      event.preventDefault()
+      onMove(-pageStep)
+      return true
+    }
+    if (event.key === 'Home') {
+      event.preventDefault()
+      onMove(-Math.max(1, rowCount))
+      return true
+    }
+    if (event.key === 'End') {
+      event.preventDefault()
+      onMove(Math.max(1, rowCount))
+      return true
+    }
+    if (direction === FORWARD || event.key === 'Enter') {
       event.preventDefault()
       onOpen()
+      return true
     }
+    return false
+  }, [onMove, onOpen, pageStep, rowCount])
+
+  const restoreFocus = useCallback(() => {
+    if (rowCount === 0 || focusRow < 0) return false
+    const target = scrollRef.current?.querySelector(`[data-timeline-index="${focusRow}"]`)
+    if (target === null || target === undefined) return false
+    target.focus({ preventScroll: true })
+    return true
+  }, [focusRow, rowCount])
+
+  useLayoutEffect(() => {
+    if (control === undefined || control === null) return undefined
+    control.current = {
+      restoreFocus,
+      handleKeyDown(event) {
+        if (!runKeyDown(event)) return false
+        const active = typeof document === 'undefined' ? null : document.activeElement
+        if (active === null || active?.dataset?.timelineIndex === undefined || !scrollRef.current?.contains(active)) {
+          restoreFocus()
+        }
+        return true
+      },
+    }
+    return () => { control.current = null }
+  }, [control, restoreFocus, runKeyDown])
+
+  const onKeyDown = event => {
+    runKeyDown(event)
   }
 
   return (
@@ -280,7 +354,12 @@ export function Timeline({
           </span>
           {truncated ? <span className="vcs-note">{t('history.truncated', { count: formatCount(commits.length, locale) })}</span> : null}
           {hasMore ? (
-            <button type="button" className="vcs-load-more" onClick={onLoadMore} disabled={loadingMore}>
+            <button
+              type="button"
+              className="vcs-load-more"
+              aria-disabled={loadingMore ? 'true' : undefined}
+              onClick={() => { if (!loadingMore) onLoadMore() }}
+            >
               {loadingMore ? t('history.loadingMore') : t('history.loadMore')}
             </button>
           ) : null}

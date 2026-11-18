@@ -24,13 +24,16 @@ Version control in the DeepSeek Harness right Sidebar. Adds a `VCS` tab to inspe
 | Keys | Action |
 | --- | --- |
 | `⌘⇧G` / `Ctrl+Shift+G` | Open the `VCS` tab in the right Sidebar, or collapse the Sidebar when it is showing (rebind in **Settings → Shortcuts**) |
-| `↑` `↓` or `j` `k` | Move through one vertical list of tree rows and hunk headers of open diffs |
-| `←` `→` or `h` `l` | Enter the change tree or an open file; `←` / `h` closes an open file first, then returns to the timeline |
+| `↑` `↓` or `j` `k` | Move through commits or one vertical list of tree rows and hunk headers of open diffs (returns to commit header at row 0) |
+| `PageUp` `PageDown`, `Home` `End` | Page through or jump to the ends of the timeline or change tree |
+| `←` `→` or `h` `l` | Enter the change tree, expand a row, or step into an open file's first hunk; `←` / `h` closes an open file first, then returns to the timeline |
 | `Enter`, `Space`, `Esc` | Fold/expand the focused row or activate a ref badge in the detail header; `Esc` returns to the timeline |
 | `↑` `↓`, `Home` `End` | Move inside the open branch menu or branch/remote-branch/tag/commit actions menu; `Esc` closes it |
 | Right-click / `Shift+F10` | Right-click or activate a branch, remote-branch, or tag badge for its actions; press `Shift+F10` on the branch control for branch actions or on a commit row for commit actions |
 | `Enter`, `Esc` | Confirm or cancel a branch, remote-branch, tag, or commit action dialog |
 | `[` / `]` | Move to the previous / next tree row, skipping hunk headers |
+
+Clicking toolbar buttons or switching back to the window keeps keyboard focus ready on the active timeline or diff stop without interrupting active inputs or dialogs.
 
 ## Install
 

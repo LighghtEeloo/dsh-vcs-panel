@@ -17,7 +17,10 @@ import {
 import {
   errorMessage, formatCount,
 } from './format.js'
-import { isEditableTarget } from './keys.js'
+import {
+  BACK, canClaimFocusFrom, findAncestor, hasClass, isDiscreteActionButton, isEditableTarget,
+  isNavigationStop, isOverlayOrMenuTarget, movement, rowStep, zoneOf,
+} from './keys.js'
 import { dirKey } from './detail/tree.js'
 import { buildGraph } from './history/layout.js'
 import { indexCommits } from './history/commits.js'
@@ -68,10 +71,10 @@ function omit(record, key) {
 
 /**
  * Render the version control panel for one Session.
- * @param {{ sessionId: string, t: Function, locale?: string, focusRequest?: number }} props - standard Sidebar tab props plus the active UI locale and a one-shot request to land keyboard focus in the panel.
+ * @param {{ sessionId: string, t: Function, locale?: string, visible?: boolean, focusRequest?: number }} props - standard Sidebar tab props plus the active UI locale, visibility, and a one-shot request to land keyboard focus in the panel.
  */
 export function VcsView({
-  sessionId, t, locale, focusRequest = 0,
+  sessionId, t, locale, visible = true, focusRequest = 0,
 }) {
   const [state, setState] = useState(() => loadState(sessionId))
   const stateRef = useRef(state)
@@ -111,9 +114,15 @@ export function VcsView({
   const branchesControllerRef = useRef(null)
   const loadingBranchesRef = useRef(false)
   const diffCacheRef = useRef(new Map())
+  const commitCacheRef = useRef(new Map())
+  const timelineControl = useRef(null)
   const detailControl = useRef(null)
-  const pendingEntryFocusRef = useRef(false)
+  const navZoneRef = useRef('timeline')
+  const panelOwnsFocusRef = useRef(false)
+  const pendingReadyFocusRef = useRef(false)
+  const pendingRestoreFocusRef = useRef(false)
   const pendingDetailFocusRef = useRef(false)
+  const restoreNavFocusRef = useRef(() => false)
   // A focus request waits for the Sidebar host to focus its pane first.
   const hostFocusPendingRef = useRef(false)
 
@@ -156,12 +165,19 @@ export function VcsView({
     }, 300)
   }, [persisted, sessionId])
 
-  // A Sidebar open leaves focus on the pane it focused. Wait two frames for
-  // that focus, then let the settle effect move on to the selected row.
+  // Claim focus into the panel when opened, revealed, or visibly mounted
+  // without an external owner (wait two frames for the Sidebar host's pane focus).
   useEffect(() => {
-    if (focusRequest === 0) return undefined
-    pendingEntryFocusRef.current = true
+    if (!visible) {
+      pendingReadyFocusRef.current = false
+      hostFocusPendingRef.current = false
+      return undefined
+    }
+    pendingReadyFocusRef.current = true
     hostFocusPendingRef.current = true
+    if (focusRequest > 0) {
+      navZoneRef.current = singleColumn && singleView === 'detail' ? 'tree' : 'timeline'
+    }
     let second
     const first = requestAnimationFrame(() => {
       second = requestAnimationFrame(() => {
@@ -175,7 +191,21 @@ export function VcsView({
       cancelAnimationFrame(first)
       if (second !== undefined) cancelAnimationFrame(second)
     }
-  }, [focusRequest])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest, visible])
+
+  // Clicking outside the panel relinquishes panel focus ownership so background
+  // updates never pull focus back out of Chat or Terminal.
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return undefined
+    const onPointerDown = event => {
+      if (rootRef.current !== null && !rootRef.current.contains(event.target)) {
+        panelOwnsFocusRef.current = false
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => { document.removeEventListener('pointerdown', onPointerDown, true) }
+  }, [])
 
   useEffect(() => () => {
     if (persistTimer.current !== null) clearTimeout(persistTimer.current)
@@ -211,6 +241,7 @@ export function VcsView({
     setLoadingDirs({})
     attemptedDirsRef.current.clear()
     diffCacheRef.current.clear()
+    commitCacheRef.current.clear()
     setRevision(value => value + 1)
   }, [])
 
@@ -222,10 +253,12 @@ export function VcsView({
   const resetReadingForNewHead = useCallback(() => {
     anchorRef.current = null
     timelineScrollRef.current = 0
+    navZoneRef.current = 'timeline'
     setDirChildren({})
     setLoadingDirs({})
     attemptedDirsRef.current.clear()
     diffCacheRef.current.clear()
+    commitCacheRef.current.clear()
     update({ node: null, nodeChosen: false, anchor: null, folds: {}, collapsed: {}, dirs: {} })
   }, [update])
 
@@ -251,6 +284,9 @@ export function VcsView({
     commitIndex,
     head,
     rootRef,
+    onRestoreFocus: () => {
+      if (!restoreNavFocusRef.current()) pendingReadyFocusRef.current = true
+    },
     t,
     locale,
     refresh,
@@ -260,10 +296,23 @@ export function VcsView({
     abortBranches,
   })
   const { resetActionsUi } = actions
+  const hasOpenOverlay = actions.menu !== null || actions.dialog !== null
+
+  // Snapshot live focus ownership before reconciliation so layout recovery sees
+  // when a render unmounted the currently focused stop.
+  const activeDuringRender = typeof document === 'undefined' ? null : document.activeElement
+  if (rootRef.current !== null && activeDuringRender !== null && rootRef.current.contains(activeDuringRender)) {
+    panelOwnsFocusRef.current = true
+    if (!pendingRestoreFocusRef.current && !pendingDetailFocusRef.current) {
+      const activeZone = zoneOf(activeDuringRender, rootRef.current)
+      if (activeZone !== null) navZoneRef.current = activeZone
+    }
+  }
 
   /** Remember one repository's selection and restore the next one's. */
   const switchRepo = useCallback((nextRepo, nextCapabilities) => {
     pendingDetailFocusRef.current = false
+    navZoneRef.current = 'timeline'
     const current = stateRef.current
     if (current.repo !== null && current.repo !== nextRepo) {
       perRepoRef.current.set(current.repo, {
@@ -286,6 +335,7 @@ export function VcsView({
     setLoadingDirs({})
     attemptedDirsRef.current.clear()
     diffCacheRef.current.clear()
+    commitCacheRef.current.clear()
     abortBranches()
     clearBranches()
     resetActionsUi()
@@ -431,6 +481,7 @@ export function VcsView({
       if (document.visibilityState !== 'visible') return
       if (Date.now() - lastLoaded.current < STALE_MS) return
       diffCacheRef.current.clear()
+      commitCacheRef.current.clear()
       setRevision(value => value + 1)
     }
     document.addEventListener('visibilitychange', onVisible)
@@ -456,11 +507,14 @@ export function VcsView({
     clearBranches()
     abortBranches()
     resetActionsUi()
-    pendingEntryFocusRef.current = false
+    navZoneRef.current = 'timeline'
+    pendingReadyFocusRef.current = false
+    pendingRestoreFocusRef.current = false
     pendingDetailFocusRef.current = false
     attemptedDirsRef.current.clear()
     perRepoRef.current.clear()
     diffCacheRef.current.clear()
+    commitCacheRef.current.clear()
     pageControllerRef.current?.abort()
     pageControllerRef.current = null
   }, [abortBranches, clearBranches, resetActionsUi, sessionId])
@@ -472,39 +526,114 @@ export function VcsView({
   const hasTimelineRows = worktreeRow || log.commits.length > 0
   const timelineSettled = hasTimelineRows || log.status === 'ready' || log.status === 'error'
 
-  // Once the timeline mounts after an open request, hand focus from the host
-  // focused pane to the active timeline row so movement keys work right away.
+  /**
+   * Restore keyboard focus to the panel's active navigation stop without
+   * scrolling the viewport.
+   */
+  const restoreNavFocus = useCallback(() => {
+    if (!visible || repositories.status !== 'ready' || stateRef.current.repo === null || missingTool) {
+      return false
+    }
+    const wantTree = singleColumn ? singleView === 'detail' : navZoneRef.current === 'tree'
+    if (wantTree) {
+      if (detailControl.current?.restoreFocus() === true) {
+        panelOwnsFocusRef.current = true
+        navZoneRef.current = 'tree'
+        return true
+      }
+      if (singleColumn || pendingDetailFocusRef.current) {
+        if (rootRef.current === null) return false
+        rootRef.current.focus({ preventScroll: true })
+        panelOwnsFocusRef.current = true
+        return true
+      }
+    }
+    if (showTimeline && timelineControl.current?.restoreFocus() === true) {
+      panelOwnsFocusRef.current = true
+      navZoneRef.current = 'timeline'
+      return true
+    }
+    return false
+  }, [missingTool, repositories.status, showTimeline, singleColumn, singleView, visible])
+  restoreNavFocusRef.current = restoreNavFocus
+
+  // Apply deferred navigation focus and recover synchronously when a render
+  // unmounted the currently focused stop while the panel owned focus.
+  useLayoutEffect(() => {
+    if (pendingRestoreFocusRef.current) {
+      pendingRestoreFocusRef.current = false
+      if (visible && !hasOpenOverlay) restoreNavFocus()
+      return
+    }
+    if (!visible || !panelOwnsFocusRef.current || hasOpenOverlay) return
+    const doc = typeof document === 'undefined' ? null : document
+    const active = doc?.activeElement ?? null
+    if (active === null || active === doc?.body || active === doc?.documentElement) {
+      if (canClaimFocusFrom(active, rootRef.current)) restoreNavFocus()
+    }
+  })
+
+  // Keep timeline DOM focus aligned with the active row whenever a timeline
+  // row holds focus (such as after range switches or status default updates).
+  useLayoutEffect(() => {
+    if (!visible || selectedRow < 0 || !showTimeline || hasOpenOverlay) return
+    const active = typeof document === 'undefined' ? null : document.activeElement
+    if (active === null || active?.dataset?.timelineIndex === undefined) return
+    if (!rootRef.current?.contains(active)) return
+    if (active.dataset.timelineIndex === String(selectedRow)) return
+    timelineControl.current?.restoreFocus()
+  }, [hasOpenOverlay, selectedRow, showTimeline, visible])
+
+  // Once the panel settles after becoming visible or receiving an open
+  // request, land focus on its active navigation stop unless another control owns it.
   useEffect(() => {
-    if (!pendingEntryFocusRef.current) return
+    if (!visible || !pendingReadyFocusRef.current) return
     // A Sidebar request waits two frames for the host to focus its pane.
     if (hostFocusPendingRef.current) return
     if (repositories.status === 'loading') return
     if (repositories.status === 'ready' && state.repo === null && repositories.list.length > 0) return
-    if (repositories.status !== 'ready' || state.repo === null || missingTool || !showTimeline) {
-      pendingEntryFocusRef.current = false
+    if (repositories.status !== 'ready' || state.repo === null || missingTool) {
+      pendingReadyFocusRef.current = false
       return
     }
-    if (!timelineSettled) return
-    pendingEntryFocusRef.current = false
+    if (showTimeline && !timelineSettled) return
+    pendingReadyFocusRef.current = false
+    if (hasOpenOverlay) return
     const active = typeof document === 'undefined' ? null : document.activeElement
-    // The Sidebar host focuses the pane, not the panel; that is the handoff
-    // this request was waiting for, so move on from it. Any other focus is a
-    // user's own choice and is left alone.
-    const hostPane = focusRequest > 0 && active?.matches?.('[data-dockkit-pane], [data-dockkit-float]') === true
-    if (active !== null && active !== rootRef.current && active !== document.body && !hostPane) return
-    const row = selectedRow >= 0 ? selectedRow : 0
-    rootRef.current?.querySelector(`[data-timeline-index="${row}"]`)?.focus({ preventScroll: true })
-  }, [focusRequest, focusTick, missingTool, repositories.list.length, repositories.status, selectedRow, showTimeline, state.repo, timelineSettled])
+    if (!canClaimFocusFrom(active, rootRef.current)) return
+    restoreNavFocus()
+  }, [
+    focusRequest, focusTick, hasOpenOverlay, missingTool, repositories.list.length,
+    repositories.status, restoreNavFocus, showTimeline, state.repo, timelineSettled, visible,
+  ])
 
-  // When the default selection moves onto HEAD after status and history arrive,
-  // keep an untouched timeline focus on the newly selected row.
+  // Switching back to this window or browser tab finds keyboard navigation ready.
   useEffect(() => {
-    if (state.nodeChosen || selectedRow < 0 || !showTimeline) return
-    const active = typeof document === 'undefined' ? null : document.activeElement
-    if (active === null || active?.dataset?.timelineIndex === undefined) return
-    if (active.dataset.timelineIndex === String(selectedRow)) return
-    rootRef.current?.querySelector(`[data-timeline-index="${selectedRow}"]`)?.focus({ preventScroll: true })
-  }, [selectedRow, showTimeline, state.nodeChosen])
+    if (!visible) return undefined
+    const ensureReadyFocus = () => {
+      if (hasOpenOverlay) return
+      const active = typeof document === 'undefined' ? null : document.activeElement
+      if (!canClaimFocusFrom(active, rootRef.current)) return
+      if (!restoreNavFocus()) pendingReadyFocusRef.current = true
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') ensureReadyFocus()
+    }
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('focus', ensureReadyFocus)
+    }
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', onVisibility)
+    }
+    return () => {
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('focus', ensureReadyFocus)
+      }
+      if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+        document.removeEventListener('visibilitychange', onVisibility)
+      }
+    }
+  }, [hasOpenOverlay, restoreNavFocus, visible])
 
   /**
    * Load the local branches behind the header menu. Opening the menu again
@@ -609,70 +738,104 @@ export function VcsView({
     update({ folds: { ...stateRef.current.folds, [key]: folded } })
   }, [update])
 
-  /** Focus one timeline row once React has painted it. */
-  const focusTimelineRow = useCallback(index => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        rootRef.current?.querySelector(`[data-timeline-index="${index}"]`)?.focus()
-      })
-    })
-  }, [])
-
   /** Choose the node on one timeline row. */
   const selectRow = useCallback(index => {
     const node = nodeAt(log.commits, index, { worktreeRow, workingCopyNode })
     if (node === null) return
+    panelOwnsFocusRef.current = true
+    if (singleColumn) {
+      navZoneRef.current = 'tree'
+      pendingRestoreFocusRef.current = true
+      selectNode(node, true)
+      pendingDetailFocusRef.current = true
+      setSingleView('detail')
+      return
+    }
+    navZoneRef.current = 'timeline'
+    pendingRestoreFocusRef.current = true
     selectNode(node, true)
-    if (singleColumn) setSingleView('detail')
   }, [log.commits, selectNode, singleColumn, worktreeRow, workingCopyNode])
 
   /** Keyboard movement along the timeline; the selection follows the cursor. */
   const moveTimeline = useCallback(delta => {
-    const next = selectedRow < 0 ? 0 : selectedRow + delta
-    const node = next < 0 ? null : nodeAt(log.commits, next, { worktreeRow, workingCopyNode })
+    const maxIndex = log.commits.length + (worktreeRow ? 1 : 0) - 1
+    if (maxIndex < 0) return
+    const base = selectedRow < 0 ? 0 : selectedRow
+    const next = Math.max(0, Math.min(maxIndex, base + delta))
+    const node = nodeAt(log.commits, next, { worktreeRow, workingCopyNode })
     if (node === null) return
+    panelOwnsFocusRef.current = true
+    navZoneRef.current = 'timeline'
+    const sameNode = node === stateRef.current.node && stateRef.current.nodeChosen
+    pendingRestoreFocusRef.current = !sameNode
     selectNode(node, true)
-    focusTimelineRow(next)
-  }, [focusTimelineRow, log.commits, selectNode, selectedRow, worktreeRow, workingCopyNode])
+    if (sameNode) timelineControl.current?.restoreFocus()
+  }, [log.commits, selectNode, selectedRow, worktreeRow, workingCopyNode])
 
   /** Move the keyboard into the selected node's files, or wait while they load. */
   const openDetail = useCallback(() => {
+    panelOwnsFocusRef.current = true
+    if (selectedRow < 0 && hasTimelineRows) {
+      const first = nodeAt(log.commits, 0, { worktreeRow, workingCopyNode })
+      if (first !== null) selectNode(first, true)
+    }
     pendingDetailFocusRef.current = true
-    if (singleColumn) setSingleView('detail')
+    if (singleColumn) {
+      navZoneRef.current = 'tree'
+      pendingRestoreFocusRef.current = true
+      setSingleView('detail')
+      return
+    }
+    if (detailControl.current?.focusNav() === true) {
+      pendingDetailFocusRef.current = false
+      navZoneRef.current = 'tree'
+      return
+    }
+    if (detailControl.current?.isSettled() === true) {
+      pendingDetailFocusRef.current = false
+      return
+    }
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         if (!pendingDetailFocusRef.current) return
         if (detailControl.current?.focusNav() === true) {
           pendingDetailFocusRef.current = false
-          return
-        }
-        const active = typeof document === 'undefined' ? null : document.activeElement
-        if (singleColumn && (active === null || active === document.body || !rootRef.current?.contains(active))) {
-          rootRef.current?.focus({ preventScroll: true })
+          navZoneRef.current = 'tree'
+        } else if (detailControl.current?.isSettled() === true) {
+          pendingDetailFocusRef.current = false
         }
       })
     })
-  }, [singleColumn])
+  }, [hasTimelineRows, log.commits, selectNode, selectedRow, singleColumn, worktreeRow, workingCopyNode])
 
   /** Complete a deferred detail focus once the selected node's rows arrive. */
   const onDetailSettled = useCallback(hasRows => {
     if (!pendingDetailFocusRef.current) return
     pendingDetailFocusRef.current = false
-    if (!hasRows) return
-    const active = typeof document === 'undefined' ? null : document.activeElement
-    if (active !== null && active !== document.body && rootRef.current !== null && !rootRef.current.contains(active)) {
+    if (!hasRows) {
+      if (!singleColumn) navZoneRef.current = 'timeline'
       return
     }
-    if (isEditableTarget(active)) return
-    detailControl.current?.focusNav()
-  }, [])
+    const active = typeof document === 'undefined' ? null : document.activeElement
+    if (!canClaimFocusFrom(active, rootRef.current)) return
+    if (detailControl.current?.focusNav() === true) {
+      panelOwnsFocusRef.current = true
+      navZoneRef.current = 'tree'
+    }
+  }, [singleColumn])
 
   /** Return the keyboard to the timeline, closing the single-column detail. */
   const leaveDetail = useCallback(() => {
     pendingDetailFocusRef.current = false
-    if (singleColumn) setSingleView('timeline')
-    focusTimelineRow(selectedRow < 0 ? 0 : selectedRow)
-  }, [focusTimelineRow, selectedRow, singleColumn])
+    panelOwnsFocusRef.current = true
+    navZoneRef.current = 'timeline'
+    if (singleColumn) {
+      pendingRestoreFocusRef.current = true
+      setSingleView('timeline')
+      return
+    }
+    if (!restoreNavFocus()) pendingRestoreFocusRef.current = true
+  }, [restoreNavFocus, singleColumn])
 
   /**
    * Show the timeline beside the changes, or one column at a time. Putting the
@@ -681,16 +844,44 @@ export function VcsView({
    * column, so only the stored preference changes there.
    */
   const setTwoColumns = useCallback(next => {
-    if (!next && !narrow) setSingleView(stateRef.current.node === null ? 'timeline' : 'detail')
+    const active = typeof document === 'undefined' ? null : document.activeElement
+    const keepButtonFocus = active !== null
+      && rootRef.current?.contains(active) === true
+      && isDiscreteActionButton(active, rootRef.current)
+    if (!next && !narrow) {
+      if (stateRef.current.node !== null) {
+        navZoneRef.current = 'tree'
+        if (!keepButtonFocus) {
+          pendingDetailFocusRef.current = true
+          pendingRestoreFocusRef.current = true
+        }
+        setSingleView('detail')
+      } else {
+        navZoneRef.current = 'timeline'
+        if (!keepButtonFocus) pendingRestoreFocusRef.current = true
+        setSingleView('timeline')
+      }
+    } else if (panelOwnsFocusRef.current && !keepButtonFocus) {
+      pendingRestoreFocusRef.current = true
+    }
     update({ twoColumns: next })
   }, [narrow, update])
 
   /** Jump to a loaded commit named in the detail, such as a parent. */
   const selectCommit = useCallback(sha => {
+    panelOwnsFocusRef.current = true
+    if (singleColumn) {
+      navZoneRef.current = 'tree'
+      pendingRestoreFocusRef.current = true
+      selectNode(sha, true)
+      pendingDetailFocusRef.current = true
+      setSingleView('detail')
+      return
+    }
+    navZoneRef.current = 'timeline'
+    pendingRestoreFocusRef.current = true
     selectNode(sha, true)
-    const index = commitIndex.get(sha)
-    if (index !== undefined && !singleColumn) focusTimelineRow(index + (worktreeRow ? 1 : 0))
-  }, [commitIndex, focusTimelineRow, selectNode, singleColumn, worktreeRow])
+  }, [selectNode, singleColumn])
 
   // Read through a ref so the detail's request effects do not restart on every status answer.
   const statusDataRef = useRef(null)
@@ -738,12 +929,101 @@ export function VcsView({
     }
   }, [api, log.commits.length, log.hasMore, log.loadingMore, state.repo, state.ref, t])
 
-  /** Escape closes the single-column detail from anywhere inside it. */
-  const onKeyDown = event => {
-    if (event.key !== 'Escape' || !singleColumn || singleView !== 'detail') return
+  /** Keep focus on the active navigation stop across primary clicks on discrete buttons. */
+  const onMouseDown = event => {
+    if (event.button !== undefined && event.button !== 0) return
+    if (hasOpenOverlay) return
+    if (!isDiscreteActionButton(event.target, rootRef.current)) return
+    const active = typeof document === 'undefined' ? null : document.activeElement
+    if (active !== null && rootRef.current?.contains(active)) {
+      event.preventDefault()
+    }
+  }
+
+  /** Restore navigation focus after pointer clicks on non-editable panel controls or blank space. */
+  const onClick = event => {
+    if (event.defaultPrevented || hasOpenOverlay) return
+    if (event.detail === 0) return
     if (isEditableTarget(event.target)) return
-    event.preventDefault()
-    leaveDetail()
+    if (isOverlayOrMenuTarget(event.target, rootRef.current)) return
+    if (isNavigationStop(event.target, rootRef.current)) {
+      if (zoneOf(event.target, rootRef.current) === 'tree') navZoneRef.current = 'tree'
+      return
+    }
+    if (isDiscreteActionButton(event.target, rootRef.current)) {
+      restoreNavFocus()
+      return
+    }
+    const selection = typeof window === 'undefined' ? null : window.getSelection?.()
+    if (selection !== null && selection !== undefined && selection.isCollapsed === false && String(selection) !== '') {
+      panelOwnsFocusRef.current = true
+      const zone = zoneOf(event.target, rootRef.current)
+      if (zone !== null) navZoneRef.current = zone
+      const active = typeof document === 'undefined' ? null : document.activeElement
+      if (active === null || !rootRef.current?.contains(active)) {
+        rootRef.current?.focus({ preventScroll: true })
+      }
+      return
+    }
+    const zone = zoneOf(event.target, rootRef.current)
+    if (zone !== null) navZoneRef.current = zone
+    else if (findAncestor(event.target, rootRef.current, node => hasClass(node, 'vcs-sidebar')) !== null) {
+      navZoneRef.current = 'timeline'
+    }
+    restoreNavFocus()
+  }
+
+  /** Route navigation keys from the panel root, buttons, or divider back to the active zone. */
+  const onKeyDown = event => {
+    if (event.defaultPrevented || event.isComposing === true || isEditableTarget(event.target) || hasOpenOverlay) return
+    if (findAncestor(event.target, rootRef.current, node => (
+      hasClass(node, 'vcs-dialog-layer')
+      || hasClass(node, 'vcs-branch-menu')
+      || hasClass(node, 'vcs-ref-ops')
+    )) !== null) {
+      return
+    }
+    if (isOverlayOrMenuTarget(event.target, rootRef.current)) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        restoreNavFocus()
+        return
+      }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') return
+      if (movement(event) === null && rowStep(event) === 0) return
+    }
+    if (zoneOf(event.target, rootRef.current) !== null) {
+      if (singleColumn && singleView === 'detail' && (event.key === 'Escape' || movement(event) === BACK)) {
+        event.preventDefault()
+        leaveDetail()
+      }
+      return
+    }
+    const onButton = findAncestor(event.target, rootRef.current, node => (
+      typeof node?.tagName === 'string' && node.tagName.toUpperCase() === 'BUTTON'
+    )) !== null
+    if (onButton && (event.key === 'Enter' || event.key === ' ')) return
+    if (event.key === 'Escape' && event.target !== rootRef.current && !(singleColumn && singleView === 'detail')) {
+      event.preventDefault()
+      restoreNavFocus()
+      return
+    }
+    if (singleColumn && singleView === 'detail') {
+      if (detailControl.current?.handleKeyDown(event) === true) return
+      if (event.key === 'Escape' || movement(event) === BACK) {
+        event.preventDefault()
+        leaveDetail()
+      }
+      return
+    }
+    const wantTree = !singleColumn && navZoneRef.current === 'tree'
+    if (wantTree) {
+      if (detailControl.current?.handleKeyDown(event) === true) return
+      if (showTimeline && timelineControl.current?.handleKeyDown(event) === true) return
+      return
+    }
+    if (showTimeline && timelineControl.current?.handleKeyDown(event) === true) return
+    if (!singleColumn && showDetail) detailControl.current?.handleKeyDown(event)
   }
 
   /** Drag the sidebar divider. */
@@ -782,14 +1062,30 @@ export function VcsView({
       data-narrow={narrow ? 'true' : undefined}
       data-single-column={singleColumn ? 'true' : undefined}
       tabIndex={-1}
+      onFocus={event => {
+        panelOwnsFocusRef.current = true
+        const zone = zoneOf(event.target, rootRef.current)
+        if (zone !== null) navZoneRef.current = zone
+      }}
+      onBlur={event => {
+        if (event.relatedTarget !== null && event.relatedTarget !== undefined && !rootRef.current?.contains(event.relatedTarget)) {
+          panelOwnsFocusRef.current = false
+        }
+      }}
+      onMouseDown={onMouseDown}
+      onClick={onClick}
       onKeyDown={onKeyDown}
     >
       <TopBar
         repositories={repositories.list}
         repo={state.repo}
-        onRepoChange={repo => {
+        onRepoChange={(repo, fromPointer) => {
           const entry = repositories.list.find(candidate => candidate.path === repo)
           switchRepo(repo, entry?.capabilities)
+          if (fromPointer) {
+            panelOwnsFocusRef.current = true
+            pendingReadyFocusRef.current = true
+          }
         }}
         status={status.data}
         capabilities={capabilities}
@@ -807,6 +1103,7 @@ export function VcsView({
         onLoadBranches={loadBranches}
         onSwitchBranch={branch => { void actions.switchBranch(branch) }}
         onBranchActions={actions.openBranchActions}
+        onRestoreFocus={() => { if (!restoreNavFocus()) pendingReadyFocusRef.current = true }}
         switching={actions.switching}
         branchBusy={actions.branchBusy}
         tagBusy={actions.tagBusy}
@@ -857,6 +1154,7 @@ export function VcsView({
                 onSelectRow={selectRow}
                 onMove={moveTimeline}
                 onOpen={openDetail}
+                control={timelineControl}
                 t={t}
                 locale={locale}
                 loading={log.status === 'loading'}
@@ -934,6 +1232,7 @@ export function VcsView({
                   onSettled={onDetailSettled}
                   revision={revision}
                   cache={diffCacheRef.current}
+                  commitCache={commitCacheRef.current}
                   initialAnchor={anchorRef.current}
                   onReading={onReading}
                   control={detailControl}
