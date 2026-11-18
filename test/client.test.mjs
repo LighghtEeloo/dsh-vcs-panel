@@ -205,6 +205,8 @@ test('format helpers describe paths, ids, and statuses', () => {
   assert.deepEqual(splitPath('README.md'), { dir: '', base: 'README.md' })
   assert.equal(shortSha('abcdef1234'), 'abcdef1')
   assert.equal(statusKey('A'), 'status.added')
+  assert.equal(statusKey('U'), 'status.conflict')
+  assert.equal(statusKey('U', true), 'status.untracked', 'the untracked U says untracked, not conflict')
   assert.equal(statusKey('Z'), 'status.changed')
   assert.deepEqual(lineCounts({ added: 3, deleted: 1 }), { added: 3, deleted: 1 })
   assert.deepEqual(lineCounts({}), { added: null, deleted: null })
@@ -267,8 +269,8 @@ test('buildRows nests staged files and respects collapsed directories', () => {
 test('buildRows starts a working-tree group with a group row that counts its files', () => {
   const entries = [
     { path: 'src/a.js', status: 'M', added: 3, deleted: 1 },
-    { path: 'b.txt', status: '?', added: 0, deleted: 0 },
-    { path: 'docs/', status: '?', directory: true, added: 0, deleted: 0 },
+    { path: 'b.txt', status: 'U', untracked: true, added: 0, deleted: 0 },
+    { path: 'docs/', status: 'U', untracked: true, directory: true, added: 0, deleted: 0 },
   ]
   const rows = buildRows('unstaged', entries, {}, { header: true })
   assert.equal(rows[0].kind, 'group')
@@ -301,8 +303,8 @@ test('buildRows compresses a chain of single-child directories into one row', ()
 
 test('buildRows expands untracked directories only after their children load', () => {
   const entries = [
-    { path: 'notes/', status: '?', directory: true, added: 0, deleted: 0 },
-    { path: 'scratch.txt', status: '?', added: 0, deleted: 0 },
+    { path: 'notes/', status: 'U', untracked: true, directory: true, added: 0, deleted: 0 },
+    { path: 'scratch.txt', status: 'U', untracked: true, added: 0, deleted: 0 },
   ]
   const key = dirKey('unstaged', 'notes/')
   const closed = buildRows('unstaged', entries)
@@ -337,8 +339,8 @@ test('buildRows expands untracked directories only after their children load', (
 
 test('buildRows expands untracked directories only after their children load', () => {
   const entries = [
-    { path: 'notes/', status: '?', directory: true, added: 0, deleted: 0 },
-    { path: 'scratch.txt', status: '?', added: 0, deleted: 0 },
+    { path: 'notes/', status: 'U', untracked: true, directory: true, added: 0, deleted: 0 },
+    { path: 'scratch.txt', status: 'U', untracked: true, added: 0, deleted: 0 },
   ]
   const key = dirKey('untracked', 'notes/')
   const closed = buildRows('untracked', entries)
@@ -1044,7 +1046,7 @@ test('the working tree has staged and unstaged groups, with untracked files merg
     groups: {
       staged: [{ path: 's.js', status: 'M', added: 1, deleted: 0 }],
       unstaged: [{ path: 'u.js', status: 'M', added: 2, deleted: 1 }],
-      untracked: [{ path: 'n.txt', status: '?', added: 0, deleted: 0 }],
+      untracked: [{ path: 'n.txt', status: 'U', untracked: true, added: 0, deleted: 0 }],
     },
   }
   const groups = worktreeGroups(status)
@@ -1056,7 +1058,7 @@ test('the working tree has staged and unstaged groups, with untracked files merg
 
   // A working tree with only untracked files still has one group.
   assert.deepEqual(
-    worktreeGroups({ groups: { untracked: [{ path: 'n.txt', status: '?' }] } }).map(group => group.id),
+    worktreeGroups({ groups: { untracked: [{ path: 'n.txt', status: 'U', untracked: true }] } }).map(group => group.id),
     ['unstaged'],
   )
 
@@ -1069,7 +1071,7 @@ test('the working tree has staged and unstaged groups, with untracked files merg
 test('streamSections follow the fully expanded row order, not the current folds', () => {
   const groups = [
     { id: 'staged', entries: [{ path: 'src/b.js', status: 'M', added: 1, deleted: 0 }, { path: 'README.md', status: 'M' }], header: true },
-    { id: 'unstaged', entries: [{ path: 'notes/', status: '?', directory: true }, { path: 'z.txt', status: '?' }], header: true },
+    { id: 'unstaged', entries: [{ path: 'notes/', status: 'U', untracked: true, directory: true }, { path: 'z.txt', status: 'U', untracked: true }], header: true },
   ]
   const closed = streamSections(groups, {}, null)
   assert.deepEqual(closed.map(section => section.key), ['staged|src/b.js', 'staged|README.md', 'unstaged|z.txt'])
@@ -1096,7 +1098,7 @@ test('diffTarget takes its scope from the file, not from its group', () => {
   })
   assert.deepEqual(diffTarget('unstaged', { path: 'a.js', status: 'M' }, 'ignored'), { scope: 'unstaged', path: 'a.js' })
   assert.deepEqual(
-    diffTarget('unstaged', { path: 'n.txt', status: '?' }, null),
+    diffTarget('unstaged', { path: 'n.txt', status: 'U', untracked: true }, null),
     { scope: 'untracked', path: 'n.txt' },
     'an untracked file compares its whole content against the index',
   )
@@ -1183,7 +1185,7 @@ test('summarizeEntries counts untracked entries but only sums measured lines', (
   assert.deepEqual(summarizeEntries([]), { count: 0, added: 0, deleted: 0 })
   assert.deepEqual(summarizeEntries([
     { path: 'a', added: 3, deleted: 1 },
-    { path: 'dir/', status: '?', added: 0, deleted: 0, directory: true },
+    { path: 'dir/', status: 'U', untracked: true, added: 0, deleted: 0, directory: true },
     { path: 'b', added: null, deleted: null },
   ]), { count: 3, added: 3, deleted: 1 })
 })
@@ -1259,20 +1261,21 @@ test('the folding budget does not depend on which directories are collapsed', ()
 test('untracked files sort next to tracked files in the same directory', () => {
   const entries = [
     { path: 'src/a.js', status: 'M', added: 2, deleted: 0 },
-    { path: 'src/b.txt', status: '?', added: 0, deleted: 0 },
-    { path: 'notes/', status: '?', directory: true, added: 0, deleted: 0 },
+    { path: 'src/b.txt', status: 'U', untracked: true, added: 0, deleted: 0 },
+    { path: 'notes/', status: 'U', untracked: true, directory: true, added: 0, deleted: 0 },
   ]
   const rows = buildRows('unstaged', entries)
   assert.deepEqual(rows.map(row => `${row.kind}:${row.name}`), ['dir:notes', 'dir:src', 'file:a.js', 'file:b.txt'])
   assert.equal(rows[1].depth, 0)
   assert.equal(rows[2].depth, 1)
   assert.equal(rows[3].depth, 1)
-  assert.equal(rows[3].entry.status, '?')
+  assert.equal(rows[3].entry.status, 'U')
+  assert.equal(rows[3].entry.untracked, true, 'a new file stays untracked')
   assert.equal(rows[0].loadable, true, 'the untracked directory stays a load-on-demand row')
 })
 
 test('a loadable directory is not compressed into the directory above it', () => {
-  const entries = [{ path: 'src/tmp/', status: '?', directory: true, added: 0, deleted: 0 }]
+  const entries = [{ path: 'src/tmp/', status: 'U', untracked: true, directory: true, added: 0, deleted: 0 }]
   const rows = buildRows('unstaged', entries)
   assert.deepEqual(rows.map(row => `${row.kind}:${row.name}`), ['dir:src', 'dir:tmp'])
   assert.equal(rows[1].loadable, true)

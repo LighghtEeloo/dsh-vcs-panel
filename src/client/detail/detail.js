@@ -36,8 +36,8 @@ const WORKTREE_GROUPS = ['staged', 'unstaged']
  * File groups of the working tree.
  *
  * Untracked files and directories join the unstaged group: the group answers
- * whether the change enters the next commit, and the answer is the same. The
- * `?` on their rows marks them as untracked, not their group.
+ * whether the change enters the next commit, and the answer is the same. Their
+ * `untracked` flag marks them as untracked, not their group.
  *
  * @param {{ groups?: Record<string, object[]> } | null} status - the working-tree answer.
  * @returns {Array<{ id: string, entries: object[], header: boolean }>} the non-empty groups.
@@ -65,12 +65,12 @@ export function commitGroups(commit) {
  * not from its group: an untracked file compares its whole content against the
  * index even though its row sits in the unstaged group.
  * @param {string} group - the file's group.
- * @param {{ path: string, status?: string, origPath?: string }} entry - the file.
+ * @param {{ path: string, status?: string, origPath?: string, untracked?: boolean }} entry - the file.
  * @param {string | null} rev - the commit, for the commit group.
  * @returns {{ scope: string, path: string, oldPath?: string, rev?: string }} the target.
  */
 export function diffTarget(group, entry, rev) {
-  const scope = group === 'commit' ? 'commit' : (entry.status === '?' ? 'untracked' : group)
+  const scope = group === 'commit' ? 'commit' : (entry.untracked === true ? 'untracked' : group)
   const target = { scope, path: entry.path }
   if (entry.origPath !== undefined) target.oldPath = entry.origPath
   if (scope === 'commit') target.rev = rev

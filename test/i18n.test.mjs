@@ -80,7 +80,7 @@ test('every literal t(key) and every dynamic key resolves in every dictionary', 
   used.add('changes.staged')
   used.add('changes.unstaged')
   for (const key of ['diff.created', 'diff.deleted', 'diff.unchanged']) used.add(key)
-  for (const letter of ['M', 'A', 'D', 'R', 'C', 'U', '?']) used.add(statusKey(letter))
+  for (const letter of ['M', 'A', 'D', 'R', 'C', 'U']) used.add(statusKey(letter))
   for (const code of Object.keys(ERROR_STATUS)) {
     let key = null
     errorMessage(next => { key = next; return next }, { code })
@@ -135,7 +135,7 @@ test('every dictionary key is referenced in client or capability sources', () =>
   referenced.add('changes.staged')
   referenced.add('changes.unstaged')
   for (const key of ['diff.created', 'diff.deleted', 'diff.unchanged']) referenced.add(key)
-  for (const letter of ['M', 'A', 'D', 'R', 'C', 'U', '?']) referenced.add(statusKey(letter))
+  for (const letter of ['M', 'A', 'D', 'R', 'C', 'U']) referenced.add(statusKey(letter))
   for (const code of Object.keys(ERROR_STATUS)) {
     let key = null
     errorMessage(next => { key = next; return next }, { code })

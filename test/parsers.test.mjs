@@ -148,8 +148,8 @@ test('buildStatusGroups splits sides, marks conflict and untracked directories, 
     { path: 'conflict.txt', status: 'U', added: 0, deleted: 0 },
   ])
   assert.deepEqual(grouped.groups.untracked, [
-    { path: 'untracked.txt', status: '?', added: 0, deleted: 0 },
-    { path: 'untracked-dir/', status: '?', added: 0, deleted: 0, directory: true },
+    { path: 'untracked.txt', status: 'U', untracked: true, added: 0, deleted: 0 },
+    { path: 'untracked-dir/', status: 'U', untracked: true, added: 0, deleted: 0, directory: true },
   ])
   assert.equal(grouped.truncated, false)
   assert.equal(grouped.total, entries.length)

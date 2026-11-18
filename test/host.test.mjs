@@ -555,8 +555,8 @@ test('status reports branch facts and all three groups with counts', async () =>
     { path: 'tracked.txt', status: 'M', added: 1, deleted: 1 },
   ])
   assert.deepEqual(body.groups.untracked, [
-    { path: 'leak', status: '?', added: 0, deleted: 0 },
-    { path: 'scratch/', status: '?', added: 0, deleted: 0, directory: true },
+    { path: 'leak', status: 'U', untracked: true, added: 0, deleted: 0 },
+    { path: 'scratch/', status: 'U', untracked: true, added: 0, deleted: 0, directory: true },
   ])
   assert.equal(body.truncated, false)
   assert.equal(body.total, 7)
@@ -580,7 +580,7 @@ test('status reports an unborn branch and stays an empty history', async () => {
   assert.deepEqual(body.groups.staged, [])
   assert.deepEqual(body.groups.unstaged, [])
   assert.deepEqual(body.groups.untracked, [
-    { path: 'first.txt', status: '?', added: 0, deleted: 0 },
+    { path: 'first.txt', status: 'U', untracked: true, added: 0, deleted: 0 },
   ])
   assert.equal(body.total, 1)
 })

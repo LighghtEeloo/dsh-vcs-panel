@@ -155,7 +155,8 @@ function buildTree(group, entries, state) {
       insertAt(node, segmentsOf(rel), {
         path: child.path,
         directory: child.type === 'directory' || child.path.endsWith('/'),
-        status: '?',
+        status: 'U',
+        untracked: true,
         added: 0,
         deleted: 0,
       }, path)

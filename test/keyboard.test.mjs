@@ -832,6 +832,83 @@ test('ChangeTree measures static row containers rather than sticky-displaced hea
   }
 })
 
+test('added and untracked rows carry distinct letters and labels', async () => {
+  const harness = createHarness()
+  const restore = harness.installGlobals()
+  try {
+    const { ChangeTree } = await loadClientModule('src/client/detail/ChangeTree.jsx', harness)
+    const groups = [
+      {
+        id: 'staged',
+        header: true,
+        entries: [{ path: 'added.txt', status: 'A', added: 2, deleted: 0 }],
+      },
+      {
+        id: 'unstaged',
+        header: true,
+        entries: [
+          { path: 'new.txt', status: 'U', untracked: true, added: 0, deleted: 0 },
+          { path: 'notes/', status: 'U', untracked: true, directory: true, added: 0, deleted: 0 },
+        ],
+      },
+    ]
+    const rows = buildNodeRows(groups)
+    const budget = budgetFolds(streamSections(groups, {}, null))
+    const control = { current: null }
+    const api = {
+      async diff() {
+        throw new Error('a folded file requests no diff')
+      },
+    }
+
+    harness.mount(harness.react.createElement(ChangeTree, {
+      api,
+      repo: '/repo',
+      rev: null,
+      rows,
+      budget,
+      folds: {},
+      split: false,
+      wrap: false,
+      revision: 0,
+      cache: new Map(),
+      initialAnchor: null,
+      onReading() {},
+      onToggleRow() {},
+      onBulkFold() {},
+      onLeave() {},
+      control,
+      t,
+      locale: 'en-US',
+    }))
+
+    const treeEl = harness.document.body.querySelector('.vcs-tree')
+    const [addedHead, newHead] = treeEl.querySelectorAll('.vcs-tree-file-head')
+
+    const [addedStatus] = addedHead.querySelectorAll('.vcs-status')
+    assert.equal(textOf(addedStatus), 'A')
+    assert.equal(addedStatus.classList.contains('vcs-status-A'), true, 'A carries the success color')
+    assert.equal(addedHead.querySelector('.vcs-sr-only')?.props?.children, 'status.added')
+    assert.match(textOf(addedHead), /\+2/u, 'A measured addition states its line counts')
+
+    const [newStatus] = newHead.querySelectorAll('.vcs-status')
+    assert.equal(textOf(newStatus), 'U')
+    assert.equal(newStatus.classList.contains('vcs-status-untracked'), true, 'the untracked U is neutral')
+    assert.equal(newStatus.classList.contains('vcs-status-U'), false, 'the untracked U is not a conflict')
+    assert.equal(newHead.querySelector('.vcs-sr-only')?.props?.children, 'status.untracked')
+    assert.equal(textOf(newHead), 'Ustatus.untrackednew.txt', 'the row states no line counts')
+
+    const dirHead = treeEl.querySelector('.vcs-tree-dir-head')
+    const [dirStatus] = dirHead.querySelectorAll('.vcs-status')
+    assert.equal(textOf(dirStatus), 'U')
+    assert.equal(dirStatus.classList.contains('vcs-status-untracked'), true)
+    assert.equal(dirHead.querySelector('.vcs-sr-only')?.props?.children, 'status.untracked')
+  } finally {
+    harness.unmount()
+    restore()
+  }
+})
+
 test('ChangeTree moves through rows and hunk headers as one vertical list', async () => {
   const harness = createHarness()
   const restore = harness.installGlobals()

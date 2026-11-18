@@ -14,15 +14,17 @@ const STATUS_KEYS = {
   R: 'status.renamed',
   C: 'status.copied',
   U: 'status.conflict',
-  '?': 'status.untracked',
 }
 
 /**
- * Translation key for one Git status letter.
+ * Translation key for one Git status letter. An untracked row shows the same
+ * `U` as a conflict but says "untracked", so the two read differently.
  * @param {string} status - single-letter status.
+ * @param {boolean} [untracked] - whether the entry is untracked.
  * @returns {string} locale key.
  */
-export function statusKey(status) {
+export function statusKey(status, untracked = false) {
+  if (untracked) return 'status.untracked'
   return STATUS_KEYS[status] ?? 'status.changed'
 }
 

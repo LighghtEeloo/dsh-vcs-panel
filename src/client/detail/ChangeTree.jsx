@@ -854,7 +854,7 @@ export function ChangeTree({
     </span>
   )
   const fileStat = entry => {
-    if (entry.status === '?') return null
+    if (entry.untracked === true) return null
     if (entry.binary === true) return <span className="vcs-tree-stat vcs-dim">{t('changes.binary')}</span>
     const counts = lineCounts(entry)
     return (
@@ -925,7 +925,7 @@ export function ChangeTree({
           {row.loadable
             ? (
               <>
-                <span className="vcs-status vcs-status-?" aria-hidden="true">?</span>
+                <span className="vcs-status vcs-status-untracked" aria-hidden="true">U</span>
                 <span className="vcs-sr-only">{t('status.untracked')}</span>
               </>
             )
@@ -941,6 +941,7 @@ export function ChangeTree({
     const foldReason = expanded || !someUnfolded ? undefined : budget.get(row.key)
     const parts = splitPath(row.entry.path)
     const bodyId = rowBodyId(row.key)
+    const statusClass = row.entry.untracked === true ? 'vcs-status-untracked' : `vcs-status-${row.entry.status}`
     return (
       <section
         key={row.key}
@@ -961,8 +962,8 @@ export function ChangeTree({
             onClick={() => { activateRow(row, expanded) }}
           >
             <Chevron open={expanded} />
-            <span className={`vcs-status vcs-status-${row.entry.status}`} aria-hidden="true">{row.entry.status}</span>
-            <span className="vcs-sr-only">{t(statusKey(row.entry.status))}</span>
+            <span className={`vcs-status ${statusClass}`} aria-hidden="true">{row.entry.status}</span>
+            <span className="vcs-sr-only">{t(statusKey(row.entry.status, row.entry.untracked === true))}</span>
             <span className="vcs-tree-file-name">
               {row.entry.origPath === undefined
                 ? null

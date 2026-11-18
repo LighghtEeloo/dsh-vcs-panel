@@ -1175,7 +1175,7 @@
   color: var(--dsw-alias-brand-primary);
 }
 
-.vcs-status-\? {
+.vcs-status-untracked {
   color: var(--dsw-alias-label-secondary);
 }
 
