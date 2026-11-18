@@ -35,27 +35,35 @@ const RESET_MODES = [
   { value: 'hard', label: 'commit.resetHard' },
 ]
 
+/** Explicit hint key lookup per reset mode so i18n checks see literal keys. */
+const RESET_HINT_KEYS = {
+  soft: 'commit.resetSoftHint',
+  mixed: 'commit.resetMixedHint',
+  hard: 'commit.resetHardHint',
+}
+
 /**
  * Render the open commit dialog.
  * @param {{ request: { kind: string, sha: string, shortSha: string, current?: string | null, subject?: string } | null, error: object | null, busy: boolean, onCancel: Function, onConfirm: Function, t: Function }} props - dialog state and callbacks.
  */
-export function CommitDialog({ request, error, busy, onCancel, onConfirm, t }) {
+export function CommitDialog({ request, error, busy, blocked = false, onCancel, onConfirm, t }) {
   const [name, setName] = useState('')
   const [message, setMessage] = useState('')
+  const [checkout, setCheckout] = useState(false)
   const [mode, setMode] = useState('soft')
 
   if (request === null) return null
 
   const copy = DIALOG_COPY[request.kind]
   const needsName = request.kind === 'tag' || request.kind === 'branch'
-  const destructive = request.kind === 'drop' || request.kind === 'reset'
+  const destructive = request.kind === 'drop' || (request.kind === 'reset' && mode === 'hard')
   const trimmed = name.trim()
-  const canSubmit = !busy && (!needsName || trimmed !== '') && (request.kind !== 'reset' || mode !== '')
+  const canSubmit = !busy && !blocked && (!needsName || trimmed !== '') && (request.kind !== 'reset' || mode !== '')
 
   const submit = () => {
     if (!canSubmit) return
     if (request.kind === 'tag') onConfirm({ name: trimmed, message: message.trim() })
-    else if (request.kind === 'branch') onConfirm({ name: trimmed })
+    else if (request.kind === 'branch') onConfirm({ name: trimmed, checkout })
     else if (request.kind === 'reset') onConfirm({ mode })
     else onConfirm({})
   }
@@ -68,6 +76,12 @@ export function CommitDialog({ request, error, busy, onCancel, onConfirm, t }) {
       onSubmit={submit}
     >
       <h2 className="vcs-dialog-title" id="vcs-commit-dialog-title">{t(copy.title)}</h2>
+      {typeof request.subject === 'string' && request.subject !== '' ? (
+        <p className="vcs-dialog-commit" title={request.subject}>
+          <code>{request.shortSha}</code>
+          <span>{request.subject}</span>
+        </p>
+      ) : null}
       <p className="vcs-dialog-text">
         {t(copy.text, { sha: request.shortSha, current: request.current ?? '' })}
       </p>
@@ -115,6 +129,16 @@ export function CommitDialog({ request, error, busy, onCancel, onConfirm, t }) {
             data-autofocus=""
             onChange={event => { setName(event.currentTarget.value) }}
           />
+          <label className="vcs-dialog-check" htmlFor="vcs-new-branch-checkout">
+            <input
+              id="vcs-new-branch-checkout"
+              type="checkbox"
+              checked={checkout}
+              disabled={busy}
+              onChange={event => { setCheckout(event.currentTarget.checked) }}
+            />
+            <span>{t('commit.checkoutNewBranch')}</span>
+          </label>
         </>
       ) : null}
       {request.kind === 'reset' ? (
@@ -131,12 +155,13 @@ export function CommitDialog({ request, error, busy, onCancel, onConfirm, t }) {
             {RESET_MODES.map(entry => <option key={entry.value} value={entry.value}>{t(entry.label)}</option>)}
           </select>
           <p className={mode === 'hard' ? 'vcs-dialog-warning' : 'vcs-dialog-busy'} role={mode === 'hard' ? 'alert' : undefined}>
-            {t(`commit.reset${mode.charAt(0).toUpperCase()}${mode.slice(1)}Hint`)}
+            {t(RESET_HINT_KEYS[mode] ?? 'commit.resetSoftHint')}
           </p>
         </>
       ) : null}
       {error !== null ? <p className="vcs-dialog-error" role="alert">{errorMessage(t, error)}</p> : null}
       {busy ? <p className="vcs-dialog-busy" role="status">{t(COMMIT_BUSY_KEYS[request.kind] ?? 'commit.working')}</p> : null}
+      {!busy && blocked ? <p className="vcs-dialog-busy" role="status">{t('error.busy')}</p> : null}
       <div className="vcs-dialog-actions">
         <button
           type="button"

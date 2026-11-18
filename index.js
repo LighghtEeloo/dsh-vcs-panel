@@ -7,8 +7,9 @@
  * routes settle what the panel shows: `POST /api/vcs.sync` brings a Git branch
  * level with its upstream by fetching and then either fast-forwarding or
  * pushing, `POST /api/vcs.switch` checks out an existing local branch,
- * `POST /api/vcs.branch` runs one branch action (rename, delete, merge, rebase,
- * push), `POST /api/vcs.tag` deletes or pushes a tag, and
+ * `POST /api/vcs.branch` runs one local or remote-branch action (rename,
+ * delete, merge, rebase, push, checkout-remote, delete-remote, merge-remote,
+ * pull-remote), `POST /api/vcs.tag` deletes or pushes a tag, and
  * `POST /api/vcs.commit-op` tags, branches, checks out, cherry-picks, reverts,
  * drops, merges, rebases, or resets at one commit. Nothing stages,
  * force-pushes, edits conflicts, or creates a remote branch; reset and drop

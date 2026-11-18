@@ -1,129 +1,87 @@
 /**
- * The ref actions menu, shared by the header's branch control, the local and
- * remote branch ref badges in the timeline, and the tag ref badges.
+ * The ref and commit actions menu, shared by the header's branch control,
+ * the local/remote branch and tag ref badges in the timeline and detail
+ * toolbar, and the commit rows in the timeline.
  *
- * The caller names one ref, its kind, whether it is checked out, and the
- * actions that apply; this component only places, paints, and keys the menu.
- * It opens at the pointer, stays inside the viewport, focuses its first row,
- * closes on Escape, an outside press, a scroll, or a resize, and reports how
- * it closed so the caller can return focus to the control that opened it.
+ * The caller names the target, its kind, its actionable entries, optional
+ * per-action disable reasons, and where it opened; this component places,
+ * measures, paints, and keys the menu, and reports how it closed so focus can
+ * return to the control that opened it.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import { isDestructiveAction } from './branch.js'
-import { isDestructiveCommitAction } from './commit.js'
+import { BRANCH_ACTION_META, isDestructiveAction } from './branch.js'
+import { COMMIT_ACTION_META, isDestructiveCommitAction } from './commit.js'
+import { TAG_ACTION_META } from './tag.js'
+import { useFloatingMenu } from './useFloatingMenu.js'
 
-/** Width of the menu, row height, and the space its title and separators take. */
+/** Fallback menu dimensions before DOM measurement (used in headless harnesses). */
 const MENU_WIDTH = 252
 const ITEM_HEIGHT = 28
 const EXTRA_HEIGHT = 72
 const MARGIN = 8
 
-/** Keys the menu consumes so the panel's movement keys stay outside. */
-const MENU_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'])
-
-/** Fixed labels for branch and remote-branch actions that take no interpolation. */
-const BRANCH_LABELS = {
-  checkout: 'branch.checkout',
-  rename: 'branch.rename',
-  delete: 'branch.delete',
-  push: 'branch.push',
-  'checkout-remote': 'branch.checkoutRemote',
-  'delete-remote': 'branch.deleteRemote',
-  'merge-remote': 'branch.mergeRemote',
-  'pull-remote': 'branch.pullRemote',
-}
-
-/** Fixed labels for tag actions. */
-const TAG_LABELS = {
-  delete: 'tag.delete',
-  push: 'tag.push',
-}
-
-/** Fixed labels for commit actions. */
-const COMMIT_LABELS = {
-  'add-tag': 'commit.addTag',
-  'create-branch': 'commit.createBranch',
-  checkout: 'commit.checkout',
-  'cherry-pick': 'commit.cherryPick',
-  revert: 'commit.revert',
-  drop: 'commit.drop',
-  merge: 'commit.merge',
-  rebase: 'commit.rebase',
-  reset: 'commit.reset',
-}
-
-/** Actions in one visual group are separated from the next group. */
-const BRANCH_GROUP = {
-  checkout: 0,
-  rename: 1,
-  delete: 1,
-  merge: 2,
-  rebase: 2,
-  push: 3,
-  'checkout-remote': 0,
-  'delete-remote': 1,
-  'merge-remote': 2,
-  'pull-remote': 3,
-}
-
-/** A tag's destructive write is marked apart from its push. */
-const TAG_GROUP = {
-  delete: 0,
-  push: 1,
-}
-
-/** Commit actions keep ref creation, history writes, and branch writes apart. */
-const COMMIT_GROUP = {
-  'add-tag': 0,
-  'create-branch': 0,
-  checkout: 1,
-  'cherry-pick': 1,
-  revert: 1,
-  drop: 1,
-  merge: 2,
-  rebase: 2,
-  reset: 2,
+/** Look up descriptor metadata for one action of one target kind. */
+function actionMeta(kind, action) {
+  if (kind === 'commit') return COMMIT_ACTION_META[action]
+  if (kind === 'tag') return TAG_ACTION_META[action]
+  return BRANCH_ACTION_META[action]
 }
 
 /**
  * Keep one menu inside the viewport.
  * @param {{ x: number, y: number }} point - the opening point.
- * @param {number} count - number of rows.
+ * @param {{ width: number, height: number }} size - measured or estimated menu size.
  * @returns {{ left: number, top: number }} the fixed position.
  */
-function menuPosition(point, count) {
-  const height = count * ITEM_HEIGHT + EXTRA_HEIGHT
+function menuPosition(point, size) {
   if (typeof window === 'undefined') return { left: point.x, top: point.y }
   return {
-    left: Math.max(MARGIN, Math.min(point.x, window.innerWidth - MENU_WIDTH - MARGIN)),
-    top: Math.max(MARGIN, Math.min(point.y, window.innerHeight - height - MARGIN)),
+    left: Math.max(MARGIN, Math.min(point.x, window.innerWidth - size.width - MARGIN)),
+    top: Math.max(MARGIN, Math.min(point.y, window.innerHeight - size.height - MARGIN)),
   }
 }
 
-/** The localized row label for one action of one ref kind. */
+/** The localized row label for one action of one target kind. */
 function actionLabel(target, action, t) {
-  if (target.kind === 'commit') return t(COMMIT_LABELS[action])
-  if (target.kind === 'tag') return t(TAG_LABELS[action])
-  if (target.kind === 'remote') return t(BRANCH_LABELS[action])
-  if (action === 'merge') return t('branch.merge', { branch: target.name })
-  if (action === 'rebase') return t('branch.rebase', { branch: target.name })
-  return t(BRANCH_LABELS[action])
-}
-
-/** The visual group of one action, or undefined for an unknown action. */
-function actionGroup(kind, action) {
-  if (kind === 'commit') return COMMIT_GROUP[action]
-  return (kind === 'tag' ? TAG_GROUP : BRANCH_GROUP)[action]
+  if (target.kind === 'branch' && action === 'merge') {
+    return t('branch.merge', { branch: target.name })
+  }
+  if (target.kind === 'branch' && action === 'rebase') {
+    return t('branch.rebase', { branch: target.name })
+  }
+  const key = actionMeta(target.kind, action)?.labelKey
+  return key === undefined ? action : t(key)
 }
 
 /**
- * Render the open ref actions menu.
- * @param {{ target: { kind: 'branch' | 'remote' | 'tag' | 'commit', name: string, detail?: string, current?: boolean, actions: string[], x: number, y: number } | null, busy: boolean, t: Function, onChoose: Function, onClose: (restoreFocus: boolean) => void }} props - the ref or commit, its actions, and the close callbacks.
+ * Render the open ref or commit actions menu.
+ * @param {{ target: { kind: 'branch' | 'remote' | 'tag' | 'commit', name: string, detail?: string, current?: boolean, actions: string[], disabledActions?: Record<string, string>, x: number, y: number } | null, busy: boolean, t: Function, onChoose: Function, onClose: (restoreFocus: boolean) => void }} props - target, busy state, and callbacks.
  */
 export function RefActionsMenu({ target, busy, t, onChoose, onClose }) {
   const menuRef = useRef(null)
+  const [measured, setMeasured] = useState(null)
+
+  const { onKeyDown, onBlur } = useFloatingMenu({
+    open: target !== null,
+    menuRef,
+    itemSelector: '[data-ops-item]',
+    onClose,
+  })
+
+  // Measure actual rendered size so clamping stays exact across font sizes and separators.
+  useLayoutEffect(() => {
+    if (target === null) {
+      setMeasured(null)
+      return
+    }
+    const element = menuRef.current
+    if (element === null) return
+    const width = element.offsetWidth ?? 0
+    const height = element.offsetHeight ?? 0
+    if (width > 0 && height > 0) setMeasured({ target, width, height })
+  }, [target])
 
   // Move focus into the menu once it appears.
   useEffect(() => {
@@ -134,51 +92,17 @@ export function RefActionsMenu({ target, busy, t, onChoose, onClose }) {
     return () => { cancelAnimationFrame(frame) }
   }, [target])
 
-  // Dismissal: anything outside the menu.
-  useEffect(() => {
-    if (target === null) return undefined
-    const dismiss = event => {
-      if (menuRef.current?.contains(event.target)) return
-      onClose(false)
-    }
-    const onResize = () => { onClose(false) }
-    document.addEventListener('pointerdown', dismiss, true)
-    window.addEventListener('resize', onResize)
-    window.addEventListener('scroll', onResize, true)
-    return () => {
-      document.removeEventListener('pointerdown', dismiss, true)
-      window.removeEventListener('resize', onResize)
-      window.removeEventListener('scroll', onResize, true)
-    }
-  }, [onClose, target])
-
   if (target === null) return null
-  const position = menuPosition(target, target.actions.length)
+
+  const size = measured?.target === target
+    ? measured
+    : { width: MENU_WIDTH, height: target.actions.length * ITEM_HEIGHT + EXTRA_HEIGHT }
+  const position = menuPosition(target, size)
   const menuLabel = target.kind === 'commit'
     ? t('commit.menuLabel', { sha: target.name })
     : target.kind === 'tag'
       ? t('tag.menuLabel', { tag: target.name })
       : t('branch.menuLabel', { branch: target.name })
-
-  const onKeyDown = event => {
-    if (!MENU_KEYS.has(event.key)) return
-    event.stopPropagation()
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      onClose(true)
-      return
-    }
-    const items = Array.from(menuRef.current?.querySelectorAll('[data-ops-item]') ?? [])
-    if (items.length === 0) return
-    event.preventDefault()
-    const index = items.indexOf(document.activeElement)
-    let next
-    if (event.key === 'Home') next = 0
-    else if (event.key === 'End') next = items.length - 1
-    else if (event.key === 'ArrowDown') next = index < 0 ? 0 : (index + 1) % items.length
-    else next = index < 0 ? items.length - 1 : (index - 1 + items.length) % items.length
-    items[next]?.focus()
-  }
 
   return (
     <div
@@ -190,6 +114,10 @@ export function RefActionsMenu({ target, busy, t, onChoose, onClose }) {
       tabIndex={-1}
       style={{ left: `${position.left}px`, top: `${position.top}px` }}
       onKeyDown={onKeyDown}
+      onBlur={onBlur}
+      onMouseDown={event => {
+        if (!event.target?.closest?.('button')) event.preventDefault()
+      }}
     >
       <p className="vcs-ref-ops-title">
         <span className="vcs-ref-ops-name">{target.name}</span>
@@ -201,10 +129,14 @@ export function RefActionsMenu({ target, busy, t, onChoose, onClose }) {
       </p>
       {target.actions.map((action, index) => {
         const label = actionLabel(target, action, t)
-        const separated = index > 0 && actionGroup(target.kind, action) !== actionGroup(target.kind, target.actions[index - 1])
+        const group = actionMeta(target.kind, action)?.group
+        const previousGroup = index > 0 ? actionMeta(target.kind, target.actions[index - 1])?.group : group
+        const separated = index > 0 && group !== previousGroup
         const destructive = target.kind === 'commit'
           ? isDestructiveCommitAction(action)
           : isDestructiveAction(action)
+        const disabledReason = target.disabledActions?.[action]
+        const disabled = busy || disabledReason !== undefined
         return (
           <div key={action}>
             {separated ? <div className="vcs-ref-ops-sep" role="separator" /> : null}
@@ -213,9 +145,9 @@ export function RefActionsMenu({ target, busy, t, onChoose, onClose }) {
               role="menuitem"
               className={`vcs-menu-item vcs-ref-ops-item${destructive ? ' vcs-ref-ops-danger' : ''}`}
               data-ops-item=""
-              aria-disabled={busy ? 'true' : undefined}
-              title={label}
-              onClick={() => { if (!busy) onChoose(action) }}
+              aria-disabled={disabled ? 'true' : undefined}
+              title={disabledReason ?? label}
+              onClick={() => { if (!disabled) onChoose(action) }}
             >
               {label}
             </button>

@@ -163,18 +163,51 @@ export function Segmented({ value, options, onChange, label }) {
  * The prop is `reference`, not `ref`: this client runs on React 18, where
  * `ref` is reserved and never reaches a function component's props.
  */
-export function RefBadge({ reference, onRefContextMenu }) {
+export function RefBadge({ reference, onRefContextMenu, onRefActivate }) {
   const current = reference.current === true
   const remote = reference.kind === 'remote'
     && typeof reference.remote === 'string' && typeof reference.branch === 'string'
-  const actionable = (reference.kind === 'branch' || reference.kind === 'tag' || remote)
-    && typeof onRefContextMenu === 'function'
+  const actionableKind = reference.kind === 'branch' || reference.kind === 'tag' || remote
+  const interactive = actionableKind && typeof onRefActivate === 'function'
+  const contextOnly = actionableKind && !interactive && typeof onRefContextMenu === 'function'
+  const title = current ? `HEAD -> ${reference.name}` : reference.name
+  const tone = current ? 'head' : reference.kind
+
+  if (interactive) {
+    const openFrom = (target, event) => {
+      const rect = target.getBoundingClientRect()
+      onRefActivate(reference, {
+        clientX: rect.left + 12,
+        clientY: rect.bottom ?? (rect.top + rect.height),
+        preventDefault() { event?.preventDefault?.() },
+        stopPropagation() { event?.stopPropagation?.() },
+      }, target)
+    }
+    return (
+      <button
+        type="button"
+        className={`vcs-ref vcs-ref-button vcs-ref-${tone}`}
+        title={title}
+        aria-haspopup="menu"
+        data-ref-actions="true"
+        onClick={event => { openFrom(event.currentTarget, event) }}
+        onContextMenu={event => { onRefActivate(reference, event, event.currentTarget) }}
+        onKeyDown={event => {
+          if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
+          openFrom(event.currentTarget, event)
+        }}
+      >
+        {reference.name}
+      </button>
+    )
+  }
+
   return (
     <span
-      className={`vcs-ref vcs-ref-${current ? 'head' : reference.kind}`}
-      title={current ? `HEAD -> ${reference.name}` : reference.name}
-      data-ref-actions={actionable ? 'true' : undefined}
-      onContextMenu={actionable
+      className={`vcs-ref vcs-ref-${tone}`}
+      title={title}
+      data-ref-actions={contextOnly ? 'true' : undefined}
+      onContextMenu={contextOnly
         ? event => { onRefContextMenu(reference, event) }
         : undefined}
     >

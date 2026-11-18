@@ -23,6 +23,7 @@ import { errorMessage, formatCount, shortChangeId } from './format.js'
 import { BRANCH_BUSY_KEYS } from './branch.js'
 import { TAG_BUSY_KEYS } from './tag.js'
 import { COMMIT_BUSY_KEYS } from './commit.js'
+import { useFloatingMenu } from './useFloatingMenu.js'
 
 /** Range choices when no backend has answered yet. */
 const FALLBACK_RANGES = [
@@ -47,9 +48,6 @@ function AheadBehind({ ahead, behind }) {
     </>
   )
 }
-
-/** Keys the branch menu consumes so the panel's movement keys stay outside. */
-const MENU_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'])
 
 /**
  * The branch control: a button that opens the repository's local branches,
@@ -84,6 +82,14 @@ function BranchSwitcher({
     }
   }, [])
 
+  const { onKeyDown: onMenuKeyDown, onBlur: onWrapBlur } = useFloatingMenu({
+    open,
+    menuRef,
+    triggerRef,
+    itemSelector: '[data-branch-item]',
+    onClose: close,
+  })
+
   const toggle = () => {
     if (open) {
       close(true)
@@ -93,7 +99,8 @@ function BranchSwitcher({
     if (rect !== undefined) {
       const viewport = typeof window === 'undefined' ? rect.left + MENU_WIDTH + MENU_MARGIN * 2 : window.innerWidth
       const left = Math.max(MENU_MARGIN, Math.min(rect.left, viewport - MENU_WIDTH - MENU_MARGIN))
-      setPosition({ left, top: rect.bottom + MENU_GAP })
+      const bottom = rect.bottom ?? (rect.top + rect.height)
+      setPosition({ left, top: bottom + MENU_GAP })
     }
     setOpen(true)
     onOpen()
@@ -104,25 +111,6 @@ function BranchSwitcher({
     close(false)
     onOpenActions(entry, { clientX: point.clientX, clientY: point.clientY }, returnElement)
   }
-
-  // Dismissal: anything outside the trigger and the menu.
-  useEffect(() => {
-    if (!open) return undefined
-    const dismiss = event => {
-      if (menuRef.current?.contains(event.target)) return
-      if (triggerRef.current?.contains(event.target)) return
-      close(false)
-    }
-    const onResize = () => { close(false) }
-    document.addEventListener('pointerdown', dismiss, true)
-    window.addEventListener('resize', onResize)
-    window.addEventListener('scroll', onResize, true)
-    return () => {
-      document.removeEventListener('pointerdown', dismiss, true)
-      window.removeEventListener('resize', onResize)
-      window.removeEventListener('scroll', onResize, true)
-    }
-  }, [close, open])
 
   // Move focus into the menu once it has rows (or itself when it has none).
   useEffect(() => {
@@ -136,34 +124,8 @@ function BranchSwitcher({
     return () => { cancelAnimationFrame(frame) }
   }, [branchesStatus, open])
 
-  const onMenuKeyDown = event => {
-    if (!MENU_KEYS.has(event.key)) return
-    event.stopPropagation()
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      close(true)
-      return
-    }
-    const items = Array.from(menuRef.current?.querySelectorAll('[data-branch-item]') ?? [])
-    if (items.length === 0) return
-    event.preventDefault()
-    const index = items.indexOf(document.activeElement)
-    let next
-    if (event.key === 'Home') next = 0
-    else if (event.key === 'End') next = items.length - 1
-    else if (event.key === 'ArrowDown') next = index < 0 ? 0 : (index + 1) % items.length
-    else next = index < 0 ? items.length - 1 : (index - 1 + items.length) % items.length
-    items[next]?.focus()
-  }
-
   return (
-    <span
-      className="vcs-branch-wrap"
-      onBlur={event => {
-        if (event.currentTarget.contains(event.relatedTarget)) return
-        if (open) close(false)
-      }}
-    >
+    <span className="vcs-branch-wrap" onBlur={onWrapBlur}>
       <button
         ref={triggerRef}
         type="button"
@@ -185,9 +147,10 @@ function BranchSwitcher({
             if (currentName !== null) {
               const rect = triggerRef.current?.getBoundingClientRect()
               if (rect !== undefined) {
+                const bottom = rect.bottom ?? (rect.top + rect.height)
                 openActions(
                   { name: currentName, current: true },
-                  { clientX: rect.left + 12, clientY: rect.bottom },
+                  { clientX: rect.left + 12, clientY: bottom },
                   triggerRef.current,
                 )
               }
@@ -249,7 +212,8 @@ function BranchSwitcher({
                 event.preventDefault()
                 event.stopPropagation()
                 const rect = event.currentTarget.getBoundingClientRect()
-                openActions(entry, { clientX: rect.left + 12, clientY: rect.bottom }, event.currentTarget)
+                const bottom = rect.bottom ?? (rect.top + rect.height)
+                openActions(entry, { clientX: rect.left + 12, clientY: bottom }, event.currentTarget)
               }}
             >
               <span className="vcs-menu-item-name">{entry.name}</span>
@@ -350,9 +314,16 @@ export function TopBar({
   let readonlyHint = t('top.readonlyHint')
   if (capacity?.sync === true) {
     if (branchOps) {
-      const both = capacity.tagOps === true
-      readonlyLabel = t(both ? 'top.readonlySyncRefs' : 'top.readonlySyncBranch')
-      readonlyHint = t(both ? 'top.readonlyHintSyncRefs' : 'top.readonlyHintSyncBranch')
+      if (capacity.commitOps === true && capacity.tagOps === true) {
+        readonlyLabel = t('top.readonlySyncRefs')
+        readonlyHint = t('top.readonlyHintSyncRefs')
+      } else if (capacity.tagOps === true) {
+        readonlyLabel = t('top.readonlySyncBranchTag')
+        readonlyHint = t('top.readonlyHintSyncBranchTag')
+      } else {
+        readonlyLabel = t('top.readonlySyncBranch')
+        readonlyHint = t('top.readonlyHintSyncBranch')
+      }
     } else if (capacity.branchSwitch === true) {
       readonlyLabel = t('top.readonlySyncSwitch')
       readonlyHint = t('top.readonlyHintSyncSwitch')

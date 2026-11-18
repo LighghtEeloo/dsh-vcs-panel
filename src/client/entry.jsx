@@ -5,8 +5,9 @@
  * card, localized chip, and body, plus the per-turn entry in
  * `conversation.chat.turnTail`, the eight UI dictionaries, one stylesheet, the
  * Session fold that decides whether a Turn changed files, and the
- * application-wide shortcut. All host data comes from the authenticated
- * `/api/vcs.*` routes; nothing here writes to the repository.
+ * application-wide shortcut. Reads and writes go through the authenticated
+ * `/api/vcs.*` routes; writes only happen from explicit header, branch,
+ * remote-branch, tag, or commit actions.
  */
 
 import { useEffect, useState } from 'react'

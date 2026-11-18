@@ -152,7 +152,11 @@ export function Timeline({
         if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
         event.preventDefault()
         const rect = event.currentTarget.getBoundingClientRect()
-        onCommitActions(commit, { clientX: rect.left + 12, clientY: rect.bottom }, event.currentTarget)
+        onCommitActions(
+          commit,
+          { clientX: rect.left + 12, clientY: rect.bottom ?? (rect.top + rect.height) },
+          event.currentTarget,
+        )
       },
     }
     rows.push(
@@ -177,11 +181,21 @@ export function Timeline({
                   onRefActions(
                     target,
                     event,
-                    event.currentTarget.closest('.vcs-timeline-row') ?? event.currentTarget,
+                    event.currentTarget.closest?.('.vcs-timeline-row') ?? event.currentTarget,
                   )
                 }}
             />
           ))}
+          {commit.refs.length > ROW_REFS ? (
+            <span
+              className="vcs-ref vcs-ref-more"
+              title={t('timeline.moreRefs', {
+                refs: commit.refs.slice(ROW_REFS).map(reference => reference.name).join(', '),
+              })}
+            >
+              +{commit.refs.length - ROW_REFS}
+            </span>
+          ) : null}
           <code className="vcs-timeline-sha" title={commit.sha}>{shortId}</code>
           {workingCopy && workingSummary !== null && workingSummary.changed > 0 ? (
             <>

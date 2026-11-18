@@ -1,6 +1,6 @@
 /**
  * The branch actions menu: which actions apply to which branch or remote
- * branch, and which localized labels describe them while they run.
+ * branch, visual grouping, destructiveness, and localized busy labels.
  *
  * A local branch that is not checked out can be checked out, renamed, deleted,
  * merged into the current branch, used as the new base of the current branch,
@@ -13,8 +13,22 @@
  * nothing.
  */
 
+/** Visual group, destructiveness, and menu label key for each branch action. */
+export const BRANCH_ACTION_META = Object.freeze({
+  checkout: { group: 0, destructive: false, labelKey: 'branch.checkout' },
+  rename: { group: 1, destructive: false, labelKey: 'branch.rename' },
+  delete: { group: 1, destructive: true, labelKey: 'branch.delete' },
+  merge: { group: 2, destructive: false, labelKey: 'branch.merge' },
+  rebase: { group: 2, destructive: false, labelKey: 'branch.rebase' },
+  push: { group: 3, destructive: false, labelKey: 'branch.push' },
+  'checkout-remote': { group: 0, destructive: false, labelKey: 'branch.checkoutRemote' },
+  'delete-remote': { group: 1, destructive: true, labelKey: 'branch.deleteRemote' },
+  'merge-remote': { group: 2, destructive: false, labelKey: 'branch.mergeRemote' },
+  'pull-remote': { group: 3, destructive: false, labelKey: 'branch.pullRemote' },
+})
+
 /** Busy labels for the actions that report through the branch icon. */
-export const BRANCH_BUSY_KEYS = {
+export const BRANCH_BUSY_KEYS = Object.freeze({
   rename: 'branch.renaming',
   delete: 'branch.deleting',
   merge: 'branch.merging',
@@ -24,7 +38,7 @@ export const BRANCH_BUSY_KEYS = {
   'delete-remote': 'branch.deleting',
   'merge-remote': 'branch.merging',
   'pull-remote': 'branch.pulling',
-}
+})
 
 /**
  * Actions the menu offers for one branch, in display order.
@@ -61,5 +75,5 @@ export function remoteBranchActions({ currentBranch }) {
  * @returns {boolean} whether it is destructive.
  */
 export function isDestructiveAction(action) {
-  return action === 'delete' || action === 'delete-remote'
+  return BRANCH_ACTION_META[action]?.destructive === true
 }

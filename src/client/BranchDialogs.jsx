@@ -11,7 +11,7 @@
  * inside the dialog while it is open.
  */
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Dialog } from './Dialog.jsx'
 import { errorMessage } from './format.js'
@@ -22,7 +22,7 @@ const DIALOG_COPY = {
   delete: { title: 'branch.deleteTitle', action: 'branch.deleteAction' },
   merge: { title: 'branch.mergeTitle', action: 'branch.mergeAction' },
   rebase: { title: 'branch.rebaseTitle', action: 'branch.rebaseAction' },
-  'checkout-remote': { title: 'branch.checkoutRemoteTitle', action: 'branch.checkout' },
+  'checkout-remote': { title: 'branch.checkoutRemoteTitle', action: 'branch.checkoutRemoteAction' },
   'delete-remote': { title: 'branch.deleteRemoteTitle', action: 'branch.deleteAction' },
   'merge-remote': { title: 'branch.mergeTitle', action: 'branch.mergeAction' },
   'pull-remote': { title: 'branch.pullTitle', action: 'branch.pullAction' },
@@ -30,21 +30,28 @@ const DIALOG_COPY = {
 
 /**
  * Render the open branch dialog.
- * @param {{ request: { kind: 'rename'|'delete'|'merge'|'rebase', branch: string, current?: string | null } | null, error: object | null, busy: boolean, onCancel: Function, onConfirm: Function, t: Function }} props - dialog state and callbacks.
+ * @param {{ request: { kind: string, branch: string, current?: string | null, remote?: string, local?: string } | null, error: object | null, busy: boolean, blocked?: boolean, onCancel: Function, onConfirm: Function, t: Function }} props - dialog state and callbacks.
  */
-export function BranchDialog({ request, error, busy, onCancel, onConfirm, t }) {
+export function BranchDialog({ request, error, busy, blocked = false, onCancel, onConfirm, t }) {
   const [name, setName] = useState(
     request?.kind === 'checkout-remote' ? request.local ?? '' : request?.branch ?? '',
   )
+  const cancelRef = useRef(null)
+  const unmerged = request?.kind === 'delete' && error?.code === 'branch-unmerged'
+
+  // When a local delete bounces as unmerged, move focus back to Cancel so
+  // repeating Enter cannot force-delete without a deliberate choice.
+  useEffect(() => {
+    if (unmerged) cancelRef.current?.focus({ preventScroll: true })
+  }, [unmerged])
 
   if (request === null) return null
 
   const copy = DIALOG_COPY[request.kind]
   const naming = request.kind === 'rename' || request.kind === 'checkout-remote'
-  const unmerged = request.kind === 'delete' && error?.code === 'branch-unmerged'
   const destructive = request.kind === 'delete' || request.kind === 'delete-remote'
   const trimmed = name.trim()
-  const canSubmit = !busy && (
+  const canSubmit = !busy && !blocked && (
     !naming
     || (trimmed !== '' && (request.kind !== 'rename' || trimmed !== request.branch))
   )
@@ -127,13 +134,14 @@ export function BranchDialog({ request, error, busy, onCancel, onConfirm, t }) {
         <p className="vcs-dialog-error" role="alert">{errorMessage(t, error)}</p>
       ) : null}
       {busy ? <p className="vcs-dialog-busy" role="status">{t('branch.working')}</p> : null}
+      {!busy && blocked ? <p className="vcs-dialog-busy" role="status">{t('error.busy')}</p> : null}
       <div className="vcs-dialog-actions">
-        <button type="button" className="vcs-button" data-autofocus={request.kind === 'rename' ? undefined : ''} disabled={busy} onClick={onCancel}>
+        <button ref={cancelRef} type="button" className="vcs-button" data-autofocus={naming ? undefined : ''} disabled={busy} onClick={onCancel}>
           {t('branch.cancel')}
         </button>
         <button
           type="submit"
-          className={`vcs-button${request.kind === 'delete' ? ' vcs-button-danger' : ''}`}
+          className={`vcs-button${destructive ? ' vcs-button-danger' : ''}`}
           aria-disabled={!canSubmit ? 'true' : undefined}
           aria-busy={busy ? 'true' : undefined}
         >

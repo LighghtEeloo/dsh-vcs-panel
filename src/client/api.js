@@ -299,7 +299,7 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
      * abort before the failure is reported.
      * @param {string} repo - repository root.
      * @param {'tag'|'branch'|'checkout'|'cherry-pick'|'revert'|'drop'|'merge'|'rebase'|'reset'} action - the action.
-     * @param {{ sha: string, name?: string, message?: string, mode?: string }} target - commit and options.
+     * @param {{ sha: string, name?: string, message?: string, checkout?: boolean, mode?: string }} target - commit and options.
      * @returns {Promise<object>} what the action did.
      */
     commitOp(repo, action, target) {
@@ -309,6 +309,7 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
         sha: target.sha,
         name: target.name,
         message: target.message,
+        checkout: target.checkout === true ? true : undefined,
         mode: target.mode,
       })
     },

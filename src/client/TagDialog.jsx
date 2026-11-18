@@ -15,9 +15,9 @@ import { errorMessage } from './format.js'
 
 /**
  * Render the open tag dialog.
- * @param {{ request: { kind: 'delete'|'push', tag: string } | null, error: object | null, busy: boolean, remotes: { status: string, list: string[], truncated: boolean, error: object | null }, onCancel: Function, onConfirm: Function, t: Function }} props - dialog, remote-list, and action state.
+ * @param {{ request: { kind: 'delete'|'push', tag: string } | null, error: object | null, busy: boolean, blocked?: boolean, remotes: { status: string, list: string[], truncated: boolean, error: object | null }, onCancel: Function, onConfirm: Function, t: Function }} props - dialog, remote-list, and action state.
  */
-export function TagDialog({ request, error, busy, remotes, onCancel, onConfirm, t }) {
+export function TagDialog({ request, error, busy, blocked = false, remotes, onCancel, onConfirm, t }) {
   const [remote, setRemote] = useState('')
   const remoteRef = useRef(null)
 
@@ -41,7 +41,7 @@ export function TagDialog({ request, error, busy, remotes, onCancel, onConfirm, 
   const loading = pushing && remotes.status !== 'ready' && remotes.status !== 'error'
   const failed = pushing && remotes.status === 'error'
   const empty = pushing && remotes.status === 'ready' && remotes.list.length === 0
-  const canSubmit = !busy && (!pushing || (remotes.status === 'ready' && remote !== ''))
+  const canSubmit = !busy && !blocked && (!pushing || (remotes.status === 'ready' && remote !== ''))
   const title = pushing ? t('tag.pushTitle') : t('tag.deleteTitle')
 
   const submit = () => {
@@ -84,6 +84,7 @@ export function TagDialog({ request, error, busy, remotes, onCancel, onConfirm, 
       ) : null}
       {error !== null ? <p className="vcs-dialog-error" role="alert">{errorMessage(t, error)}</p> : null}
       {busy ? <p className="vcs-dialog-busy" role="status">{t('tag.working')}</p> : null}
+      {!busy && blocked ? <p className="vcs-dialog-busy" role="status">{t('error.busy')}</p> : null}
       <div className="vcs-dialog-actions">
         <button type="button" className="vcs-button" data-autofocus={pushing && remotes.status === 'ready' && remotes.list.length > 0 ? undefined : ''} disabled={busy} onClick={onCancel}>
           {t('branch.cancel')}

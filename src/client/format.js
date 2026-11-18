@@ -267,6 +267,13 @@ export function tagOpMessage(t, action, tag, result) {
     : t('tag.pushed', { tag, remote })
 }
 
+/** Explicit reset mode label keys for commitOpMessage. */
+const RESET_LABEL_KEYS = {
+  soft: 'commit.resetSoft',
+  mixed: 'commit.resetMixed',
+  hard: 'commit.resetHard',
+}
+
 /**
  * Localized outcome of one commit action: what changed and where.
  * @param {Function} t - the panel's translate function.
@@ -283,7 +290,7 @@ export function commitOpMessage(t, action, target, result) {
   }
   if (action === 'branch') {
     const branch = typeof result?.branch === 'string' && result.branch !== '' ? result.branch : target.name
-    return t('commit.branchCreated', { branch, sha })
+    return t(result?.checkedOut === true ? 'commit.branchCreatedCheckedOut' : 'commit.branchCreated', { branch, sha })
   }
   if (action === 'checkout') return t('commit.checkedOut', { sha })
   const current = typeof result?.current === 'string' && result.current !== '' ? result.current : ''
@@ -297,6 +304,6 @@ export function commitOpMessage(t, action, target, result) {
   }
   if (action === 'rebase') return t('commit.rebased', { sha, current })
   const mode = typeof result?.mode === 'string' ? result.mode : 'mixed'
-  const modeLabel = t(`commit.reset${mode.charAt(0).toUpperCase()}${mode.slice(1)}`)
+  const modeLabel = t(RESET_LABEL_KEYS[mode] ?? 'commit.resetMixed')
   return t('commit.resetDone', { sha, current, mode: modeLabel })
 }

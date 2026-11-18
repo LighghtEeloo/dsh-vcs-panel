@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { join } from 'node:path'
+import { sep, join } from 'node:path'
 
 import { DICTIONARIES } from '../src/client/locales.js'
 import { errorMessage, statusKey } from '../src/client/format.js'
@@ -67,7 +67,7 @@ test('every literal t(key) and every dynamic key resolves in every dictionary', 
       .map(([key]) => key),
   )
   for (const file of sourceFiles(directory)) {
-    if (file.endsWith('locales.js')) continue
+    if (file.endsWith('locales.js') || file.includes(`${sep}locales${sep}`)) continue
     const source = readFileSync(file, 'utf8')
     for (const match of source.matchAll(/\bt\('([^']+)'/gu)) used.add(match[1])
     // A key that interpolates {count} must be called with its variables.
@@ -98,6 +98,53 @@ test('view labels stay short enough for the Sidebar chip', () => {
     const label = DICTIONARIES[locale]['view.label']
     assert.ok(displayWidth(label) <= 12, `${locale} view.label is ${displayWidth(label)} columns: ${label}`)
   }
+})
+
+test('every locale module defines each key at most once', () => {
+  const dir = fileURLToPath(new URL('../src/client/locales', import.meta.url))
+  for (const locale of LOCALES) {
+    const source = readFileSync(join(dir, `${locale}.js`), 'utf8')
+    const seen = new Set()
+    const duplicates = []
+    for (const line of source.split('\n')) {
+      const match = /^\s*['"]([^'"]+)['"]\s*:/u.exec(line)
+      if (match === null) continue
+      if (seen.has(match[1])) duplicates.push(match[1])
+      seen.add(match[1])
+    }
+    assert.deepEqual(duplicates, [], `${locale} has duplicate keys`)
+  }
+})
+
+test('every dictionary key is referenced in client or capability sources', () => {
+  const clientDir = fileURLToPath(new URL('../src/client', import.meta.url))
+  const capabilitiesFile = fileURLToPath(new URL('../lib/vcs/capabilities.js', import.meta.url))
+  const referenced = new Set()
+  const scan = source => {
+    for (const match of source.matchAll(/['"]([a-z][a-zA-Z0-9_.-]*\.[a-zA-Z0-9_.-]+)['"]/gu)) {
+      referenced.add(match[1])
+    }
+  }
+  for (const file of sourceFiles(clientDir)) {
+    if (file.endsWith('locales.js') || file.includes(`${sep}locales${sep}`)) continue
+    scan(readFileSync(file, 'utf8'))
+  }
+  scan(readFileSync(capabilitiesFile, 'utf8'))
+
+  // Keys assembled dynamically through shared status/error/change helpers.
+  referenced.add('changes.staged')
+  referenced.add('changes.unstaged')
+  for (const key of ['diff.created', 'diff.deleted', 'diff.unchanged']) referenced.add(key)
+  for (const letter of ['M', 'A', 'D', 'R', 'C', 'U', '?']) referenced.add(statusKey(letter))
+  for (const code of Object.keys(ERROR_STATUS)) {
+    let key = null
+    errorMessage(next => { key = next; return next }, { code })
+    referenced.add(key)
+  }
+  referenced.add('error.network')
+
+  const unused = Object.keys(DICTIONARIES.en).filter(key => !referenced.has(key)).sort()
+  assert.deepEqual(unused, [])
 })
 
 test('every dictionary language has plugin metadata', () => {

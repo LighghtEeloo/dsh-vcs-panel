@@ -86,6 +86,12 @@ class FakeElement {
     this.ownerDocument.activeElement = this
   }
 
+  select() {}
+
+  get isConnected() {
+    return this === this.ownerDocument.body || this.ownerDocument.body.contains(this)
+  }
+
   contains(target) {
     let cursor = target
     while (cursor !== null && cursor !== undefined) {
@@ -1825,5 +1831,448 @@ test('VcsView layout toggle shows the timeline beside the changes or one column 
     globalThis.fetch = savedFetch
     if (savedStorage === undefined) delete globalThis.sessionStorage
     else Object.defineProperty(globalThis, 'sessionStorage', savedStorage)
+  }
+})
+
+/** Extract concatenated visible text beneath one FakeElement subtree. */
+function textOf(node) {
+  if (node === null || node === undefined || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textOf).join('')
+  return (node.children ?? []).map(textOf).join('')
+}
+
+/** Install a minimal fake `window` object with dispatchable resize/scroll listeners. */
+function installFakeWindow(innerWidth = 1000, innerHeight = 800) {
+  const saved = globalThis.window
+  const listeners = new Map()
+  const fakeWindow = {
+    innerWidth,
+    innerHeight,
+    addEventListener(type, fn, capture = false) {
+      const key = `${type}:${Boolean(capture)}`
+      if (!listeners.has(key)) listeners.set(key, new Set())
+      listeners.get(key).add(fn)
+    },
+    removeEventListener(type, fn, capture = false) {
+      listeners.get(`${type}:${Boolean(capture)}`)?.delete(fn)
+    },
+    dispatch(type, event = {}, capture = false) {
+      for (const fn of [...(listeners.get(`${type}:${Boolean(capture)}`) ?? [])]) fn(event)
+    },
+  }
+  globalThis.window = fakeWindow
+  return {
+    window: fakeWindow,
+    restore() {
+      if (saved === undefined) delete globalThis.window
+      else globalThis.window = saved
+    },
+  }
+}
+
+test('floating menus survive internal scroll, close on outside scroll/blur, and disable push without upstream', async () => {
+  const harness = createHarness({ width: 1000 })
+  const restore = harness.installGlobals()
+  const fakeWin = installFakeWindow()
+  const sha = 'd'.repeat(40)
+  const json = body => ({ ok: true, status: 200, async json() { return body } })
+  const savedFetch = globalThis.fetch
+  globalThis.fetch = async url => {
+    const parsed = new URL(url, 'http://127.0.0.1')
+    if (parsed.pathname === '/api/vcs.repositories') {
+      return json({
+        cwd: '/repo',
+        truncated: false,
+        repositories: [{ path: '/repo', name: 'repo', enclosing: true, vcs: 'git', capabilities: GIT_CAPABILITIES }],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.status') {
+      return json({
+        repo: { path: '/repo', name: 'repo' },
+        vcs: 'git',
+        capabilities: GIT_CAPABILITIES,
+        defaultNode: sha,
+        branch: { name: 'main', oid: sha, detached: false, unborn: false, upstream: null, ahead: 0, behind: 0 },
+        groups: { staged: [], unstaged: [], untracked: [] },
+        total: 0,
+        truncated: false,
+      })
+    }
+    if (parsed.pathname === '/api/vcs.branches') {
+      return json({ truncated: false, branches: [{ name: 'main', current: true }, { name: 'topic', current: false }] })
+    }
+    if (parsed.pathname === '/api/vcs.log') {
+      return json({
+        truncated: false,
+        nextSkip: null,
+        commits: [{ sha, parents: [], refs: [{ name: 'main', kind: 'branch', current: true }], author: 'Ada', authorTime: 1_700_000_000_000, subject: 'init' }],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.commit') {
+      return json({
+        truncated: false,
+        commit: { sha, parents: [], refs: [{ name: 'main', kind: 'branch', current: true }], author: 'Ada', authorTime: 1_700_000_000_000, committer: 'Ada', committerTime: 1_700_000_000_000, subject: 'init', message: '', files: [] },
+      })
+    }
+    return json({ kind: 'text', path: 'a.js', before: true, after: true, hunks: [] })
+  }
+  try {
+    const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+    harness.mount(harness.react.createElement(VcsView, { sessionId: 'session-menu', t, locale: 'en-US' }))
+    await harness.settle()
+    const body = harness.document.body
+    const branchBtn = body.querySelector('.vcs-branch-button')
+    assert.notEqual(branchBtn, null)
+
+    // Header branch switcher ignores internal scroll and closes on outside scroll.
+    branchBtn.props.onClick()
+    await harness.settle()
+    let branchMenu = body.querySelector('.vcs-branch-menu')
+    assert.notEqual(branchMenu, null)
+    const branchItem = branchMenu.querySelector('[data-branch-item]')
+    assert.notEqual(branchItem, null)
+    fakeWin.window.dispatch('scroll', { target: branchItem }, true)
+    await harness.settle()
+    assert.notEqual(body.querySelector('.vcs-branch-menu'), null, 'internal scroll keeps branch menu open')
+    fakeWin.window.dispatch('scroll', { target: body }, true)
+    await harness.settle()
+    assert.equal(body.querySelector('.vcs-branch-menu'), null, 'outside scroll closes branch menu')
+
+    // RefActionsMenu for current branch without upstream disables Push with reason,
+    // stays open on internal scroll, and closes on Tab/blur outside the menu.
+    branchBtn.props.onContextMenu({ clientX: 40, clientY: 50, preventDefault() {}, stopPropagation() {} })
+    await harness.settle()
+    const opsMenu = body.querySelector('.vcs-ref-ops')
+    assert.notEqual(opsMenu, null)
+    const opsItems = opsMenu.querySelectorAll('[data-ops-item]')
+    const pushItem = opsItems.find(item => textOf(item) === 'branch.push')
+    assert.notEqual(pushItem, undefined)
+    assert.equal(pushItem.attributes.get('aria-disabled'), 'true')
+    assert.equal(pushItem.attributes.get('title'), 'top.syncNoUpstream')
+
+    fakeWin.window.dispatch('scroll', { target: opsItems[0] }, true)
+    await harness.settle()
+    assert.notEqual(body.querySelector('.vcs-ref-ops'), null, 'internal scroll keeps ref ops menu open')
+
+    opsMenu.props.onBlur({ currentTarget: opsMenu, relatedTarget: null })
+    await harness.settle()
+    assert.equal(body.querySelector('.vcs-ref-ops'), null, 'blur outside ref ops closes the menu')
+  } finally {
+    globalThis.fetch = savedFetch
+    fakeWin.restore()
+    harness.unmount()
+    restore()
+  }
+})
+
+test('Timeline +N overflow pill pairs with clickable/keyboard DetailPane ref badges and restores focus', async () => {
+  const harness = createHarness({ width: 1000 })
+  const restore = harness.installGlobals()
+  const fakeWin = installFakeWindow()
+  const sha = 'e'.repeat(40)
+  const fourRefs = [
+    { name: 'main', kind: 'branch', current: true },
+    { name: 'origin/main', kind: 'remote', remote: 'origin', branch: 'main' },
+    { name: 'v1.0', kind: 'tag' },
+    { name: 'v2.0', kind: 'tag' },
+  ]
+  const json = body => ({ ok: true, status: 200, async json() { return body } })
+  const savedFetch = globalThis.fetch
+  globalThis.fetch = async url => {
+    const parsed = new URL(url, 'http://127.0.0.1')
+    if (parsed.pathname === '/api/vcs.repositories') {
+      return json({
+        cwd: '/repo',
+        truncated: false,
+        repositories: [{ path: '/repo', name: 'repo', enclosing: true, vcs: 'git', capabilities: GIT_CAPABILITIES }],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.status') {
+      return json({
+        repo: { path: '/repo', name: 'repo' },
+        vcs: 'git',
+        capabilities: GIT_CAPABILITIES,
+        defaultNode: sha,
+        branch: { name: 'main', oid: sha, detached: false, unborn: false, upstream: 'origin/main', ahead: 0, behind: 0 },
+        groups: { staged: [], unstaged: [], untracked: [] },
+        total: 0,
+        truncated: false,
+      })
+    }
+    if (parsed.pathname === '/api/vcs.log') {
+      return json({
+        truncated: false,
+        nextSkip: null,
+        commits: [{ sha, parents: [], refs: fourRefs, author: 'Ada', authorTime: 1_700_000_000_000, subject: 'release' }],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.commit') {
+      return json({
+        truncated: false,
+        commit: { sha, parents: [], refs: fourRefs, author: 'Ada', authorTime: 1_700_000_000_000, committer: 'Ada', committerTime: 1_700_000_000_000, subject: 'release', message: '', files: [] },
+      })
+    }
+    return json({ kind: 'text', path: 'a.js', before: true, after: true, hunks: [] })
+  }
+  try {
+    const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+    harness.mount(harness.react.createElement(VcsView, { sessionId: 'session-refs', t, locale: 'en-US' }))
+    await harness.settle()
+
+    const body = harness.document.body
+    const timeline = body.querySelector('.vcs-timeline')
+    const detail = body.querySelector('.vcs-detail')
+    assert.notEqual(timeline, null)
+    assert.notEqual(detail, null)
+
+    // Timeline keeps row spans (no button tab stops) and summarizes 4th ref as +1.
+    assert.equal(timeline.querySelectorAll('.vcs-ref-button').length, 0)
+    const more = timeline.querySelector('.vcs-ref-more')
+    assert.notEqual(more, null)
+    assert.equal(textOf(more), '+1')
+    assert.ok(more.attributes.get('title').includes('v2.0'))
+
+    // DetailPane toolbar renders all 4 refs as interactive buttons; clicking v2.0 opens tag menu
+    // and Escape restores focus back to that RefBadge button.
+    const badges = detail.querySelectorAll('.vcs-ref-button')
+    assert.equal(badges.length, 4)
+    assert.equal(textOf(badges[3]), 'v2.0')
+    badges[3].props.onClick({ currentTarget: badges[3], preventDefault() {}, stopPropagation() {} })
+    await harness.settle()
+
+    const menu = body.querySelector('.vcs-ref-ops')
+    assert.notEqual(menu, null)
+    assert.equal(menu.attributes.get('data-ref-kind'), 'tag')
+    assert.equal(textOf(menu.querySelector('.vcs-ref-ops-name')), 'v2.0')
+
+    harness.keyDown(harness.document.activeElement, 'Escape')
+    await harness.settle()
+    assert.equal(body.querySelector('.vcs-ref-ops'), null)
+    assert.equal(harness.document.activeElement, badges[3])
+  } finally {
+    globalThis.fetch = savedFetch
+    fakeWin.restore()
+    harness.unmount()
+    restore()
+  }
+})
+
+test('VcsView scopes in-flight writes per repository without locking another repository', async () => {
+  const harness = createHarness({ width: 1000 })
+  const restore = harness.installGlobals()
+  const fakeWin = installFakeWindow()
+  const shaA = 'a'.repeat(40)
+  const shaB = 'b'.repeat(40)
+  let releaseSyncA = null
+  const json = body => ({ ok: true, status: 200, async json() { return body } })
+  const savedFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(url, 'http://127.0.0.1')
+    const repo = parsed.searchParams.get('repo') ?? (init?.body ? JSON.parse(init.body).repo : null)
+    if (parsed.pathname === '/api/vcs.repositories') {
+      return json({
+        cwd: '/repo-a',
+        truncated: false,
+        repositories: [
+          { path: '/repo-a', name: 'repo-a', enclosing: true, vcs: 'git', capabilities: GIT_CAPABILITIES },
+          { path: '/repo-b', name: 'repo-b', enclosing: false, vcs: 'git', capabilities: GIT_CAPABILITIES },
+        ],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.status') {
+      const branch = repo === '/repo-b'
+        ? { name: 'feat', oid: shaB, detached: false, unborn: false, upstream: 'origin/feat', ahead: 0, behind: 0 }
+        : { name: 'main', oid: shaA, detached: false, unborn: false, upstream: 'origin/main', ahead: 1, behind: 0 }
+      return json({
+        repo: { path: repo, name: repo.slice(1) },
+        vcs: 'git',
+        capabilities: GIT_CAPABILITIES,
+        defaultNode: branch.oid,
+        branch,
+        groups: { staged: [], unstaged: [], untracked: [] },
+        total: 0,
+        truncated: false,
+      })
+    }
+    if (parsed.pathname === '/api/vcs.sync') {
+      if (repo === '/repo-a') await new Promise(resolve => { releaseSyncA = resolve })
+      return json({ upstream: 'origin/main', pulled: 0, pushed: 1 })
+    }
+    if (parsed.pathname === '/api/vcs.log') {
+      const oid = repo === '/repo-b' ? shaB : shaA
+      return json({
+        truncated: false,
+        nextSkip: null,
+        commits: [{ sha: oid, parents: [], refs: [], author: 'Ada', authorTime: 1_700_000_000_000, subject: 'c' }],
+      })
+    }
+    if (parsed.pathname === '/api/vcs.commit') {
+      const oid = repo === '/repo-b' ? shaB : shaA
+      return json({
+        truncated: false,
+        commit: { sha: oid, parents: [], refs: [], author: 'Ada', authorTime: 1_700_000_000_000, committer: 'Ada', committerTime: 1_700_000_000_000, subject: 'c', message: '', files: [] },
+      })
+    }
+    return json({ kind: 'text', path: 'a.js', before: true, after: true, hunks: [] })
+  }
+  try {
+    const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+    harness.mount(harness.react.createElement(VcsView, { sessionId: 'session-multirepo', t, locale: 'en-US' }))
+    await harness.settle()
+    const body = harness.document.body
+    const select = body.querySelector('.vcs-repo-select')
+    const syncBtn = body.querySelector('.vcs-sync')
+
+    // Start sync on repo-a.
+    syncBtn.props.onClick()
+    await harness.settle()
+    assert.notEqual(releaseSyncA, null)
+    assert.equal(body.querySelector('.vcs-sync').attributes.get('aria-busy'), 'true')
+
+    // Open ref menu on repo-a while sync is running: actions are disabled due to repoBusy.
+    const branchBtn = body.querySelector('.vcs-branch-button')
+    branchBtn.props.onContextMenu({ clientX: 20, clientY: 20, preventDefault() {}, stopPropagation() {} })
+    await harness.settle()
+    assert.equal(body.querySelector('[data-ops-item]').attributes.get('aria-disabled'), 'true')
+    harness.keyDown(harness.document.activeElement, 'Escape')
+    await harness.settle()
+
+    // Switch to repo-b: repo-b is not busy and its branch menu items remain enabled.
+    select.props.onChange({ currentTarget: { value: '/repo-b' } })
+    await harness.settle()
+    assert.equal(body.querySelector('.vcs-sync').attributes.get('aria-busy'), undefined)
+    body.querySelector('.vcs-branch-button').props.onContextMenu({ clientX: 20, clientY: 20, preventDefault() {}, stopPropagation() {} })
+    await harness.settle()
+    assert.equal(body.querySelector('[data-ops-item]').attributes.get('aria-disabled'), undefined, 'repo-b stays unlocked while repo-a syncs')
+    harness.keyDown(harness.document.activeElement, 'Escape')
+    await harness.settle()
+
+    // Switching back to repo-a restores its busy indicator until sync finishes.
+    select.props.onChange({ currentTarget: { value: '/repo-a' } })
+    await harness.settle()
+    assert.equal(body.querySelector('.vcs-sync').attributes.get('aria-busy'), 'true')
+    releaseSyncA()
+    await harness.settle()
+  } finally {
+    globalThis.fetch = savedFetch
+    fakeWin.restore()
+    harness.unmount()
+    restore()
+  }
+})
+
+test('BranchDialog, TagDialog, and CommitDialog cover blocked state, unmerged focus, delete-remote danger, and branch checkout UX', async () => {
+  const harness = createHarness({ width: 1000 })
+  const restore = harness.installGlobals()
+  try {
+    const { BranchDialog } = await loadClientModule('src/client/BranchDialogs.jsx', harness)
+    const { TagDialog } = await loadClientModule('src/client/TagDialog.jsx', harness)
+    const { CommitDialog } = await loadClientModule('src/client/CommitDialog.jsx', harness)
+    const body = harness.document.body
+
+    // BranchDialog delete-remote uses danger styling; blocked leaves Cancel active and closes on Escape.
+    let cancelled = 0
+    harness.mount(harness.react.createElement(BranchDialog, {
+      request: { kind: 'delete-remote', branch: 'origin/old' },
+      error: null,
+      busy: false,
+      blocked: true,
+      onCancel: () => { cancelled += 1 },
+      onConfirm: () => {},
+      t,
+    }))
+    await harness.settle()
+    const [cancelBtn, submitBtn] = body.querySelectorAll('.vcs-button')
+    assert.equal(textOf(body.querySelector('.vcs-dialog-busy')), 'error.busy')
+    assert.equal(cancelBtn.props.disabled, false, 'blocked keeps Cancel enabled')
+    assert.equal(submitBtn.attributes.get('aria-disabled'), 'true')
+    assert.equal(submitBtn.classList.contains('vcs-button-danger'), true, 'delete-remote has danger styling')
+    harness.keyDown(body.querySelector('.vcs-dialog'), 'Escape')
+    await harness.settle()
+    assert.equal(cancelled, 1, 'Escape closes a blocked dialog')
+
+    // Local delete bouncing as branch-unmerged moves focus back to Cancel.
+    harness.mount(harness.react.createElement(BranchDialog, {
+      key: 'unmerged-test',
+      request: { kind: 'delete', branch: 'topic' },
+      error: null,
+      busy: false,
+      onCancel: () => {},
+      onConfirm: () => {},
+      t,
+    }))
+    await harness.settle()
+    const btns = body.querySelectorAll('.vcs-button')
+    btns[1].focus()
+    assert.equal(harness.document.activeElement, btns[1])
+    harness.mount(harness.react.createElement(BranchDialog, {
+      key: 'unmerged-test',
+      request: { kind: 'delete', branch: 'topic' },
+      error: { code: 'branch-unmerged', message: 'unmerged' },
+      busy: false,
+      onCancel: () => {},
+      onConfirm: () => {},
+      t,
+    }))
+    await harness.settle()
+    assert.equal(harness.document.activeElement, body.querySelectorAll('.vcs-button')[0], 'unmerged bounce focuses Cancel')
+
+    // TagDialog also respects blocked while keeping Cancel clickable.
+    let tagCancelled = 0
+    harness.mount(harness.react.createElement(TagDialog, {
+      request: { kind: 'delete', tag: 'v1.0' },
+      error: null,
+      busy: false,
+      blocked: true,
+      remotes: { status: 'idle', list: [], truncated: false, error: null },
+      onCancel: () => { tagCancelled += 1 },
+      onConfirm: () => {},
+      t,
+    }))
+    await harness.settle()
+    assert.equal(textOf(body.querySelector('.vcs-dialog-busy')), 'error.busy')
+    assert.equal(body.querySelectorAll('.vcs-button')[1].attributes.get('aria-disabled'), 'true')
+    body.querySelectorAll('.vcs-button')[0].props.onClick()
+    assert.equal(tagCancelled, 1)
+
+    // CommitDialog reset only marks Hard as danger and shows commit preview.
+    const sha = 'f'.repeat(40)
+    harness.mount(harness.react.createElement(CommitDialog, {
+      key: 'reset-test',
+      request: { kind: 'reset', sha, shortSha: sha.slice(0, 7), current: 'main', subject: 'fix edge case' },
+      error: null,
+      busy: false,
+      onCancel: () => {},
+      onConfirm: () => {},
+      t,
+    }))
+    await harness.settle()
+    assert.equal(textOf(body.querySelector('.vcs-dialog-commit')), `${sha.slice(0, 7)}fix edge case`)
+    assert.equal(body.querySelectorAll('.vcs-button')[1].classList.contains('vcs-button-danger'), false, 'soft reset is not styled as danger')
+    body.querySelector('[id="vcs-reset-mode"]').props.onChange({ currentTarget: { value: 'hard' } })
+    await harness.settle()
+    assert.equal(body.querySelectorAll('.vcs-button')[1].classList.contains('vcs-button-danger'), true, 'hard reset uses danger styling')
+
+    // CommitDialog Create Branch submits { name, checkout: true } when checked.
+    let submitted = null
+    harness.mount(harness.react.createElement(CommitDialog, {
+      key: 'branch-test',
+      request: { kind: 'branch', sha, shortSha: sha.slice(0, 7), current: 'main', subject: 'fix edge case' },
+      error: null,
+      busy: false,
+      onCancel: () => {},
+      onConfirm: values => { submitted = values },
+      t,
+    }))
+    await harness.settle()
+    body.querySelector('[id="vcs-new-branch-name"]').props.onChange({ currentTarget: { value: 'topic' } })
+    body.querySelector('[id="vcs-new-branch-checkout"]').props.onChange({ currentTarget: { checked: true } })
+    await harness.settle()
+    body.querySelector('.vcs-dialog').props.onSubmit({ preventDefault() {} })
+    assert.deepEqual(submitted, { name: 'topic', checkout: true })
+  } finally {
+    harness.unmount()
+    restore()
   }
 })

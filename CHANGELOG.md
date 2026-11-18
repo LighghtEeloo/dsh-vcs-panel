@@ -2,6 +2,22 @@
 
 ## 未发布
 
+### 操作菜单、架构与交互打磨
+
+- 交互与可访问性：
+  - 提交详情工具栏里的分支、远程分支与标签徽标改为可点击且可键盘激活（`Enter`、`Space`、`Shift+F10`、右键）的按钮，打开同一 `RefActionsMenu` 并于关闭后归还焦点；时间线提交行超过 3 个引用时以 `+N` 提示并在详情头暴露全部可操作引用。
+  - 提交菜单的“创建分支”支持勾选“创建后立即检出”（经 `POST /api/vcs.commit-op` 的 `checkout: true` 执行 `git switch -c` 并重置旧阅读状态）。
+  - 提交菜单根据已加载祖先链（`reachableCommits` / `commitBranchRelation`）动态裁剪不适用的动作：`on-branch` 省略拣选/合并/变基，`off-branch` 省略丢弃，分页截断未知时保守保留。
+  - 当前分支无上游时，“推送分支”在操作菜单里保留但置为禁用（`aria-disabled`）并提示 `top.syncNoUpstream`；删除远程分支与硬重置（`Hard`）确认按钮使用危险样式，软重置/混合重置恢复普通样式；未合并本地分支删除升级为“仍然删除”时把焦点移回取消按钮；所有提交对话框显示短 ID 与提交摘要预览。
+  - 浮动菜单区分内部滚动与外部滚动：长菜单内部滚轮或方向键滚动不再关闭自己，`Tab` 移出菜单（`onBlur`）、外部点击/滚动或窗口尺寸变化时关闭，菜单按实测宽高做视口边界夹紧并设最大宽度。
+- 客户端架构：
+  - `src/client/locales.js` 拆分为 `src/client/locales/{en,zh,ja,es,fr,de,ru,pt}.js` 八个独立词典模块，保留聚合导出。
+  - 抽取 `src/client/useFloatingMenu.js`（统一 `TopBar` 分支列表与 `RefActionsMenu` 的关闭、键盘与滚动行为）与 `src/client/useRepoActions.js`（统一分支切换、同步与三类操作的状态机与按仓库隔离的 `inFlight` 单飞锁），同步结束在释放单飞锁前交接刷新状态以保持按钮连贯旋转；区分对话框自身写入（`busy`）与同仓库其他后台写入阻塞（`blocked`）。
+- 服务端架构与修复：
+  - 抽取共享 Git 工具 `lib/git-utils.js`（远程列表、分支上游读取、`--porcelain` 推送）与写前校验/冲突中止工具 `lib/ref-utils.js`，合并 `GitBackend` 分发接口（`branchOp` / `tagOp` / `commitOp`），`GET /api/vcs.commit` 并行读取并补齐 `current: true`、分离 `HEAD` 与 `remote`/`branch` 标注，与 `GET /api/vcs.log` 一致；`GET /api/vcs.remotes` 放开供 `branchOps` 与 `tagOps` 共用。
+- 测试与文案完整性：
+  - 修复历史重构遗留的重复/覆盖文案键与无用占位键（拆出 `top.readonlySyncBranchTag`），全部动态重置键改用静态查找表；`test/i18n.test.mjs` 新增重复键与全量反向死键校验；新增 `reachableCommits` / `commitBranchRelation` / `checkout` 与浮动菜单/交互徽标/多仓库并发/对话框交互等单元与组件测试。
+
 ### 布局
 
 - 顶部栏右端新增栏布局开关：按下时时间线与详情并排，抬起时一次只显示一栏，宽栏也可以把整宽留给 diff。

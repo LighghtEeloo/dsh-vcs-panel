@@ -57,3 +57,64 @@ export function indexCommits(commits, workingCopyNode = WORKING_COPY) {
   })
   return index
 }
+
+/**
+ * Walk parent links from `head` across loaded commits.
+ * `complete` is true when `head` is loaded and every encountered parent is also
+ * present in `commits`, meaning no unloaded history can hide an ancestor link.
+ * @param {Array<{ sha: string, parents?: string[] }>} commits - loaded commit rows.
+ * @param {string | null} head - the commit id HEAD points to.
+ * @returns {{ reachable: Set<string>, complete: boolean }} reachable commit ids and completeness.
+ */
+export function reachableCommits(commits, head) {
+  const reachable = new Set()
+  if (typeof head !== 'string' || head === '' || !Array.isArray(commits) || commits.length === 0) {
+    return { reachable, complete: false }
+  }
+  const bySha = new Map(commits.map(commit => [commit.sha, commit]))
+  if (!bySha.has(head)) return { reachable, complete: false }
+
+  const stack = [head]
+  let complete = true
+  while (stack.length > 0) {
+    const sha = stack.pop()
+    if (reachable.has(sha)) continue
+    const commit = bySha.get(sha)
+    if (commit === undefined) {
+      complete = false
+      continue
+    }
+    reachable.add(sha)
+    for (const parent of commit.parents ?? []) {
+      if (!reachable.has(parent)) stack.push(parent)
+    }
+  }
+  return { reachable, complete }
+}
+
+/**
+ * Classify whether one commit is an ancestor of `head`, strictly off the current
+ * branch, or uncertain due to an incomplete history frontier.
+ * @param {Array<{ sha: string, parents?: string[] }>} commits - loaded commits in topo order.
+ * @param {Map<string, number>} commitIndex - sha-to-index map.
+ * @param {string | null} head - the HEAD commit id.
+ * @param {string} sha - candidate commit id.
+ * @param {{ reachable: Set<string>, complete: boolean }} [reachability] - precomputed reachability from `head`.
+ * @returns {'on-branch' | 'off-branch' | 'unknown'} the commit's relation to `HEAD`.
+ */
+export function commitBranchRelation(
+  commits,
+  commitIndex,
+  head,
+  sha,
+  reachability = reachableCommits(commits, head),
+) {
+  if (typeof sha !== 'string' || sha === '') return 'unknown'
+  if (typeof head !== 'string' || head === '' || !commitIndex.has(head)) return 'unknown'
+  if (reachability.reachable.has(sha)) return 'on-branch'
+  const shaIndex = commitIndex.get(sha)
+  if (reachability.complete || (shaIndex !== undefined && shaIndex < commitIndex.get(head))) {
+    return 'off-branch'
+  }
+  return 'unknown'
+}

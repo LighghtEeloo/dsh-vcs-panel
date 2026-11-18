@@ -188,6 +188,7 @@
   flex-direction: column;
   box-sizing: border-box;
   width: 260px;
+  max-width: calc(100vw - 16px);
   max-height: min(360px, calc(100vh - 96px));
   padding: 6px;
   overflow-y: auto;
@@ -266,6 +267,7 @@
   flex-direction: column;
   box-sizing: border-box;
   width: 252px;
+  max-width: calc(100vw - 16px);
   max-height: min(420px, calc(100vh - 16px));
   padding: 6px;
   overflow-y: auto;
@@ -334,6 +336,16 @@
   white-space: nowrap;
 }
 
+.vcs-ref-ops-item[aria-disabled='true'] {
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary));
+  cursor: default;
+  opacity: 0.65;
+}
+
+.vcs-ref-ops-item[aria-disabled='true']:hover {
+  background: transparent;
+}
+
 .vcs-ref-ops-danger {
   color: var(--dsw-alias-state-error-primary);
 }
@@ -383,6 +395,43 @@
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   line-height: 18px;
+}
+
+.vcs-dialog-commit {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 0 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.vcs-dialog-commit code {
+  flex: none;
+  color: var(--dsw-alias-label-primary);
+}
+
+.vcs-dialog-commit span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcs-dialog-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.vcs-dialog-check input {
+  margin: 0;
 }
 
 .vcs-dialog-label {
@@ -758,6 +807,32 @@
 .vcs-ref-tag {
   color: var(--dsw-alias-state-warn-primary);
   border-color: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 55%, transparent);
+}
+
+.vcs-ref-button {
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  line-height: 15px;
+  cursor: pointer;
+}
+
+.vcs-ref-button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.vcs-ref-head.vcs-ref-button {
+  background: var(--dsw-alias-brand-primary);
+}
+
+.vcs-ref-head.vcs-ref-button:hover {
+  opacity: 0.9;
+}
+
+.vcs-ref-more {
+  color: var(--dsw-alias-label-secondary);
+  border-color: var(--dsw-alias-border-l1);
+  cursor: default;
 }
 
 /* Detail ------------------------------------------------------------------ */

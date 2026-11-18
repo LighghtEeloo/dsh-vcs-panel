@@ -1026,7 +1026,7 @@ test('commit returns metadata, refs, and a stat-ed file list', async () => {
   assert.equal(body.truncated, false)
   assert.equal(body.commit.sha, fixture.headSha)
   assert.deepEqual(body.commit.parents, [fixture.rootSha])
-  assert.deepEqual(body.commit.refs, [{ name: 'main', kind: 'branch' }])
+  assert.deepEqual(body.commit.refs, [{ name: 'main', kind: 'branch', current: true }])
   assert.equal(body.commit.author, 'Test User')
   assert.equal(typeof body.commit.authorTime, 'number')
   assert.equal(body.commit.committer, 'Test User')
@@ -1097,7 +1097,7 @@ test('commit compares a merge commit against its first parent', async () => {
   assert.equal(status, 200)
   assert.deepEqual(body.commit.parents, [fixture.mergeFirstParent, fixture.mergeSecondParent])
   assert.equal(body.commit.subject, 'merge side')
-  assert.deepEqual(body.commit.refs, [{ name: 'main', kind: 'branch' }])
+  assert.deepEqual(body.commit.refs, [{ name: 'main', kind: 'branch', current: true }])
   // Without an explicit two-tree diff, `git diff-tree <merge>` prints nothing;
   // the first-parent comparison is what makes the changed file appear.
   assert.deepEqual(body.commit.files, [
@@ -2651,6 +2651,19 @@ test('the log attaches remote and branch names to remote-tracking refs', async (
   })
   const branch = topic.refs.find(ref => ref.name === 'topic')
   assert.equal(branch.remote, undefined)
+
+  const commitDetail = await call(action.handlers.commit, route('/api/vcs.commit', { ...body, sha: action.topicSha }))
+  assert.equal(commitDetail.status, 200)
+  assert.deepEqual(
+    commitDetail.body.commit.refs.find(ref => ref.name === 'origin/remote-topic'),
+    { name: 'origin/remote-topic', kind: 'remote', remote: 'origin', branch: 'remote-topic' },
+  )
+  const mainDetail = await call(action.handlers.commit, route('/api/vcs.commit', { ...body, sha: action.mainSha }))
+  assert.equal(mainDetail.status, 200)
+  assert.deepEqual(
+    mainDetail.body.commit.refs.find(ref => ref.name === 'main'),
+    { name: 'main', kind: 'branch', current: true },
+  )
 })
 
 test('remote branch merge fast-forwards or stops without touching the branch', async () => {
@@ -2881,7 +2894,7 @@ test('a tag write blocks other writes and releases the lock with its answer', as
   let started = 0
   const gate = new Promise(resolve => { release = resolve })
   const gated = Object.create(real.get('git'))
-  gated.deleteTag = async () => {
+  gated.tagOp = async () => {
     started += 1
     await gate
     return { tag: 'v1' }
@@ -2964,6 +2977,30 @@ test('commit actions add lightweight and annotated tags and create branches with
   })
   assert.equal(branchInvalid.status, 400)
   assert.equal(branchInvalid.body.error.code, 'branch-invalid')
+
+  const badCheckout = await postCommitOp(action.handlers.commitOp, {
+    ...body, action: 'branch', sha: action.baseSha, name: 'bad-flag', checkout: 'yes',
+  })
+  assert.equal(badCheckout.status, 400)
+  assert.equal(badCheckout.body.error.code, 'bad-request')
+
+  writeFileSync(join(action.repo, 'base.txt'), 'dirty\n')
+  const blockedCheckout = await postCommitOp(action.handlers.commitOp, {
+    ...body, action: 'branch', sha: action.baseSha, name: 'blocked-co', checkout: true,
+  })
+  assert.equal(blockedCheckout.status, 409)
+  assert.equal(blockedCheckout.body.error.code, 'checkout-blocked')
+  assert.equal(git(action.repo, ['branch', '--list', 'blocked-co']), '')
+  assert.equal(git(action.repo, ['symbolic-ref', '--short', 'HEAD']), 'main')
+  git(action.repo, ['checkout', '-q', '--', 'base.txt'])
+
+  const checkedBranch = await postCommitOp(action.handlers.commitOp, {
+    ...body, action: 'branch', sha: action.baseSha, name: 'hotfix', checkout: true,
+  })
+  assert.equal(checkedBranch.status, 200)
+  assert.deepEqual(checkedBranch.body, { branch: 'hotfix', sha: action.baseSha, checkedOut: true })
+  assert.equal(git(action.repo, ['symbolic-ref', '--short', 'HEAD']), 'hotfix')
+  assert.equal(git(action.repo, ['rev-parse', 'HEAD']), action.baseSha)
 })
 
 test('commit checkout detaches HEAD and refuses a dirty-tree collision', async () => {

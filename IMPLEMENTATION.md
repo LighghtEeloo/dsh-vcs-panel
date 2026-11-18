@@ -13,17 +13,17 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 | `GET /api/vcs.repositories` | `sessionId` | `cwd`、`repositories[]`（`path`、`name`、`enclosing`、`vcs`、`capabilities`）、`truncated` |
 | `GET /api/vcs.status` | `sessionId`、`repo` | `repo`、`vcs`、`capabilities`、`defaultNode`、`branch`、`workingCopy?`、`groups`、`total`、`truncated` |
 | `GET /api/vcs.branches` | `sessionId`、`repo` | `branches[]`（`name`、`current`）、`truncated`（仅 `capabilities.branchSwitch` 为真时可用） |
-| `GET /api/vcs.remotes` | `sessionId`、`repo` | `remotes[]`、`truncated`（仅 `capabilities.tagOps` 为真时可用） |
+| `GET /api/vcs.remotes` | `sessionId`、`repo` | `remotes[]`、`truncated`（`capabilities.tagOps` 或 `capabilities.branchOps` 为真时可用） |
 | `GET /api/vcs.untracked` | `sessionId`、`repo`、`path`（`/` 结尾） | `path`、`entries[]`（`name`、`path`、`type`）、`truncated`（仅 `capabilities.untracked` 为真时可用） |
 | `GET /api/vcs.diff` | `sessionId`、`repo`、`scope`、`path`、`oldPath?`、`rev?` | `VcsFileDiff` |
 | `GET /api/vcs.log` | `sessionId`、`repo`、`ref`、`limit`、`skip` | `commits[]`、`truncated`、`nextSkip` |
-| `GET /api/vcs.commit` | `sessionId`、`repo`、`sha` | `commit`（`CommitDetail`，不含 patch）、`truncated` |
+| `GET /api/vcs.commit` | `sessionId`、`repo`、`sha` | `commit`（`CommitDetail`，不含 patch；`refs` 含 `current`、分离 `head` 及 `remote`/`branch` 标注）、`truncated` |
 | `GET /api/vcs.turn` | `sessionId`、`turn`、`seq?` | `turn`、`head`（`TurnHead \| null`）、`changed`、`added`、`deleted` |
 | `POST /api/vcs.sync` | JSON 请求体 `{ sessionId, repo }` | `upstream`、`pulled`、`pushed`（仅 `capabilities.sync` 为真时可用） |
 | `POST /api/vcs.switch` | JSON 请求体 `{ sessionId, repo, branch }` | `branch`（仅 `capabilities.branchSwitch` 为真时可用） |
 | `POST /api/vcs.branch` | JSON 请求体 `{ sessionId, repo, action, branch, name?, local?, force? }` | 本地：`rename` → `{ from, branch }`；`delete` → `{ branch }`；`merge` → `{ branch, current, result }`；`rebase` → `{ branch, current }`；`push` → `{ branch, upstream, pushed }`。远程：`checkout-remote` → `{ branch, local }`；`delete-remote` → `{ branch }`；`merge-remote` / `pull-remote` → `{ branch, current, result }`（仅 `capabilities.branchOps` 为真时可用） |
 | `POST /api/vcs.tag` | JSON 请求体 `{ sessionId, repo, action, tag, remote? }` | `delete` → `{ tag }`；`push` → `{ tag, remote, pushed }`（仅 `capabilities.tagOps` 为真时可用） |
-| `POST /api/vcs.commit-op` | JSON 请求体 `{ sessionId, repo, action, sha, name?, message?, mode? }` | `tag` → `{ tag, sha }`；`branch` → `{ branch, sha }`；`checkout` → `{ sha }`；`cherry-pick` / `revert` / `drop` / `rebase` → `{ sha, current }`；`merge` → `{ sha, current, result }`；`reset` → `{ sha, current, mode }`（仅 `capabilities.commitOps` 为真时可用） |
+| `POST /api/vcs.commit-op` | JSON 请求体 `{ sessionId, repo, action, sha, name?, message?, mode?, checkout? }` | `tag` → `{ tag, sha }`；`branch` → `{ branch, sha, checkedOut?: true }`；`checkout` → `{ sha }`；`cherry-pick` / `revert` / `drop` / `rebase` → `{ sha, current }`；`merge` → `{ sha, current, result }`；`reset` → `{ sha, current, mode }`（仅 `capabilities.commitOps` 为真时可用） |
 
 ### 输入校验与路径边界
 
@@ -32,7 +32,7 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 - **会话与仓库白名单**：`sessionId` 必须命中带有效 `header.cwd` 的活跃会话；`repo` 必须命中当次 `discoverRepositories` 的结果（`sameRepoPath`）。
 - **仓库发现与符号链接收敛**：从 `cwd` 向上最多 64 层查找最近的仓库标记，再扫描 `cwd` 下一层子目录（忽略 `node_modules`，不递归）。标记用 `lstat` 检测且 `.jj` 优先于 `.git`，兼容 linked worktree 的 `.git` 文件与 submodule。根路径经 `ctx.fs.resolve` 规范化，子仓库规范路径必须仍在 `cwd` 内；读取文件前再经 `containPath` 做 `realpath` 校验，确保目标留在仓库根内。
 - **路径与修订号净化**：`validateRelPath` 拒绝绝对路径、反斜杠、空段、`.`、`..`、`-` 前缀与控制字符，Git 侧再包 `:(literal)` pathspec，Jujutsu 侧用 `file:"..."` fileset。提交 ID 先做 7–64 位十六进制校验；Git 再经 `rev-parse --verify <sha>^{commit}` 解析，Jujutsu 仅接受 `@` 或十六进制 ID。
-- **写请求栅栏**：`vcs.sync`、`vcs.switch`、`vcs.branch`、`vcs.tag` 与 `vcs.commit-op` 只接受 `POST`，`content-type` 必须是 `application/json`（跨站页面不经 CORS 预检发不出），`Sec-Fetch-Site` 存在且不是 `same-origin` / `none` 时返回 `403 forbidden`；请求体中的 `sessionId` 与 `repo` 再走与读取相同的会话与仓库白名单。切换的 `branch` 与分支操作的 `branch`、`name`、`local` 必须是字符串：拒绝空串、超过 255 字符、空白或控制字符、`-` 前缀。`vcs.branch` 的 `action` 必须是 `rename`、`delete`、`merge`、`rebase`、`push`、`checkout-remote`、`delete-remote`、`merge-remote` 或 `pull-remote` 之一；`name` 只用于 `rename`，`local` 只用于 `checkout-remote`，`force` 只用于 `delete` 且必须是布尔值。本地分支操作的目标必须命中该仓库的本地分支列表；重命名与远程检出的新名字还要通过 `git check-ref-format refs/heads/<name>`。远程分支操作的目标必须由后端按 `git remote` 的最长远程名切分，并命中一个真实、非符号引用的 `refs/remotes/<remote>/<branch>`；不支持 `<remote>/HEAD`。删除只发送 `refs/heads/<branch>` 且不带 `--force`；拉取只抓取命名的 `refs/heads/<branch>` 到对应的 `refs/remotes/<remote>/<branch>`。`vcs.tag` 的 `action` 必须是 `delete` 或 `push`；`tag` 拒绝空串、超过 255 字符、空白或控制字符与 `-` 前缀，再通过 `git check-ref-format refs/tags/<name>` 并确认该 ref 存在；`push` 的 `remote` 必须命中 `git remote` 的结果。`vcs.commit-op` 的 `action` 必须是 `tag`、`branch`、`checkout`、`cherry-pick`、`revert`、`drop`、`merge`、`rebase` 或 `reset`；`sha` 为 7–64 位十六进制；`tag` / `branch` 的 `name` 复用引用名校验；`tag` 的 `message` 是长度不超过 4,000 的字符串；`reset` 的 `mode` 必须是 `soft`、`mixed` 或 `hard`。同一仓库根同时只允许一次写操作，第二次返回 `409 busy`；这些写互相排斥。
+- **写请求栅栏**：`vcs.sync`、`vcs.switch`、`vcs.branch`、`vcs.tag` 与 `vcs.commit-op` 只接受 `POST`，`content-type` 必须是 `application/json`（跨站页面不经 CORS 预检发不出），`Sec-Fetch-Site` 存在且不是 `same-origin` / `none` 时返回 `403 forbidden`；请求体中的 `sessionId` 与 `repo` 再走与读取相同的会话与仓库白名单。切换的 `branch` 与分支操作的 `branch`、`name`、`local` 必须是字符串：拒绝空串、超过 255 字符、空白或控制字符、`-` 前缀。`vcs.branch` 的 `action` 必须是 `rename`、`delete`、`merge`、`rebase`、`push`、`checkout-remote`、`delete-remote`、`merge-remote` 或 `pull-remote` 之一；`name` 只用于 `rename`，`local` 只用于 `checkout-remote`，`force` 只用于 `delete` 且必须是布尔值。本地分支操作的目标必须命中该仓库的本地分支列表；重命名与远程检出的新名字还要通过 `git check-ref-format refs/heads/<name>`。远程分支操作的目标必须由后端按 `git remote` 的最长远程名切分，并命中一个真实、非符号引用的 `refs/remotes/<remote>/<branch>`；不支持 `<remote>/HEAD`。删除只发送 `refs/heads/<branch>` 且不带 `--force`；拉取只抓取命名的 `refs/heads/<branch>` 到对应的 `refs/remotes/<remote>/<branch>`。`vcs.tag` 的 `action` 必须是 `delete` 或 `push`；`tag` 拒绝空串、超过 255 字符、空白或控制字符与 `-` 前缀，再通过 `git check-ref-format refs/tags/<name>` 并确认该 ref 存在；`push` 的 `remote` 必须命中 `git remote` 的结果。`vcs.commit-op` 的 `action` 必须是 `tag`、`branch`、`checkout`、`cherry-pick`、`revert`、`drop`、`merge`、`rebase` 或 `reset`；`sha` 为 7–64 位十六进制；`tag` / `branch` 的 `name` 复用引用名校验；`branch` 的可选 `checkout` 必须是布尔值；`tag` 的 `message` 是长度不超过 4,000 的字符串；`reset` 的 `mode` 必须是 `soft`、`mixed` 或 `hard`。同一仓库根同时只允许一次写操作，第二次返回 `409 busy`；这些写互相排斥。
 
 失败统一返回 `{ error: { code, message } }`，不携带宿主绝对路径、原始命令或堆栈：
 
@@ -81,7 +81,7 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 - **Git**：固定 `-c core.quotepath=false`，环境设 `GIT_CONFIG_COUNT=0`、`GIT_TERMINAL_PROMPT=0`、`GIT_OPTIONAL_LOCKS=0`；比较命令加 `--no-pager`、`--no-ext-diff`、`--no-color`、`-U3`。
 - **Jujutsu**：固定 `--color=never`、`--no-pager`，环境设 `JJ_EDITOR=true`；除工作副本快照外的读取均带 `--ignore-working-copy`。
 
-每个后端实现 `require`、`head`、`status`、`log`、`commit`、`diff`（可选 `untracked`、`sync`、`branches` / `switchBranch`、`renameBranch` / `deleteBranch` / `mergeBranch` / `rebaseBranch` / `pushBranch`、`remotes` / `deleteTag` / `pushTag`、`addTag` / `createBranch` / `checkoutCommit` / `cherryPickCommit` / `revertCommit` / `dropCommit` / `mergeCommit` / `rebaseCommit` / `resetCommit`）并声明 `capabilities`；Client 仅按能力对象驱动布局，不按后端名称分支：
+每个后端实现 `require`、`head`、`status`、`log`、`commit`、`diff`（可选 `untracked`、`sync`、`branches` / `switchBranch`、`branchOp`、`remotes` / `tagOp`、`commitOp`）并声明 `capabilities`；Client 仅按能力对象驱动布局，不按后端名称分支：
 
 | 能力字段 | Git | Jujutsu |
 | --- | --- | --- |
@@ -92,23 +92,23 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 
 两个后端的读写规则差异：
 
-- **Git**：`head` 仅读取 `symbolic-ref -q --short HEAD` 与 `rev-parse -q --verify HEAD^{commit}`，不扫描索引与工作区；`status` 组合 `status --porcelain=v2 -z --branch --untracked-files=normal` 与两次 `diff --numstat -z`（index 与工作区），按 `XY` 拆成 `staged`、`unstaged`、`untracked`（两侧均改时各出现一次，冲突标 `U`）。`diff` 按 `staged`（对 `HEAD`）、`unstaged`（对 index）、`untracked`（按新文件合成）、`commit`（对第一父，root 对空树）取值；空仓库读取 `HEAD` 日志视为空历史而非错误。
-- **Git 同步**（`lib/sync.js`）：从 `symbolic-ref` 与 `branch.<name>.remote` / `branch.<name>.merge` 读出分支与上游（远程名拒绝 `-` 前缀与控制字符，上游必须是 `refs/heads/…`），远程不是 `.` 时执行 `fetch --quiet <remote>`，再用 `rev-list --left-right --count HEAD...@{upstream}` 比较：两侧都有提交返回 `diverged`；只落后执行 `merge --ff-only --quiet @{upstream}`；只领先执行 `push --porcelain <remote> refs/heads/<branch>:<merge>`。不带 `--force`，不跳过钩子，抓取与推送使用远程命令超时。
-- **Git 分支切换**：`branches` 用 `for-each-ref --sort=-committerdate --count 501 --format=%(refname:short)%00%(HEAD) refs/heads` 读取本地分支，`current` 来自 `%(HEAD)`；只列 `refs/heads`，远程跟踪分支不在其中，也不会被检出为新的本地分支。`switchBranch` 先在同一列表中确认目标，再用 `git switch --no-guess --quiet <branch>`；不带 `--force`、不贮藏、不丢弃改动，Git 自己拒绝会覆盖本地或未跟踪文件的切换，该拒绝映射为 `switch-blocked`。目标已是当前分支时直接返回，不执行命令。
-- **Git 分支操作**（`lib/branch-ops.js`）：本地分支方法先在 `branches` 的结果里确认目标；当前分支上的删除直接返回 `branch-in-use`。
+- **Git**：`head` 仅读取 `symbolic-ref -q --short HEAD` 与 `rev-parse -q --verify HEAD^{commit}`，不扫描索引与工作区；`status` 组合 `status --porcelain=v2 -z --branch --untracked-files=normal` 与两次 `diff --numstat -z`（index 与工作区），按 `XY` 拆成 `staged`、`unstaged`、`untracked`（两侧均改时各出现一次，冲突标 `U`）。`diff` 按 `staged`（对 `HEAD`）、`unstaged`（对 index）、`untracked`（按新文件合成）、`commit`（对第一父，root 对空树）取值；空仓库读取 `HEAD` 日志视为空历史而非错误。`GitBackend.commit` 并行读取详情（`show`）、`HEAD` 符号/分支指向（`for-each-ref %(refname)%00%(HEAD)`、`symbolic-ref`、`rev-parse HEAD`）并在含远程引用时并行读取远程列表，为详情返回与 `log` 一致的 `current: true`、分离 `head` 及 `remote`/`branch` 标注。
+- **Git 共享底层工具**：`lib/git-utils.js` 复用 `listGitRemotes`、`remoteNames`（上限 500）、`readBranchUpstream` 与 `runPorcelainPush`；`lib/ref-utils.js` 复用 `RESET_MODES`、`refExists`、`validateRefFormat`、`requireLocalBranch`、`runAbortableOp`、`mergeRevisionIntoCurrent` 与 `rebaseCurrentOntoRevision`。
+- **Git 同步**（`lib/sync.js`）：复用 `readBranchUpstream` 与 `runPorcelainPush`，在远程不是 `.` 时执行 `fetch --quiet <remote>`，再用 `rev-list --left-right --count HEAD...@{upstream}` 比较：两侧都有提交返回 `diverged`；只落后执行 `merge --ff-only --quiet @{upstream}`；只领先推送且不带 `--force`，不跳过钩子，抓取与推送使用远程命令超时。
+- **Git 分支切换**：`branches` 用 `for-each-ref --sort=-committerdate --count 501 --format=%(refname:short)%00%(HEAD) refs/heads` 读取本地分支，`current` 来自 `%(HEAD)`；只列 `refs/heads`，远程跟踪分支不在其中，也不会被检出为新的本地分支。`switchBranch` 先用 `requireLocalBranch` 确认目标，再用 `git switch --no-guess --quiet <branch>`；不带 `--force`、不贮藏、不丢弃改动，Git 自己拒绝会覆盖本地或未跟踪文件的切换，该拒绝映射为 `switch-blocked`。目标已是当前分支时直接返回，不执行命令。
+- **Git 分支操作**（`lib/branch-ops.js`）：经 `runGitBranchOp` 统一分发；本地分支方法先经 `requireLocalBranch` 确认目标，当前分支上的删除直接返回 `branch-in-use`。
   远程分支方法先用 `remoteNames`（`git remote`）按最长远程名切分 `remote/branch`，再用 `for-each-ref` 确认 `refs/remotes/<remote>/<branch>` 存在且不是符号引用；`refs/remotes/<remote>/HEAD` 一律拒绝。
   `checkoutGitRemoteBranch` 用 `git switch --no-guess --quiet --track -c <local> refs/remotes/<remote>/<branch>` 创建跟踪本地分支并检出，本地名已存在或无效时分别返回 `branch-exists` / `branch-invalid`，切换受阻返回 `switch-blocked`。
   `deleteGitRemoteBranch` 执行 `git push --porcelain <remote> --delete refs/heads/<branch>`，成功后删除对应的远程跟踪引用；远程拒绝返回 `remote-failed`。
   `mergeGitRemoteBranch` 复用本地合并的冲突中止逻辑，只是目标 ref 换成远程跟踪引用。
   `pullGitRemoteBranch` 先用 `fetch --quiet <remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>` 更新该跟踪引用，再执行同一合并逻辑；抓取失败返回 `remote-failed`。
-  `renameGitBranch` 用 `check-ref-format refs/heads/<name>` 校验新名字、用 `rev-parse` 确认未占用，再执行 `git branch -m <old> <new>`（当前分支会随之移动 `HEAD` 的名称，upstream 配置由 Git 保留）。
+  `renameGitBranch` 经 `validateRefFormat` 校验并确认未占用，再执行 `git branch -m <old> <new>`（当前分支会随之移动 `HEAD` 的名称，upstream 配置由 Git 保留）。
   `deleteGitBranch` 默认执行 `git branch -d`；未完全合并时返回 `branch-unmerged`，只有请求带 `force: true`（来自“仍然删除”）才执行 `git branch -D`。
-  `mergeGitBranch` 在 `MERGE_HEAD` 已存在时拒绝触碰用户的合并；前置记录 `HEAD` 与目标 tip，执行 `git merge --no-edit --quiet <branch>`，按新 `HEAD` 与两端的关系返回 `up-to-date` / `fast-forward` / `merged`；失败时仅当本次命令留下 `MERGE_HEAD` 才执行 `git merge --abort`，随后返回 `merge-blocked`。
-  `rebaseGitBranch` 在 `REBASE_HEAD` 已存在时拒绝触碰用户的变基；执行 `git rebase <branch>`，失败时仅当本次命令留下 `REBASE_HEAD` 才执行 `git rebase --abort`，随后返回 `rebase-blocked`。
-  `pushGitBranch` 读取 `branch.<name>.remote` / `merge`（远程拒绝 `-` 前缀与控制字符，上游必须是 `refs/heads/…`），执行 `git push --porcelain <remote> refs/heads/<branch>:<merge>`；不抓取、不快进、不带 `--force`。porcelain 输出中除 `To …` 与 `Done` 外的引用行用于判断是否真的推送（`=` 表示已同步），远程拒绝返回 `remote-failed`。
-- **Git 标签操作**（`lib/tag-ops.js`）：`remotes` 读取 `git remote`，丢弃空名、空白/控制字符与 `-` 前缀的名字，最多列出 500 个。`deleteGitTag` 与 `pushGitTag` 先用 `check-ref-format refs/tags/<tag>` 校验名字、再用 `show-ref --verify --quiet` 确认标签存在；删除执行 `git tag --delete <tag>`，只移除本地 ref。推送把 `remote` 与 `git remote` 的结果逐字比对，再执行 `git push --porcelain <remote> refs/tags/<tag>:refs/tags/<tag>`；不带 `--force`，远程已有不同对象时返回 `tag-push-failed`。porcelain 中 `=` 表示已同步，其余引用行表示这次真的推送。
-- **Git 提交操作**（`lib/commit-ops.js`）：`addGitTag` 先用 `check-ref-format refs/tags/<name>` 校验并确认未占用，再执行 `git tag`；带 `message` 时创建附注标签。`createGitBranch` 校验 `refs/heads/<name>` 后用 `git branch <name> <sha>` 创建分支，不检出。`checkoutGitCommit` 执行 `git switch --detach --quiet <sha>`。`cherryPickGitCommit` / `revertGitCommit` 分别执行 `git cherry-pick <sha>` / `git revert --no-edit <sha>`，冲突时仅当命令留下 `CHERRY_PICK_HEAD` / `REVERT_HEAD` 才执行对应 `--abort`，返回 `commit-conflict`。`dropGitCommit` 要求目标在当前分支上、只有单父提交，执行 `git rebase --onto <parent> <sha> <branch>`；冲突时执行 `git rebase --abort`。`mergeGitCommit` / `rebaseGitCommit` 与分支版本使用同样的预检与中止规则，引用来自已解析的提交。`resetGitCommit` 只执行 `git reset --soft|--mixed|--hard <sha>`；Hard 是唯一会丢弃索引/工作区改动的路径，且必须由对话框明确选择。
-- **Git 远程引用标注**：`log` 解析 `refs/remotes/...` 后，若有远程引用则读取 `git remote`，用最长远程名给每个引用补上 `remote` 与 `branch`；`origin/HEAD` 这类符号引用不标注。时间线只对有这两个字段的远程徽标开放菜单，服务端仍会再次校验。
+  `mergeGitBranch` 与 `rebaseGitBranch` 复用 `mergeRevisionIntoCurrent` / `rebaseCurrentOntoRevision`，在 `MERGE_HEAD` / `REBASE_HEAD` 已存在时不触碰用户的操作，失败时仅当本次命令留下对应标志文件才中止，随后返回 `merge-blocked` / `rebase-blocked`。
+  `pushGitBranch` 复用 `readBranchUpstream` 与 `runPorcelainPush`；不抓取、不快进、不带 `--force`，远程拒绝返回 `remote-failed`。
+- **Git 标签操作**（`lib/tag-ops.js`）：经 `runGitTagOp` 统一分发；`remotes` 复用 `listGitRemotes` 读取并校验远程（最多 500 个）。`deleteGitTag` 与 `pushGitTag` 经 `validateRefFormat` 确认标签名并确认存在；删除执行 `git tag --delete <tag>`，只移除本地 ref。推送复用 `runPorcelainPush`（目标由 `remoteNames` 精确校验），不带 `--force`，远程已有不同对象时返回 `tag-push-failed`。
+- **Git 提交操作**（`lib/commit-ops.js`）：经 `runGitCommitOp` 统一分发；`addGitTag` 经 `validateRefFormat` 校验并确认未占用后创建轻量或附注标签。`createGitBranch` 校验 `refs/heads/<name>` 后，默认执行 `git branch <name> <sha>` 创建分支；当请求带 `checkout: true` 时改用 `git switch --no-guess --quiet -c <name> <sha>` 一步创建并检出（返回 `{ branch, sha, checkedOut: true }`），会被本地改动或未跟踪文件覆盖时返回 `checkout-blocked`。`checkoutGitCommit` 执行 `git switch --detach --quiet <sha>`。`cherryPickGitCommit` / `revertGitCommit` 复用 `runAbortableOp`，冲突时仅当留下 `CHERRY_PICK_HEAD` / `REVERT_HEAD` 才执行对应 `--abort`，返回 `commit-conflict`。`dropGitCommit` 要求目标在当前分支上、只有单父提交，经 `runAbortableOp` 执行 `git rebase --onto <parent> <sha> <branch>`。`mergeGitCommit` / `rebaseGitCommit` 与分支版本共用 `mergeRevisionIntoCurrent` / `rebaseCurrentOntoRevision`。`resetGitCommit` 只执行 `git reset --soft|--mixed|--hard <sha>`；Hard 是唯一会丢弃索引/工作区改动的路径，且必须由对话框明确选择。
+- **Git 远程引用标注**：`log` 与 `commit` 在解析 `refs/remotes/...` 后，若有远程引用则通过 `remoteNames` 复用最长远程名匹配，给每个引用补上 `remote` 与 `branch`；`origin/HEAD` 这类符号引用不标注。前端据此只对带这两个字段的远程徽标开放菜单，服务端仍会再次校验。
 - **Jujutsu**：每次 `status` 刷新执行一次 `jj log --no-graph -r @ -T commit_id` 快照工作副本（并发请求复用同一 Promise，失败清空缓存），其余读取（含轮末 `head` 读取 `change_id`）均带 `--ignore-working-copy` 复用已记录状态，不触发额外快照。`log` 使用 `::@ ~ root()` 或 `all() ~ root()`；`diff` 使用 `jj diff --git -r <rev>`，输出含 NUL 或 `U+FFFD` 时按二进制处理。
 - **每轮摘要与头指针记录**：`createTurnTracker`（`lib/turns.js`）监听活跃会话的 `session/event`、`agent/turn-stopping`、`tools/pre-execute` 与 `session/disposed`，在有工具执行或 `workspace/changes` 的轮次结束时串行读取外围仓库的 `head`（下一轮工具执行前等待上一轮完成，防止跨轮切分支串台）。`vcs.turn` 通过 `ctx.get('workspaceChanges')` 可选读取宿主的每轮 `{ total, added, deleted }`（校验 `turn` 与 `seq` 归属一致，剔除宿主路径与文件明细），并与该轮 `head` 合并返回；两者均不存在（如 Host 重启后的历史轮次）时返回 `404 not-found`。
 
@@ -230,7 +230,7 @@ type TurnSummary = {
 
 ### 构建与本地化
 
-`scripts/build.mjs` 用 esbuild 将 `src/client/entry.jsx` 打成单文件 CommonJS 产物 `client.js`（`--check` 校验产物是否最新），仅将宿主模块表提供的 `react` 与 `react/jsx-runtime` 设为 external，并在外层包裹 `window.__ModuleLoader__.load({ id, factory })`。CSS 以文本打入 bundle，挂载时注入单个 `<style>`，类名统一使用 `vcs-` 前缀。八种界面语言注册在 `vcs` 命名空间，插件列表展示名与描述位于 `locale/*.json`。
+`scripts/build.mjs` 用 esbuild 将 `src/client/entry.jsx` 打成单文件 CommonJS 产物 `client.js`（`--check` 校验产物是否最新），仅将宿主模块表提供的 `react` 与 `react/jsx-runtime` 设为 external，并在外层包裹 `window.__ModuleLoader__.load({ id, factory })`。CSS 以文本打入 bundle，挂载时注入单个 `<style>`，类名统一使用 `vcs-` 前缀。八种界面语言各自保存在 `src/client/locales/{zh,en,ja,es,fr,de,ru,pt}.js` 并由 `src/client/locales.js` 导出，注册到 `vcs` 命名空间；插件列表展示名与描述位于 `locale/*.json`。
 
 ### 宿主接缝
 
@@ -247,7 +247,7 @@ Client 顶层注入 `['slots', 'locale', 'uiConversation', 'sidebarRight', 'side
 
 `folds` 只为用户显式操作过的文件保存布尔值：空记录表示文件全部收起，也就是详情的默认形态。行键前缀白名单为 `staged|`、`unstaged|`、`commit|`；`sanitizeState` 在读取时丢弃未知字段与旧版遗留的 `untracked|` 键。数据刷新、折叠全部文件或收起吸顶文件头时，统一先记录锚点行与行内像素偏移，重排后恢复；锚点行未渲染时沿“文件行 → 父目录链 → 分组行”降级。
 
-顶部栏的分支菜单不进入持久化状态：每次打开菜单都重新读取本地分支（分支可能在面板外被创建或改名），上一份列表在重读期间保留。分支、远程分支、标签与提交操作菜单由 `VcsView` 持有与渲染（`RefActionsMenu`），顶部栏的分支控件、提交历史里的分支/远程分支/标签徽标和提交行都只上报被右键的 ref 或提交、指针位置与焦点归还目标；菜单的键盘、关闭与定位因此只有一份实现。分支、远程分支、标签与提交操作的对话框、错误与进行中状态也只留在内存；操作成功后关闭对话框、重新读取状态与历史，并让分支菜单下次打开时刷新分支列表。标签推送对话框在打开时读取 `/api/vcs.remotes`，关闭或切换仓库时中止这次读取；删除只移除本地标签，推送不强制，失败留在对话框里供重试或取消。提交操作中，检出与 Hard 重置成功后清空旧 HEAD 的选中节点、折叠、锚点与 diff 缓存；其余动作保留阅读位置，节点被改写时由详情的 `onMissing` 回退。切换成功后，选中节点、折叠记录、未跟踪目录展开、阅读锚点与 diff 缓存一并清空，由状态应答按新分支重新选择默认节点；切换被拒绝时只显示提示，视图保持原样。其他分支、远程分支、标签或提交操作成功后保留当前选中节点与阅读位置，节点若已被改写则由详情的 `onMissing` 回退到默认节点。
+顶部栏的分支菜单不进入持久化状态：每次打开菜单都重新读取本地分支（分支可能在面板外被创建或改名），上一份列表在重读期间保留。顶部栏分支列表与共享的 `RefActionsMenu` 共同复用 `useFloatingMenu.js`：统一处理外部指针按下、窗口尺寸变化、仅外部容器滚动（忽略菜单自身内部滚动）、Blur 失焦退出与浮动菜单键导航；`RefActionsMenu` 在 `useLayoutEffect` 实测宽高后做视口边界夹紧并设最大宽度。分支、远程分支、标签与提交操作状态均收敛在 `useRepoActions.js`（由 `VcsView` 持有），维护单一 `menu`、单一 `dialog`、共享的 `disabledActions` 禁用文案与按仓库区分的 `inFlight` 单飞映射（切换仓库时不丢失原仓库写入态）：弹窗自身写入中进行时传入 `busy` 锁定关闭，同仓库存在其他写入时传入 `blocked` 只禁用确认并显示 `error.busy` 而不阻断取消；同步写操作结束时在同一渲染批次先启动刷新再释放单飞锁，保持同步图标连贯转动。提交菜单打开前由 `reachableCommits` 与 `commitBranchRelation` 按已加载祖先关系裁剪不适用动作；提交历史中的分支/远程分支/标签徽标与提交行、顶部栏分支控件及详情头部可交互引用按钮（`RefBadge` `onRefActivate`，补充时间线每行最多 3 个徽标、超出展示 `+N` 的限制）均只上报目标与焦点归还元素。标签推送对话框打开时加载 `/api/vcs.remotes` 并在关闭或切换仓库时中止。检出（含创建分支立即检出）、远程检出、分支切换与 Hard 重置成功后清空旧 `HEAD` 阅读状态；其他写操作保留当前阅读位置，若节点已被改写则由详情的 `onMissing` 回退。
 
 ### 图布局与变更树管线
 

@@ -139,7 +139,7 @@ export function DetailPane({
   dirChildren, loadingDirs, dirs, collapsed, onToggleDir,
   folds, onToggleFold, onSetFolds, split, wrap, onToggleSplit, onToggleWrap,
   singleColumn, onBack, onLeaveNav, onSelectCommit, isLoaded, onMissing, onSettled,
-  revision, cache, initialAnchor, onReading, control, capabilities, t, locale,
+  revision, cache, initialAnchor, onReading, control, capabilities, onRefActions, t, locale,
 }) {
   const isWorktree = node === WORKTREE && capabilities?.workingCopy !== 'commit'
   const workingCopyNode = capabilities?.workingCopyNode ?? null
@@ -303,7 +303,13 @@ export function DetailPane({
               <code className="vcs-detail-change" title={t('commit.changeId')}>{shortChangeId(commitState.commit.changeId)}</code>
             ) : null}
             <span className="vcs-detail-refs">
-              {refs.map(reference => <RefBadge key={`${reference.kind}:${reference.name}`} reference={reference} />)}
+              {refs.map(reference => (
+                <RefBadge
+                  key={`${reference.kind}:${reference.name}`}
+                  reference={reference}
+                  onRefActivate={onRefActions}
+                />
+              ))}
             </span>
             {commitCounts === null ? null : (
               <span className="vcs-detail-stat">

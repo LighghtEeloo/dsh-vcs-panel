@@ -23,7 +23,9 @@ import {
 import { createQueue } from '../src/client/detail/queue.js'
 import { graphInput, headOf, nodeAt, rowOf, worktreeSummary } from '../src/client/history/timeline.js'
 import { ApiError, createApi, queryString } from '../src/client/api.js'
-import { hasSeveralAuthors, indexCommits, messageBody } from '../src/client/history/commits.js'
+import {
+  commitBranchRelation, hasSeveralAuthors, indexCommits, messageBody, reachableCommits,
+} from '../src/client/history/commits.js'
 
 /** A Map-backed Storage stand-in. */
 function fakeStorage() {
@@ -1278,4 +1280,109 @@ test('a loadable directory is not compressed into the directory above it', () =>
 
 test('the split fallback width is the documented one', () => {
   assert.equal(SPLIT_MIN_WIDTH, 640)
+})
+
+test('reachableCommits and commitBranchRelation classify on-branch, off-branch, and truncated ancestry', () => {
+  const root = '1'.repeat(40)
+  const mainMid = '2'.repeat(40)
+  const head = '3'.repeat(40)
+  const sideRootEnded = '4'.repeat(40)
+  const missingParent = '5'.repeat(40)
+  const truncatedAncestor = '6'.repeat(40)
+  const truncatedBeforeHead = '7'.repeat(40)
+
+  // Complete history from head down to root: head -> mainMid -> root, sideRootEnded -> root.
+  const completeCommits = [
+    { sha: sideRootEnded, parents: [root] },
+    { sha: head, parents: [mainMid] },
+    { sha: mainMid, parents: [root] },
+    { sha: root, parents: [] },
+  ]
+  const completeIndex = indexCommits(completeCommits, null)
+  const completeReach = reachableCommits(completeCommits, head)
+
+  assert.equal(completeReach.complete, true)
+  assert.equal(completeReach.reachable.has(head), true)
+  assert.equal(completeReach.reachable.has(mainMid), true)
+  assert.equal(completeReach.reachable.has(root), true)
+  assert.equal(completeReach.reachable.has(sideRootEnded), false)
+
+  assert.equal(commitBranchRelation(completeCommits, completeIndex, head, mainMid, completeReach), 'on-branch')
+  assert.equal(commitBranchRelation(completeCommits, completeIndex, head, root, completeReach), 'on-branch')
+  assert.equal(commitBranchRelation(completeCommits, completeIndex, head, sideRootEnded, completeReach), 'off-branch')
+
+  // Incomplete history: mainMid has an unloaded parent, so ancestry beyond mainMid is unknown.
+  const pagedCommits = [
+    { sha: truncatedBeforeHead, parents: [] },
+    { sha: head, parents: [mainMid] },
+    { sha: mainMid, parents: [missingParent] },
+    { sha: truncatedAncestor, parents: [] },
+  ]
+  const pagedIndex = indexCommits(pagedCommits, null)
+  const pagedReach = reachableCommits(pagedCommits, head)
+  assert.equal(pagedReach.complete, false)
+  assert.equal(
+    commitBranchRelation(pagedCommits, pagedIndex, head, truncatedBeforeHead, pagedReach),
+    'off-branch',
+    'a commit ordered before HEAD in topo order cannot be its ancestor even when paged',
+  )
+  assert.equal(
+    commitBranchRelation(pagedCommits, pagedIndex, head, truncatedAncestor, pagedReach),
+    'unknown',
+    'a commit below HEAD stays unknown when HEAD ancestry hits an unloaded parent',
+  )
+  assert.equal(
+    commitBranchRelation(pagedCommits, pagedIndex, null, mainMid, pagedReach),
+    'unknown',
+    'missing head keeps relation unknown',
+  )
+})
+
+test('commitActions prunes actions by commit branch relation', () => {
+  const commit = { sha: 'a'.repeat(40), parents: ['b'.repeat(40)] }
+  const head = 'c'.repeat(40)
+  assert.deepEqual(
+    commitActions({ commit, currentBranch: 'main', head, relation: 'on-branch' }),
+    ['add-tag', 'create-branch', 'checkout', 'revert', 'drop', 'reset'],
+    'an ancestor of HEAD skips cherry-pick, merge, and rebase',
+  )
+  assert.deepEqual(
+    commitActions({ commit, currentBranch: 'main', head, relation: 'off-branch' }),
+    ['add-tag', 'create-branch', 'checkout', 'cherry-pick', 'revert', 'merge', 'rebase', 'reset'],
+    'an off-branch commit omits drop',
+  )
+  assert.deepEqual(
+    commitActions({ commit, currentBranch: 'main', head, relation: 'unknown' }),
+    ['add-tag', 'create-branch', 'checkout', 'cherry-pick', 'revert', 'drop', 'merge', 'rebase', 'reset'],
+  )
+})
+
+test('commitOpMessage and createApi.commitOp handle branch checkout option', async () => {
+  const t = (key, vars) => `${key}:${JSON.stringify(vars ?? {})}`
+  const sha = 'a'.repeat(40)
+  const target = { sha, name: 'topic' }
+  assert.equal(
+    commitOpMessage(t, 'branch', target, { branch: 'topic', sha, checkedOut: true }),
+    `commit.branchCreatedCheckedOut:${JSON.stringify({ branch: 'topic', sha: sha.slice(0, 7) })}`,
+  )
+  assert.equal(
+    commitOpMessage(t, 'branch', target, { branch: 'topic', sha }),
+    `commit.branchCreated:${JSON.stringify({ branch: 'topic', sha: sha.slice(0, 7) })}`,
+  )
+
+  const calls = []
+  const savedFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, body: JSON.parse(init.body) })
+    return { ok: true, status: 200, async json() { return { branch: 'topic', sha, checkedOut: true } } }
+  }
+  try {
+    const api = createApi('session-1')
+    await api.commitOp('/repo', 'branch', { sha, name: 'topic', checkout: true })
+    await api.commitOp('/repo', 'branch', { sha, name: 'other' })
+    assert.equal(calls[0].body.checkout, true)
+    assert.equal('checkout' in calls[1].body, false)
+  } finally {
+    globalThis.fetch = savedFetch
+  }
 })
