@@ -20,7 +20,7 @@ import {
 } from './format.js'
 import {
   BACK, canClaimFocusFrom, findAncestor, hasClass, isDiscreteActionButton, isEditableTarget,
-  isNavigationStop, isOverlayOrMenuTarget, movement, rowStep, zoneOf,
+  isNavigationStop, isOverlayOrMenuTarget, isOverlayTarget, movement, rowStep, zoneOf,
 } from './keys.js'
 import { dirKey } from './detail/tree.js'
 import { buildGraph } from './history/layout.js'
@@ -1071,13 +1071,7 @@ export function VcsView({
   /** Route navigation keys from the panel root, buttons, or divider back to the active zone. */
   const onKeyDown = event => {
     if (event.defaultPrevented || event.isComposing === true || isEditableTarget(event.target) || hasOpenOverlay) return
-    if (findAncestor(event.target, rootRef.current, node => (
-      hasClass(node, 'vcs-dialog-layer')
-      || hasClass(node, 'vcs-branch-menu')
-      || hasClass(node, 'vcs-ref-ops')
-    )) !== null) {
-      return
-    }
+    if (isOverlayTarget(event.target, rootRef.current)) return
     if (isOverlayOrMenuTarget(event.target, rootRef.current)) {
       if (event.key === 'Escape') {
         event.preventDefault()

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   BACK, canClaimFocusFrom, DOWN, FORWARD, isDiscreteActionButton, isEditableTarget,
-  isNavigationStop, isOverlayOrMenuTarget, movement, rowStep, unmodified, UP, zoneOf,
+  isNavigationStop, isOverlayOrMenuTarget, isOverlayTarget, movement, rowStep, unmodified, UP, zoneOf,
 } from '../src/client/keys.js'
 
 test('movement maps arrows and vim keys to one direction', () => {
@@ -109,17 +109,18 @@ test('zoneOf, isNavigationStop, isOverlayOrMenuTarget, and isDiscreteActionButto
 
   const syncGlyph = stubNode('svg')
   const syncButton = stubNode('button', { classes: ['vcs-sync'], children: [syncGlyph] })
-  const branchButton = stubNode('button', { classes: ['vcs-branch', 'vcs-branch-button'] })
-  const refButton = stubNode('button', { classes: ['vcs-ref', 'vcs-ref-button'] })
+  const branchButton = stubNode('button', { attrs: { 'aria-haspopup': 'menu' } })
+  const refButton = stubNode('button', { attrs: { 'aria-haspopup': 'menu' } })
   const menuItem = stubNode('button', { classes: ['vcs-menu-item'] })
-  const branchMenu = stubNode('div', { classes: ['vcs-branch-menu'], children: [menuItem] })
+  const repoMenu = stubNode('div', { attrs: { role: 'menu' }, children: [menuItem] })
   const dialogCancel = stubNode('button', { classes: ['vcs-button'] })
   const dialogLayer = stubNode('div', { classes: ['vcs-dialog-layer'], children: [dialogCancel] })
-  const repoSelect = stubNode('select', { classes: ['vcs-repo-select'] })
+  const repoChevron = stubNode('svg')
+  const repoButton = stubNode('button', { attrs: { 'aria-haspopup': 'menu' }, children: [repoChevron] })
 
   const root = stubNode('div', {
     classes: ['vcs-root'],
-    children: [timelineScroll, treeScroll, syncButton, branchButton, refButton, branchMenu, dialogLayer, repoSelect],
+    children: [timelineScroll, treeScroll, syncButton, branchButton, refButton, repoMenu, dialogLayer, repoButton],
   })
 
   assert.equal(zoneOf(timelineIcon, root), 'timeline')
@@ -137,9 +138,14 @@ test('zoneOf, isNavigationStop, isOverlayOrMenuTarget, and isDiscreteActionButto
 
   assert.equal(isOverlayOrMenuTarget(branchButton, root), true)
   assert.equal(isOverlayOrMenuTarget(refButton, root), true)
+  assert.equal(isOverlayOrMenuTarget(repoChevron, root), true)
   assert.equal(isOverlayOrMenuTarget(menuItem, root), true)
   assert.equal(isOverlayOrMenuTarget(dialogCancel, root), true)
   assert.equal(isOverlayOrMenuTarget(syncButton, root), false)
+
+  assert.equal(isOverlayTarget(menuItem, root), true)
+  assert.equal(isOverlayTarget(dialogCancel, root), true)
+  assert.equal(isOverlayTarget(repoChevron, root), false)
 
   assert.equal(isDiscreteActionButton(syncButton, root), true)
   assert.equal(isDiscreteActionButton(syncGlyph, root), true)
@@ -149,7 +155,7 @@ test('zoneOf, isNavigationStop, isOverlayOrMenuTarget, and isDiscreteActionButto
   assert.equal(isDiscreteActionButton(refButton, root), false)
   assert.equal(isDiscreteActionButton(menuItem, root), false)
   assert.equal(isDiscreteActionButton(dialogCancel, root), false)
-  assert.equal(isDiscreteActionButton(repoSelect, root), false)
+  assert.equal(isDiscreteActionButton(repoChevron, root), false)
 })
 
 test('canClaimFocusFrom accepts idle/pane/VCS targets and refuses external inputs, other panes, and modals', () => {
@@ -161,10 +167,10 @@ test('canClaimFocusFrom accepts idle/pane/VCS targets and refuses external input
   doc.body.querySelectorAll = selector => (selector === '[aria-modal="true"]' ? modalNodes : [])
 
   const syncButton = stubNode('button', { classes: ['vcs-sync'] })
-  const repoSelect = stubNode('select', { classes: ['vcs-repo-select'] })
+  const repoButton = stubNode('button', { attrs: { 'aria-haspopup': 'menu' } })
   const menuItem = stubNode('button', { classes: ['vcs-menu-item'] })
-  const branchMenu = stubNode('div', { classes: ['vcs-branch-menu'], children: [menuItem] })
-  const root = stubNode('div', { classes: ['vcs-root'], children: [syncButton, repoSelect, branchMenu] })
+  const repoMenu = stubNode('div', { attrs: { role: 'menu' }, children: [menuItem] })
+  const root = stubNode('div', { classes: ['vcs-root'], children: [syncButton, repoButton, repoMenu] })
   const tabChip = stubNode('button', { attrs: { role: 'tab' } })
   const vcsPane = stubNode('div', { attrs: { 'data-dockkit-pane': 'right' }, children: [tabChip, root] })
 
@@ -176,7 +182,7 @@ test('canClaimFocusFrom accepts idle/pane/VCS targets and refuses external input
   const externalDialog = stubNode('div', { attrs: { role: 'dialog' }, children: [externalDialogBtn] })
   const externalModal = stubNode('div', { attrs: { 'aria-modal': 'true' } })
 
-  for (const node of [doc.body, doc.documentElement, vcsPane, tabChip, root, syncButton, repoSelect, branchMenu, menuItem, chatPane, chatTextarea, chatButton, turnBanner, externalDialog, externalDialogBtn, externalModal]) {
+  for (const node of [doc.body, doc.documentElement, vcsPane, tabChip, root, syncButton, repoButton, repoMenu, menuItem, chatPane, chatTextarea, chatButton, turnBanner, externalDialog, externalDialogBtn, externalModal]) {
     node.ownerDocument = doc
   }
 
@@ -190,8 +196,8 @@ test('canClaimFocusFrom accepts idle/pane/VCS targets and refuses external input
   assert.equal(canClaimFocusFrom(tabChip, root), true)
   assert.equal(canClaimFocusFrom(turnBanner, root), true)
 
-  // Refuses editable controls inside/outside, open menus, other panes, and modals.
-  assert.equal(canClaimFocusFrom(repoSelect, root), false)
+  // Refuses menu triggers, open menus, other panes, and modals.
+  assert.equal(canClaimFocusFrom(repoButton, root), false)
   assert.equal(canClaimFocusFrom(menuItem, root), false)
   assert.equal(canClaimFocusFrom(chatTextarea, root), false)
   assert.equal(canClaimFocusFrom(chatButton, root), false)

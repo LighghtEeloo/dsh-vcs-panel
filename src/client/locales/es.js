@@ -11,6 +11,7 @@ export default Object.freeze({
   "shortcut.toggle": "Alternar panel de VCS",
   "sidebar.guide": "Cambios en curso, diferencias e historial de commits.",
   "top.repositories": "Repositorio",
+  "top.repositoryLabel": "Repositorio: {name}",
   "top.worktrees": "Árboles de trabajo de Git",
   "top.worktreeSelection": "Árboles de trabajo · {count}",
   "top.sessionWorktree": "Sesión",

@@ -11,6 +11,7 @@ export default Object.freeze({
   "shortcut.toggle": "VCS パネルを切り替え",
   "sidebar.guide": "作業中の変更、差分、コミット履歴。",
   "top.repositories": "リポジトリ",
+  "top.repositoryLabel": "リポジトリ：{name}",
   "top.worktrees": "Git 作業ツリー",
   "top.worktreeSelection": "作業ツリー · {count}",
   "top.sessionWorktree": "セッション",

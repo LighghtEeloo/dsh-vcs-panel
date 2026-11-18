@@ -36,7 +36,7 @@
    outside its own edge, so the ring never covers the icon or label.
 
    Rows are stops of the panel's one cursor: timeline rows, change-tree rows,
-   hunk headers, and branch-menu items. Each draws its state on a rounded
+   hunk headers, and menu items. Each draws its state on a rounded
    pill inset from the edges and painted under its content, so a sticky row
    keeps its opaque band and the lane graph stays on top. The pill reads, in
    rising order: hover; current (the selected node or the row being read),
@@ -122,23 +122,8 @@
   overflow: hidden;
 }
 
-.vcs-repo-select {
-  max-width: 260px;
-  height: 26px;
-  padding: 0 8px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm, 6px);
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-1);
-  font: inherit;
-  font-size: 12px;
-}
-
-.vcs-repo-select:disabled {
-  opacity: 0.6;
-}
-
-.vcs-branch {
+.vcs-branch,
+.vcs-picker-button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -148,24 +133,27 @@
   white-space: nowrap;
 }
 
-.vcs-branch-name {
-  max-width: 160px;
+.vcs-branch-name,
+.vcs-picker-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* The branch control opens the local-branch menu. The menu is fixed because
-   the header clips its children, so it can hang below the bar. */
-.vcs-branch-wrap {
+.vcs-branch-name,
+.vcs-repo-button .vcs-picker-label {
+  max-width: 160px;
+}
+
+.vcs-picker-wrap {
   display: inline-flex;
   flex: none;
   min-width: 0;
+  max-width: min(240px, 100%);
 }
 
-.vcs-branch-button,
-.vcs-worktree-button {
+.vcs-picker-button {
   height: 26px;
-  max-width: 240px;
   padding: 0 6px;
   border: 0.5px solid transparent;
   border-radius: var(--dsw-radius-sm, 6px);
@@ -176,13 +164,19 @@
   cursor: pointer;
 }
 
-:is(.vcs-branch-button, .vcs-worktree-button):hover,
-:is(.vcs-branch-button, .vcs-worktree-button)[aria-expanded='true'] {
+.vcs-picker-button:hover:enabled,
+.vcs-picker-button[aria-expanded='true'] {
   border-color: var(--dsw-alias-border-l2);
   background: var(--dsw-alias-bg-layer-1);
 }
 
-.vcs-branch-menu {
+.vcs-picker-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Fixed so the menu can hang below the clipped header. */
+.vcs-picker-menu {
   position: fixed;
   z-index: 1000;
   display: flex;
@@ -201,18 +195,18 @@
   font-size: 12px;
 }
 
-.vcs-branch-menu:focus {
+.vcs-picker-menu:focus {
   outline: none;
 }
 
-.vcs-branch-menu-title {
+.vcs-picker-menu-title {
   margin: 2px 6px 6px;
   color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary));
   font-size: 11px;
   font-weight: 500;
 }
 
-.vcs-branch-menu-note {
+.vcs-picker-menu-note {
   margin: 2px 6px 6px;
   color: var(--dsw-alias-label-secondary);
 }
@@ -255,10 +249,7 @@
   height: 12px;
 }
 
-.vcs-worktree-button {
-  white-space: nowrap;
-}
-
+.vcs-repo-item,
 .vcs-worktree-item {
   min-height: 32px;
   height: auto;
@@ -269,7 +260,7 @@
   cursor: default;
 }
 
-.vcs-worktree-item small {
+.vcs-menu-item-name small {
   display: block;
   overflow: hidden;
   color: var(--dsw-alias-label-secondary);
@@ -1689,7 +1680,7 @@
   flex: 1 1 120px;
 }
 
-.vcs-root[data-narrow] .vcs-repo-select {
+.vcs-root[data-narrow] .vcs-repo-button {
   max-width: 150px;
 }
 

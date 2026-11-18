@@ -160,20 +160,26 @@ export function isNavigationStop(element, stop = null) {
 }
 
 /**
- * Whether `element` lives inside a modal dialog, floating menu, or the branch
- * or worktree picker that owns its own dropdown keyboard behavior.
+ * Whether this element is a panel overlay, which owns its keyboard behavior.
+ */
+function isOverlay(node) {
+  return hasClass(node, 'vcs-dialog-layer') || hasAttr(node, 'role', 'menu')
+}
+
+/** Whether `element` lives inside a panel dialog or floating menu. */
+export function isOverlayTarget(element, stop = null) {
+  return findAncestor(element, stop, isOverlay) !== null
+}
+
+/**
+ * Whether `element` lives inside a dialog, floating menu, or menu trigger.
  * @param {unknown} element - candidate element.
  * @param {unknown} [stop=null] - panel root boundary.
  * @returns {boolean} true for overlay/menu controls.
  */
 export function isOverlayOrMenuTarget(element, stop = null) {
   return findAncestor(element, stop, node => (
-    hasClass(node, 'vcs-dialog-layer')
-    || hasClass(node, 'vcs-branch-menu')
-    || hasClass(node, 'vcs-ref-ops')
-    || hasClass(node, 'vcs-branch-button')
-    || hasClass(node, 'vcs-worktree-button')
-    || hasClass(node, 'vcs-ref-button')
+    isOverlay(node) || hasAttr(node, 'aria-haspopup', 'menu')
   )) !== null
 }
 
@@ -219,14 +225,7 @@ export function canClaimFocusFrom(active, root) {
     return true
   }
   if (root.contains?.(active)) {
-    if (findAncestor(active, root, node => (
-      hasClass(node, 'vcs-dialog-layer')
-      || hasClass(node, 'vcs-branch-menu')
-      || hasClass(node, 'vcs-ref-ops')
-    )) !== null) {
-      return false
-    }
-    return !isEditableTarget(active)
+    return !isEditableTarget(active) && !isOverlayOrMenuTarget(active, root)
   }
   if (hasClass(active, 'vcs-turn-banner') || hasAttr(active, 'data-dockkit-pane') || hasAttr(active, 'data-dockkit-float')) {
     return true

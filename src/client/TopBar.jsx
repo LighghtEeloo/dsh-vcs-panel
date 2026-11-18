@@ -1,5 +1,5 @@
 /**
- * The panel header, left to right: repository choice, history range,
+ * The panel header, left to right: repository and worktree choices, history range,
  * working-state facts with sync and branch switching, the panel's message,
  * then the column layout toggle, the read-only marker, and refresh.
  *
@@ -35,10 +35,21 @@ const FALLBACK_RANGES = [
 /** Ref badges shown in the header before the rest are left to the timeline. */
 const HEADER_REFS = 3
 
-/** Width of the branch menu in CSS pixels, and its viewport inset. */
+/** Width of a header picker menu in CSS pixels, and its viewport inset. */
 const MENU_WIDTH = 260
 const MENU_MARGIN = 8
 const MENU_GAP = 6
+
+/** A fixed position lets the menu hang below the clipped header. */
+function pickerPosition(trigger) {
+  const rect = trigger?.getBoundingClientRect()
+  if (rect === undefined) return null
+  const viewport = typeof window === 'undefined' ? rect.left + MENU_WIDTH + MENU_MARGIN : window.innerWidth
+  return {
+    left: Math.max(MENU_MARGIN, Math.min(rect.left, viewport - MENU_WIDTH - MENU_MARGIN)),
+    top: rect.bottom + MENU_GAP,
+  }
+}
 
 /** Ahead/behind counts as two small arrows; zero sides are left out. */
 function AheadBehind({ ahead, behind }) {
@@ -101,13 +112,7 @@ function BranchSwitcher({
       return
     }
     openedByKeyboardRef.current = keyboard || (event !== undefined && event.detail === 0)
-    const rect = triggerRef.current?.getBoundingClientRect()
-    if (rect !== undefined) {
-      const viewport = typeof window === 'undefined' ? rect.left + MENU_WIDTH + MENU_MARGIN * 2 : window.innerWidth
-      const left = Math.max(MENU_MARGIN, Math.min(rect.left, viewport - MENU_WIDTH - MENU_MARGIN))
-      const bottom = rect.bottom ?? (rect.top + rect.height)
-      setPosition({ left, top: bottom + MENU_GAP })
-    }
+    setPosition(pickerPosition(triggerRef.current))
     setOpen(true)
     onOpen()
   }
@@ -131,11 +136,11 @@ function BranchSwitcher({
   }, [branchesStatus, open])
 
   return (
-    <span className="vcs-branch-wrap" onBlur={onWrapBlur}>
+    <div className="vcs-picker-wrap" onBlur={onWrapBlur}>
       <button
         ref={triggerRef}
         type="button"
-        className="vcs-branch vcs-branch-button"
+        className="vcs-picker-button vcs-branch-button"
         aria-haspopup="menu"
         aria-expanded={open ? 'true' : undefined}
         aria-label={t('top.switchBranchLabel', { branch: branchText })}
@@ -176,22 +181,22 @@ function BranchSwitcher({
       {open && position !== null ? (
         <div
           ref={menuRef}
-          className="vcs-branch-menu"
+          className="vcs-picker-menu vcs-branch-menu"
           role="menu"
           aria-label={t('top.switchBranch')}
           tabIndex={-1}
-          style={{ left: `${position.left}px`, top: `${position.top}px` }}
+          style={position}
           onKeyDown={onMenuKeyDown}
         >
-          <p className="vcs-branch-menu-title">{t('top.switchBranch')}</p>
+          <p className="vcs-picker-menu-title">{t('top.switchBranch')}</p>
           {branchesStatus === 'loading' ? (
-            <p className="vcs-branch-menu-note">{t('switch.loading')}</p>
+            <p className="vcs-picker-menu-note">{t('switch.loading')}</p>
           ) : null}
           {branchesStatus === 'error' ? (
-            <p className="vcs-branch-menu-note" role="alert">{errorMessage(t, branchesError)}</p>
+            <p className="vcs-picker-menu-note" role="alert">{errorMessage(t, branchesError)}</p>
           ) : null}
           {branchesStatus === 'ready' && branches.length === 0 ? (
-            <p className="vcs-branch-menu-note">{t('switch.empty')}</p>
+            <p className="vcs-picker-menu-note">{t('switch.empty')}</p>
           ) : null}
           {branches.map(entry => (
             <button
@@ -232,78 +237,146 @@ function BranchSwitcher({
             </button>
           ))}
           {branchesTruncated ? (
-            <p className="vcs-branch-menu-note">
+            <p className="vcs-picker-menu-note">
               {t('switch.truncated', { count: formatCount(branches.length, locale) })}
             </p>
           ) : null}
         </div>
       ) : null}
-    </span>
+    </div>
+  )
+}
+
+/** An anchored menu for choices already loaded. Its rows decide when to close. */
+function HeaderPicker({ kind, label, summary, buttonLabel, title, disabled = false, dismissOnScroll, children }) {
+  const [position, setPosition] = useState(null)
+  const triggerRef = useRef(null)
+  const menuRef = useRef(null)
+  const open = position !== null && !disabled
+  const close = useCallback(restore => {
+    if (restore) triggerRef.current?.focus({ preventScroll: true })
+    setPosition(null)
+  }, [])
+  const { onKeyDown, onBlur } = useFloatingMenu({
+    open,
+    triggerRef,
+    menuRef,
+    itemSelector: '[aria-checked]',
+    onClose: close,
+    dismissOnScroll,
+  })
+  const showMenu = () => { if (!disabled) setPosition(pickerPosition(triggerRef.current)) }
+  useEffect(() => {
+    if (disabled) close(false)
+    if (!open) return undefined
+    const frame = requestAnimationFrame(() => {
+      const menu = menuRef.current
+      const target = menu?.querySelector('[aria-checked="true"]') ?? menu?.querySelector('[aria-checked]') ?? menu
+      target?.focus()
+    })
+    return () => { cancelAnimationFrame(frame) }
+  }, [close, disabled, open])
+
+  return (
+    <div className="vcs-picker-wrap" onBlur={onBlur}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`vcs-picker-button vcs-${kind}-button`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={buttonLabel}
+        title={title}
+        disabled={disabled}
+        onClick={() => { if (open) close(true); else showMenu() }}
+        onKeyDown={event => {
+          if (disabled || open || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return
+          event.preventDefault()
+          showMenu()
+        }}
+      >
+        <span className="vcs-picker-label">{summary}</span>
+        <Chevron open={open} />
+      </button>
+      {open ? (
+        <div
+          ref={menuRef}
+          className={`vcs-picker-menu vcs-${kind}-menu`}
+          role="menu"
+          aria-label={label}
+          tabIndex={-1}
+          style={position}
+          onKeyDown={event => {
+            // Backward Tab lands on the trigger, inside the same blur boundary.
+            if (event.key === 'Tab' && event.shiftKey) {
+              event.preventDefault()
+              close(true)
+              return
+            }
+            onKeyDown(event)
+          }}
+        >
+          <p className="vcs-picker-menu-title">{label}</p>
+          {children(close)}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** The repository choice is exclusive; activating a row closes the menu. */
+function RepositoryPicker({ repositories, repo, onRepoChange, t }) {
+  const current = repositories.find(entry => entry.path === repo)
+  const summary = current?.name ?? t('top.noRepository')
+  return (
+    <HeaderPicker
+      kind="repo"
+      label={t('top.repositories')}
+      summary={summary}
+      buttonLabel={current === undefined ? undefined : t('top.repositoryLabel', { name: summary })}
+      title={current?.path}
+      disabled={repositories.length === 0}
+    >
+      {close => repositories.map(entry => {
+        const selected = entry.path === repo
+        return (
+          <button
+            key={entry.path}
+            type="button"
+            role="menuitemradio"
+            className="vcs-menu-item vcs-repo-item"
+            tabIndex={-1}
+            aria-checked={selected}
+            title={entry.path}
+            onClick={event => {
+              const fromPointer = event.detail > 0
+              if (!selected) onRepoChange(entry.path, fromPointer)
+              close(selected || !fromPointer)
+            }}
+          >
+            <span className="vcs-menu-item-name">
+              {entry.name}
+              {entry.enclosing ? null : <small>{entry.path}</small>}
+            </span>
+            {selected ? <CheckIcon /> : null}
+          </button>
+        )
+      })}
+    </HeaderPicker>
   )
 }
 
 /** A checklist changes the display only; keep it open for successive checks. */
 function WorktreeChecklist({ worktrees, checkedPaths, sessionPath, onToggle, t, locale }) {
-  const [position, setPosition] = useState(null)
-  const triggerRef = useRef(null)
-  const menuRef = useRef(null)
-  const close = useCallback(restore => {
-    setPosition(null)
-    if (restore) triggerRef.current?.focus({ preventScroll: true })
-  }, [])
-  const { onKeyDown, onBlur } = useFloatingMenu({
-    open: position !== null,
-    triggerRef,
-    menuRef,
-    itemSelector: '[data-worktree-item]',
-    onClose: close,
-    dismissOnScroll: false,
-  })
-  const open = () => {
-    const rect = triggerRef.current?.getBoundingClientRect()
-    if (rect === undefined) return
-    const viewport = typeof window === 'undefined' ? rect.left + MENU_WIDTH + MENU_MARGIN : window.innerWidth
-    const left = Math.max(MENU_MARGIN, Math.min(rect.left, viewport - MENU_WIDTH - MENU_MARGIN))
-    setPosition({ left, top: rect.bottom + MENU_GAP })
-  }
-  useEffect(() => {
-    if (position === null) return undefined
-    const frame = requestAnimationFrame(() => {
-      const target = menuRef.current?.querySelector('[aria-checked="true"]') ?? menuRef.current
-      target?.focus({ preventScroll: true })
-    })
-    return () => { cancelAnimationFrame(frame) }
-  }, [position])
-
   return (
-    <span className="vcs-branch-wrap" onBlur={onBlur}>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="vcs-branch vcs-worktree-button"
-        aria-haspopup="menu"
-        aria-expanded={position !== null}
-        onClick={() => { if (position === null) open(); else close(true) }}
-        onKeyDown={event => {
-          if (position !== null || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return
-          event.preventDefault()
-          open()
-        }}
-      >
-        {t('top.worktreeSelection', { count: formatCount(checkedPaths.length, locale) })}
-        <Chevron open={position !== null} />
-      </button>
-      {position !== null ? (
-        <div
-          ref={menuRef}
-          className="vcs-branch-menu vcs-worktree-menu"
-          role="menu"
-          aria-label={t('top.worktrees')}
-          tabIndex={-1}
-          style={{ left: `${position.left}px`, top: `${position.top}px` }}
-          onKeyDown={onKeyDown}
-        >
-          <p className="vcs-branch-menu-title">{t('top.worktrees')}</p>
+    <HeaderPicker
+      kind="worktree"
+      label={t('top.worktrees')}
+      summary={t('top.worktreeSelection', { count: formatCount(checkedPaths.length, locale) })}
+      dismissOnScroll={false}
+    >
+      {() => (
+        <>
           {worktrees.map(tree => {
             const checked = checkedPaths.includes(tree.path)
             const last = checked && checkedPaths.length === 1
@@ -330,10 +403,10 @@ function WorktreeChecklist({ worktrees, checkedPaths, sessionPath, onToggle, t, 
               </button>
             )
           })}
-          <p className="vcs-branch-menu-note">{t('top.keepWorktree')}</p>
-        </div>
-      ) : null}
-    </span>
+          <p className="vcs-picker-menu-note">{t('top.keepWorktree')}</p>
+        </>
+      )}
+    </HeaderPicker>
   )
 }
 
@@ -390,7 +463,6 @@ export function TopBar({
   onRestoreFocus = () => {}, switching = false, branchBusy = null, tagBusy = null, commitBusy = null, notice,
   twoColumns = true, twoColumnsFit = true, onTwoColumns = () => {}, t, locale,
 }) {
-  const repoPointerRef = useRef(false)
   // Work on data already on screen shows as one thin bar under the header,
   // whether the user asked for it (refresh, sync, switch, a branch, tag, or
   // commit action) or the panel did (a refresh on becoming visible); the
@@ -446,26 +518,7 @@ export function TopBar({
   }
   return (
     <div className="vcs-topbar">
-      <select
-        className="vcs-repo-select"
-        aria-label={t('top.repositories')}
-        value={repo ?? ''}
-        disabled={repositories.length === 0}
-        onPointerDown={() => { repoPointerRef.current = true }}
-        onMouseDown={() => { repoPointerRef.current = true }}
-        onKeyDown={() => { repoPointerRef.current = false }}
-        onChange={event => {
-          const fromPointer = repoPointerRef.current
-          repoPointerRef.current = false
-          onRepoChange(event.currentTarget.value === '' ? null : event.currentTarget.value, fromPointer)
-          if (fromPointer) event.currentTarget.blur?.()
-        }}
-      >
-        {repositories.length === 0 ? <option value="">{t('top.noRepository')}</option> : null}
-        {repositories.map(entry => (
-          <option key={entry.path} value={entry.path}>{entry.enclosing ? entry.name : `${entry.name}  (${entry.path})`}</option>
-        ))}
-      </select>
+      <RepositoryPicker repositories={repositories} repo={repo} onRepoChange={onRepoChange} t={t} />
       {worktrees.length > 0 ? (
         <WorktreeChecklist key={repo} worktrees={worktrees} checkedPaths={checkedPaths} sessionPath={sessionPath}
           onToggle={onToggleWorktree} t={t} locale={locale} />

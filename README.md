@@ -7,7 +7,7 @@ Version control in the DeepSeek Harness right Sidebar. Adds a `VCS` tab to inspe
 ## Features
 
 - **In the Sidebar.** The panel lives in a `VCS` tab beside files and terminals, with a card on the Sidebar guide. The Turn banner and the shortcut open the same tab. A header toggle shows the timeline beside the changes, or one column at a time so a wide Sidebar gives the diff its full width.
-- **Timeline & lane graph.** Browse working changes and topological commit history together, with branches, bookmarks, and tags. The **Repository** dropdown switches between repositories in a workspace.
+- **Timeline & lane graph.** Browse working changes and topological commit history together, with branches, bookmarks, and tags. Click the repository name in the header to switch repositories.
 - **Git worktrees on one graph.** Use **Worktrees** to check one or more checkouts; the session worktree is selected by default. Each checked worktree has its own staged, unstaged, and untracked changes above the shared graph. Switch between **Selected worktrees** and **All commits**; viewing multiple worktrees is read-only and leaves your session directory and branches unchanged.
 - **Inline change tree.** Browse changed files as a collapsible list, or expand any file to read its diff in place with sticky headers, unified or split view, and line wrapping.
 - **Git & Jujutsu native.** Shows staged and unstaged groups (untracked items marked `U`, new additions `A`) and ahead/behind in Git; shows `@`, change IDs, and bookmarks in Jujutsu.
@@ -29,7 +29,7 @@ Version control in the DeepSeek Harness right Sidebar. Adds a `VCS` tab to inspe
 | `PageUp` `PageDown`, `Home` `End` | Page through or jump to the ends of the timeline or change tree |
 | `←` `→` or `h` `l` | Enter the change tree, expand a row, or step into an open file's first hunk; `←` / `h` closes an open file first, then returns to the timeline |
 | `Enter`, `Space`, `Esc` | Fold/expand the focused row or activate a ref badge in the detail header; `Esc` returns to the timeline |
-| `↑` `↓`, `Home` `End` | Move inside the open branch menu or branch/remote-branch/tag/commit actions menu; `Esc` closes it |
+| `↑` `↓`, `Home` `End` | Move inside an open repository, worktree, branch, or actions menu; `Esc` closes it |
 | Right-click / `Shift+F10` | Right-click or activate a branch, remote-branch, or tag badge for its actions; press `Shift+F10` on the branch control for branch actions or on a commit row for commit actions |
 | `Enter`, `Esc` | Confirm or cancel a branch, remote-branch, tag, or commit action dialog |
 | `[` / `]` | Move to the previous / next tree row, skipping hunk headers |

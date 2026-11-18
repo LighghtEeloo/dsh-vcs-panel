@@ -1,6 +1,6 @@
 /**
  * Shared floating-menu dismissal, blur-exit, and roving keyboard navigation
- * used by both the header's local branch menu and the shared actions menu.
+ * used by the header pickers and the shared actions menu.
  */
 
 import { useEffect } from 'react'

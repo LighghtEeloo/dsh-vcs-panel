@@ -2289,6 +2289,89 @@ test('Timeline +N overflow pill pairs with clickable/keyboard DetailPane ref bad
   }
 })
 
+test('TopBar repository pill keeps one checked path and returns keyboard focus to its trigger', async () => {
+  const harness = createHarness({ width: 300 })
+  const restore = harness.installGlobals()
+  try {
+    const { TopBar } = await loadClientModule('src/client/TopBar.jsx', harness)
+    const repositories = [
+      { path: '/shared', name: 'shared', enclosing: true },
+      { path: '/shared/shared', name: 'shared', enclosing: false },
+    ]
+    const calls = []
+    const render = list => harness.mount(harness.react.createElement(TopBar, {
+      repositories: list,
+      repo: repositories[1].path,
+      onRepoChange: (...args) => { calls.push(args) },
+      t,
+    }))
+    const body = harness.document.body
+    const menu = () => body.querySelector('.vcs-repo-menu')
+    render(repositories)
+    const trigger = body.querySelector('.vcs-repo-button')
+    assert.equal(textOf(trigger), 'shared')
+    assert.equal(trigger.attributes.get('title'), '/shared/shared')
+    assert.equal(trigger.attributes.get('aria-haspopup'), 'menu')
+    assert.equal(trigger.attributes.get('aria-expanded'), 'false')
+
+    trigger.focus()
+    harness.keyDown(trigger, 'ArrowDown')
+    await harness.settle()
+    const [first, current] = menu().querySelectorAll('[role="menuitemradio"]')
+    assert.equal(trigger.attributes.get('aria-expanded'), 'true')
+    assert.equal(menu().attributes.get('aria-label'), 'top.repositories')
+    assert.equal(first.attributes.get('aria-checked'), 'false')
+    assert.equal(current.attributes.get('aria-checked'), 'true')
+    assert.match(textOf(current), /\/shared\/shared/u, 'the path distinguishes same-named repositories')
+    assert.equal(harness.document.activeElement, current)
+
+    harness.keyDown(current, 'Home')
+    assert.equal(harness.document.activeElement, first)
+    harness.keyDown(first, 'End')
+    assert.equal(harness.document.activeElement, current)
+    harness.keyDown(current, 'ArrowUp')
+    assert.equal(harness.document.activeElement, first)
+    harness.keyDown(first, 'Escape')
+    assert.equal(harness.document.activeElement, trigger)
+    assert.equal(menu(), null)
+    assert.deepEqual(calls, [])
+
+    harness.keyDown(trigger, 'ArrowDown')
+    await harness.settle()
+    harness.keyDown(harness.document.activeElement, 'Tab', { shiftKey: true })
+    assert.equal(menu(), null, 'backward Tab closes the menu when returning to its trigger')
+    assert.equal(harness.document.activeElement, trigger)
+
+    harness.keyClick(trigger, ' ')
+    await harness.settle()
+    harness.keyClick(harness.document.activeElement)
+    assert.equal(menu(), null, 'reselecting the current item just closes the menu')
+    assert.equal(harness.document.activeElement, trigger)
+    assert.deepEqual(calls, [])
+
+    harness.mouseClick(trigger)
+    await harness.settle()
+    harness.dispatchDocument('pointerdown', { target: body })
+    assert.equal(menu(), null)
+
+    // If discovery empties while the menu is open, it stays closed even when the list returns.
+    harness.mouseClick(trigger)
+    assert.notEqual(menu(), null)
+    render([])
+    assert.equal(menu(), null)
+    assert.equal(trigger.props.disabled, true)
+    assert.equal(textOf(trigger), 'top.noRepository')
+    harness.keyDown(trigger, 'ArrowDown')
+    assert.equal(menu(), null)
+    render(repositories)
+    assert.equal(trigger.props.disabled, false)
+    assert.equal(menu(), null)
+  } finally {
+    harness.unmount()
+    restore()
+  }
+})
+
 test('VcsView scopes in-flight writes per repository without locking another repository', async () => {
   const harness = createHarness({ width: 1000 })
   const restore = harness.installGlobals()
@@ -2352,7 +2435,8 @@ test('VcsView scopes in-flight writes per repository without locking another rep
     harness.mount(harness.react.createElement(VcsView, { sessionId: 'session-multirepo', t, locale: 'en-US' }))
     await harness.settle()
     const body = harness.document.body
-    const select = body.querySelector('.vcs-repo-select')
+    const picker = body.querySelector('.vcs-repo-button')
+    const repoItems = () => body.querySelector('.vcs-repo-menu').querySelectorAll('[role="menuitemradio"]')
     const syncBtn = body.querySelector('.vcs-sync')
 
     // Start sync on repo-a.
@@ -2370,8 +2454,15 @@ test('VcsView scopes in-flight writes per repository without locking another rep
     await harness.settle()
 
     // Switch to repo-b: repo-b is not busy and its branch menu items remain enabled.
-    select.props.onChange({ currentTarget: { value: '/repo-b' } })
+    picker.focus()
+    harness.keyDown(picker, 'ArrowDown')
     await harness.settle()
+    harness.keyDown(repoItems()[0], 'ArrowDown')
+    harness.keyClick(repoItems()[1])
+    await harness.settle()
+    assert.equal(textOf(picker), 'repo-b')
+    assert.equal(body.querySelector('.vcs-repo-menu'), null)
+    assert.equal(harness.document.activeElement, picker, 'keyboard switch keeps focus on the repository pill')
     assert.equal(body.querySelector('.vcs-sync').attributes.get('aria-busy'), undefined)
     body.querySelector('.vcs-branch-button').props.onContextMenu({ clientX: 20, clientY: 20, preventDefault() {}, stopPropagation() {} })
     await harness.settle()
@@ -2380,8 +2471,14 @@ test('VcsView scopes in-flight writes per repository without locking another rep
     await harness.settle()
 
     // Switching back to repo-a restores its busy indicator until sync finishes.
-    select.props.onChange({ currentTarget: { value: '/repo-a' } })
+    harness.mouseClick(picker)
     await harness.settle()
+    assert.equal(repoItems()[1].attributes.get('aria-checked'), 'true')
+    harness.mouseClick(repoItems()[0])
+    await harness.settle()
+    assert.equal(textOf(picker), 'repo-a')
+    assert.equal(body.querySelector('.vcs-repo-menu'), null)
+    assert.notEqual(harness.document.activeElement?.dataset?.timelineIndex, undefined, 'pointer switch returns to the timeline')
     assert.equal(body.querySelector('.vcs-sync').attributes.get('aria-busy'), 'true')
     releaseSyncA()
     await harness.settle()
@@ -2462,11 +2559,15 @@ test('VcsView overlays the checked trees, preserves repository history across al
     harness.mount(harness.react.createElement(VcsView, { sessionId: 'worktree-session', t }))
     await harness.settle()
     const body = harness.document.body
-    const chooseRepo = body.querySelector('.vcs-repo-select')
+    const chooseRepo = body.querySelector('.vcs-repo-button')
     const button = body.querySelector('.vcs-worktree-button')
     const items = () => body.querySelectorAll('[data-worktree-item]')
     const rows = () => body.querySelectorAll('.vcs-worktree-row')
-    assert.deepEqual(chooseRepo.children.map(option => option.props.value), [source])
+    harness.mouseClick(chooseRepo)
+    await harness.settle()
+    const repoOptions = body.querySelector('.vcs-repo-menu').querySelectorAll('[role="menuitemradio"]')
+    assert.deepEqual(repoOptions.map(option => option.attributes.get('title')), [source])
+    harness.keyDown(repoOptions[0], 'Escape')
     assert.notEqual(body.querySelector('.vcs-branch-button'), null)
     button.focus()
     harness.keyDown(button, 'ArrowDown')
@@ -2531,7 +2632,7 @@ test('VcsView overlays the checked trees, preserves repository history across al
     offered = false
     body.querySelector('[aria-label="top.refresh"]').props.onClick()
     await harness.settle()
-    assert.equal(chooseRepo.props.value, source)
+    assert.equal(chooseRepo.attributes.get('title'), source)
     assert.equal(rows().length, 1)
     assert.equal(rows()[0].attributes.get('title'), source, 'a removed selection falls back to the session worktree')
     assert.notEqual(body.querySelector('.vcs-branch-button'), null)

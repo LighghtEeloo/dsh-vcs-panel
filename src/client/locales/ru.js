@@ -11,6 +11,7 @@ export default Object.freeze({
   "shortcut.toggle": "Переключить панель VCS",
   "sidebar.guide": "Текущие изменения, диффы и история коммитов.",
   "top.repositories": "Репозиторий",
+  "top.repositoryLabel": "Репозиторий: {name}",
   "top.worktrees": "Рабочие деревья Git",
   "top.worktreeSelection": "Рабочие деревья · {count}",
   "top.sessionWorktree": "Сеанс",

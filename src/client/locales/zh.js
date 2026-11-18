@@ -11,6 +11,7 @@ export default Object.freeze({
   "shortcut.toggle": "切换版本管理面板",
   "sidebar.guide": "工作改动、diff 与提交历史。",
   "top.repositories": "仓库",
+  "top.repositoryLabel": "仓库：{name}",
   "top.worktrees": "Git 工作树",
   "top.worktreeSelection": "工作树 · {count}",
   "top.sessionWorktree": "当前会话",
