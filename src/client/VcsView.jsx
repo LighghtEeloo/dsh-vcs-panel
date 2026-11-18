@@ -1,7 +1,7 @@
 /**
  * The version control panel, drawn as a right-Sidebar tab.
  *
- * One Session, one repository chooser, one timeline (the working tree, then
+ * One Session, one repository, one timeline (checked worktrees, then shared
  * commits) and one detail pane for the selected node. Host data is read
  * through `api.js`; this component owns request lifecycle, selection, paging,
  * layout, and the sessionStorage-backed state. `focusRequest` moves keyboard
@@ -12,8 +12,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createApi } from './api.js'
 import {
-  loadState, nodePatch, preferredNode, saveState, SIDEBAR_MAX, SIDEBAR_MIN, WORKTREE,
+  loadState, nodePatch, saveState, SIDEBAR_MAX, SIDEBAR_MIN, WORKTREE, worktreeNode, worktreePath,
 } from './state.js'
+import { checkedWorktrees, preferredViewNode, repositoryWorktrees, sharedRefs, toggleWorktree, worktreeRefLabel } from './worktrees.js'
 import {
   errorMessage, formatCount,
 } from './format.js'
@@ -24,7 +25,7 @@ import {
 import { dirKey } from './detail/tree.js'
 import { buildGraph } from './history/layout.js'
 import { indexCommits } from './history/commits.js'
-import { graphInput, headOf, nodeAt, pickRepository, rowOf } from './history/timeline.js'
+import { graphInput, nodeAt, pickRepository, rowOf } from './history/timeline.js'
 import { ROW_HEIGHT, Timeline } from './history/Timeline.jsx'
 import { DetailPane } from './detail/DetailPane.jsx'
 import { TopBar } from './TopBar.jsx'
@@ -37,6 +38,8 @@ import { TimelineSkeleton, TreeSkeleton } from './skeleton.jsx'
 
 /** Rows per history page. */
 const PAGE_SIZE = 300
+/** A checked tree's status runs several Git commands; don't start them all at once. */
+const STATUS_CONCURRENCY = 4
 /** Reload when the panel becomes visible after this idle time. */
 const STALE_MS = 30_000
 /** Below this width the panel shows one column at a time, whatever the preference. */
@@ -48,13 +51,15 @@ const RESIZER_WIDTH = 5
 const UNSTAGED_PREFIX = 'unstaged|'
 
 /** Empty status answer. */
-function idleStatus() {
-  return { status: 'idle', data: null, error: null }
-}
+const IDLE_STATUS = Object.freeze({ status: 'idle', data: null, error: null })
 
 /** Empty history answer. */
 function idleLog() {
-  return { status: 'idle', commits: [], error: null, truncated: false, hasMore: false, loadingMore: false }
+  return { status: 'idle', commits: [], worktreeHeads: null, error: null, truncated: false, hasMore: false, loadingMore: false }
+}
+
+function samePaths(a, b) {
+  return a.length === b.length && a.every((path, index) => path === b[index])
 }
 
 /** Clamp a sidebar width. */
@@ -85,8 +90,8 @@ export function VcsView({
   const persistTimer = useRef(null)
 
   const api = useMemo(() => createApi(sessionId), [sessionId])
-  const [repositories, setRepositories] = useState({ status: 'loading', list: [], truncated: false, error: null })
-  const [status, setStatus] = useState(idleStatus)
+  const [repositories, setRepositories] = useState({ status: 'loading', list: [], truncated: false, worktreesTruncated: false, error: null })
+  const [statuses, setStatuses] = useState({})
   const [log, setLog] = useState(idleLog)
   const [revision, setRevision] = useState(0)
   // The control whose refresh is waiting for status: 'refresh', 'sync', or null.
@@ -109,6 +114,7 @@ export function VcsView({
   const lastLoaded = useRef(0)
   const dragRef = useRef(null)
   const attemptedDirsRef = useRef(new Set())
+  const directoryRequestsRef = useRef(new Map())
   const perRepoRef = useRef(new Map())
   const pageControllerRef = useRef(null)
   const branchesControllerRef = useRef(null)
@@ -130,23 +136,66 @@ export function VcsView({
   // One column at a time when the panel is too narrow for two, or when the
   // user put the timeline away.
   const singleColumn = narrow || !state.twoColumns
-  const missingTool = status.status === 'error' && status.error?.code === 'vcs-missing'
   const showTimeline = !singleColumn || singleView === 'timeline'
   const showDetail = !singleColumn || singleView === 'detail'
-  const repositoriesReady = repositories.status === 'ready'
   const repoInfo = repositories.list.find(entry => entry.path === state.repo) ?? null
-  const capabilities = status.data?.capabilities ?? repoInfo?.capabilities ?? null
-  const worktreeRow = capabilities?.workingCopy !== 'commit'
+  const repositoryReady = repositories.status === 'ready' && repoInfo !== null && sessionRef.current === sessionId
+  const worktrees = useMemo(() => repositoryWorktrees(repoInfo), [repoInfo])
+  const checkedTrees = useMemo(() => checkedWorktrees(worktrees, state.worktrees), [worktrees, state.worktrees])
+  const checkedPaths = checkedTrees.map(tree => tree.path)
+  const statusPathsKey = JSON.stringify(checkedPaths.length > 0 ? checkedPaths : state.repo === null ? [] : [state.repo])
+  const statusPath = checkedPaths[0] ?? state.repo
+  const status = statuses[statusPath] ?? IDLE_STATUS
+  const missingTool = status.status === 'error' && status.error?.code === 'vcs-missing'
+  const showCurrentHead = checkedPaths.length === 0 || (checkedPaths.length === 1 && checkedPaths[0] === state.repo)
+  const baseCapabilities = repoInfo?.capabilities ?? status.data?.capabilities ?? null
+  const capabilities = useMemo(() => showCurrentHead || baseCapabilities === null ? baseCapabilities : {
+    ...baseCapabilities, sync: false, branchSwitch: false, branchOps: false, tagOps: false, commitOps: false,
+  }, [baseCapabilities, showCurrentHead])
   const workingCopyNode = capabilities?.workingCopyNode ?? null
-
-  const head = worktreeRow ? headOf(status.data, log.commits, state.ref) : null
+  const siblingApi = useMemo(() => createApi(sessionId, { worktreeOf: state.repo }), [sessionId, state.repo])
+  // The repository-wide graph stays put when boxes change. In HEAD scope, a
+  // single anchor uses ordinary HEAD; otherwise send the full checked set.
+  const historyPathsKey = state.ref === 'HEAD' && !showCurrentHead ? statusPathsKey : '[]'
+  const historyWorktrees = useMemo(() => JSON.parse(historyPathsKey), [historyPathsKey])
+  const historyScope = JSON.stringify([state.repo, state.ref, historyWorktrees])
+  const historyScopeRef = useRef(historyScope)
+  historyScopeRef.current = historyScope
+  const commits = useMemo(() => showCurrentHead ? log.commits : log.commits.map(commit => ({
+    ...commit, refs: sharedRefs(commit.refs ?? []),
+  })), [log.commits, showCurrentHead])
+  const worktreeRows = useMemo(() => {
+    const heads = new Map(log.worktreeHeads?.map(tree => [tree.path, tree.head]))
+    return checkedTrees.map(tree => {
+      const reading = statuses[tree.path] ?? IDLE_STATUS
+      const branch = reading.data?.branch
+      const head = heads.has(tree.path) ? heads.get(tree.path)
+        : branch !== undefined ? branch?.oid ?? null
+          : showCurrentHead && state.ref === 'HEAD' ? log.commits[0]?.sha ?? tree.head : tree.head
+      return {
+        ...tree,
+        head: head ?? null,
+        id: worktreeNode(tree.path),
+        label: worktrees.length > 1 ? t('timeline.worktreeNamed', { name: tree.name }) : t('timeline.worktree'),
+        refLabel: worktrees.length > 1 ? worktreeRefLabel({ branch: branch === undefined ? tree.branch : branch?.name, head }, t) : null,
+        status: reading.data,
+        statusState: reading.status,
+      }
+    })
+  }, [checkedTrees, log.commits, log.worktreeHeads, showCurrentHead, state.ref, statuses, t, worktrees.length])
+  const selectedWorktree = worktreeRows.find(tree => tree.id === state.node) ?? null
+  const detailRoot = selectedWorktree?.path ?? state.repo
+  const detailApi = detailRoot === state.repo ? api : siblingApi
+  const detailStatus = selectedWorktree === null ? status : statuses[detailRoot] ?? IDLE_STATUS
+  const anchorHead = showCurrentHead ? worktreeRows[0]?.head ?? null : null
+  const graphWorktreesKey = JSON.stringify(worktreeRows.map(({ id, head }) => ({ id, head })))
   const layout = useMemo(
-    () => buildGraph(graphInput(log.commits, head, { worktreeRow })),
-    [head, log.commits, worktreeRow],
+    () => buildGraph(graphInput(commits, JSON.parse(graphWorktreesKey))),
+    [commits, graphWorktreesKey],
   )
   const commitIndex = useMemo(
-    () => indexCommits(log.commits, workingCopyNode),
-    [log.commits, workingCopyNode],
+    () => indexCommits(commits, workingCopyNode),
+    [commits, workingCopyNode],
   )
 
   /** The state as it should be stored, including the live reading positions. */
@@ -221,13 +270,26 @@ export function VcsView({
     setState(previous => ({ ...previous, ...patch }))
   }, [])
 
-  /** Move the selection; the patch also resets per-node reading state. */
+  const abortDirectoryRequests = useCallback(() => {
+    for (const controller of directoryRequestsRef.current.values()) controller.abort()
+    directoryRequestsRef.current.clear()
+  }, [])
+
+  const resetDirectories = useCallback(() => {
+    abortDirectoryRequests()
+    setDirChildren({})
+    setLoadingDirs({})
+    attemptedDirsRef.current.clear()
+  }, [abortDirectoryRequests])
+
+  /** Move the selection; checkout-relative directories must never cross roots. */
   const selectNode = useCallback((node, chosen) => {
     if (chosen) pendingDetailFocusRef.current = false
     const patch = nodePatch(stateRef.current, node, chosen)
     if ('anchor' in patch) anchorRef.current = null
+    if ('dirs' in patch) resetDirectories()
     if (Object.keys(patch).length > 0) update(patch)
-  }, [update])
+  }, [resetDirectories, update])
 
   /**
    * Refresh repositories, status, history, and every open comparison.
@@ -237,13 +299,13 @@ export function VcsView({
   const refresh = useCallback((requester = 'refresh') => {
     setRefreshing(requester)
     setNotice(null)
-    setDirChildren({})
-    setLoadingDirs({})
-    attemptedDirsRef.current.clear()
+    pageControllerRef.current?.abort()
+    pageControllerRef.current = null
+    resetDirectories()
     diffCacheRef.current.clear()
     commitCacheRef.current.clear()
     setRevision(value => value + 1)
-  }, [])
+  }, [resetDirectories])
 
   /**
    * Drop everything that described the old HEAD after a checkout: selection,
@@ -254,13 +316,11 @@ export function VcsView({
     anchorRef.current = null
     timelineScrollRef.current = 0
     navZoneRef.current = 'timeline'
-    setDirChildren({})
-    setLoadingDirs({})
-    attemptedDirsRef.current.clear()
+    resetDirectories()
     diffCacheRef.current.clear()
     commitCacheRef.current.clear()
     update({ node: null, nodeChosen: false, anchor: null, folds: {}, collapsed: {}, dirs: {} })
-  }, [update])
+  }, [resetDirectories, update])
 
   const clearBranches = useCallback(() => {
     setBranches({ status: 'idle', list: [], truncated: false, error: null })
@@ -275,14 +335,14 @@ export function VcsView({
   const actions = useRepoActions({
     api,
     sessionId,
-    repo: state.repo,
+    repo: showCurrentHead ? state.repo : null,
     stateRef,
     sessionRef,
     statusData: status.data,
     capabilities,
-    commits: log.commits,
+    commits,
     commitIndex,
-    head,
+    head: anchorHead,
     rootRef,
     onRestoreFocus: () => {
       if (!restoreNavFocusRef.current()) pendingReadyFocusRef.current = true
@@ -310,7 +370,9 @@ export function VcsView({
   }
 
   /** Remember one repository's selection and restore the next one's. */
-  const switchRepo = useCallback((nextRepo, nextCapabilities) => {
+  const switchRepo = useCallback(entry => {
+    const nextRepo = entry?.path ?? null
+    const nextCapabilities = entry?.capabilities
     pendingDetailFocusRef.current = false
     navZoneRef.current = 'timeline'
     const current = stateRef.current
@@ -318,6 +380,7 @@ export function VcsView({
       perRepoRef.current.set(current.repo, {
         node: current.node,
         nodeChosen: current.nodeChosen,
+        worktrees: current.worktrees,
         dirs: current.dirs,
         collapsed: current.collapsed,
         ref: current.ref,
@@ -329,21 +392,20 @@ export function VcsView({
     const ref = ranges?.some(range => range.value === savedRef)
       ? savedRef
       : (nextCapabilities?.defaultRange ?? 'HEAD')
+    setStatuses({})
     setSingleView('timeline')
     setNotice(null)
-    setDirChildren({})
-    setLoadingDirs({})
-    attemptedDirsRef.current.clear()
+    resetDirectories()
     diffCacheRef.current.clear()
     commitCacheRef.current.clear()
     abortBranches()
     clearBranches()
     resetActionsUi()
-    setStatus(idleStatus())
     anchorRef.current = null
     timelineScrollRef.current = 0
     update({
       repo: nextRepo,
+      worktrees: checkedWorktrees(repositoryWorktrees(entry), saved?.worktrees ?? []).map(tree => tree.path),
       node: saved?.node ?? null,
       nodeChosen: saved?.nodeChosen ?? false,
       dirs: saved?.dirs ?? {},
@@ -352,7 +414,22 @@ export function VcsView({
       anchor: null,
       ref,
     })
-  }, [abortBranches, clearBranches, resetActionsUi, update])
+  }, [abortBranches, clearBranches, resetActionsUi, resetDirectories, update])
+
+  /** Change only the view. No operation may infer a write target from a checked set. */
+  const toggleCheckedWorktree = path => {
+    const current = stateRef.current
+    const next = toggleWorktree(worktrees, current.worktrees, path)
+    if (samePaths(next, checkedPaths)) return
+    abortBranches()
+    clearBranches()
+    resetActionsUi()
+    setNotice(null)
+    if (current.ref === 'HEAD' && worktreePath(current.node) === null && current.node !== null && current.node !== WORKTREE) {
+      selectNode(worktreeNode(next[0]), false)
+    }
+    update({ worktrees: next })
+  }
 
   // The persisted range belongs to one backend; a Jujutsu selection must not
   // start on `HEAD`, and a Git selection must not start on `@`.
@@ -382,76 +459,90 @@ export function VcsView({
     api.repositories(controller.signal).then(answer => {
       if (controller.signal.aborted) return
       const list = Array.isArray(answer?.repositories) ? answer.repositories : []
-      setRepositories({ status: 'ready', list, truncated: answer?.truncated === true, error: null })
+      setRepositories({ status: 'ready', list, truncated: answer?.truncated === true, worktreesTruncated: answer?.worktreesTruncated === true, error: null })
       const previousRepo = stateRef.current.repo
       const nextEntry = pickRepository(list, previousRepo)
       const nextRepo = nextEntry?.path ?? null
-      if (nextRepo !== previousRepo) switchRepo(nextRepo, nextEntry?.capabilities)
+      if (nextRepo !== previousRepo) switchRepo(nextEntry)
+      else {
+        const previous = stateRef.current.worktrees
+        const checked = checkedWorktrees(repositoryWorktrees(nextEntry), previous).map(tree => tree.path)
+        if (!samePaths(checked, previous)) update({ worktrees: checked })
+      }
       if (list.length === 0) setRefreshing(null)
     }).catch(error => {
       if (error?.name === 'AbortError' || controller.signal.aborted) return
-      setRepositories({ status: 'error', list: [], truncated: false, error })
+      setRepositories({ status: 'error', list: [], truncated: false, worktreesTruncated: false, error })
       setRefreshing(null)
     })
     return () => { controller.abort() }
-  }, [api, revision, switchRepo])
+  }, [api, revision, switchRepo, update])
 
-  // Working-tree status for the chosen repository; it also settles the
-  // default selection until the user picks a node.
+  // Load the checked trees independently, so a slow/erroring tree doesn't
+  // block the others. The repository anchor is also the Jujutsu status root.
   useEffect(() => {
-    if (!repositoriesReady || state.repo === null) {
-      setStatus(idleStatus())
-      return undefined
-    }
+    if (!repositoryReady) return undefined
     const controller = new AbortController()
-    setStatus(previous => ({
-      status: previous.data === null ? 'loading' : 'refreshing',
-      data: previous.data,
-      error: null,
-    }))
-    api.status(state.repo, controller.signal).then(data => {
-      if (controller.signal.aborted) return
-      if (data === null || typeof data !== 'object') {
-        setStatus(previous => ({ status: 'error', data: previous.data, error: null }))
-        setRefreshing(null)
-        return
+    const paths = JSON.parse(statusPathsKey)
+    setStatuses(previous => Object.fromEntries(paths.map(path => {
+      const data = previous[path]?.data ?? null
+      return [path, { status: data === null ? 'loading' : 'refreshing', data, error: null }]
+    })))
+    let cursor = 0
+    async function readStatus() {
+      while (!controller.signal.aborted && cursor < paths.length) {
+        const path = paths[cursor++]
+        const reader = path === state.repo ? api : siblingApi
+        try {
+          const data = await reader.status(path, controller.signal)
+          if (controller.signal.aborted) return
+          setStatuses(previous => ({ ...previous, [path]: { status: 'ready', data, error: null } }))
+          lastLoaded.current = Date.now()
+        } catch (error) {
+          if (error?.name === 'AbortError' || controller.signal.aborted) return
+          setStatuses(previous => ({ ...previous, [path]: { status: 'error', data: previous[path]?.data ?? null, error } }))
+        }
       }
-      setStatus({ status: 'ready', data, error: null })
-      setRefreshing(null)
-      lastLoaded.current = Date.now()
-      const node = preferredNode(stateRef.current, data)
-      if (node !== null && node !== stateRef.current.node) selectNode(node, false)
-    }).catch(error => {
-      if (error?.name === 'AbortError' || controller.signal.aborted) return
-      setStatus(previous => ({ status: 'error', data: previous.data, error }))
-      setRefreshing(null)
+    }
+    Promise.all(Array.from({ length: Math.min(paths.length, STATUS_CONCURRENCY) }, readStatus)).then(() => {
+      if (!controller.signal.aborted) setRefreshing(null)
     })
     return () => { controller.abort() }
-  }, [api, repositoriesReady, state.repo, revision, selectNode])
+  }, [api, repositoryReady, revision, siblingApi, state.repo, statusPathsKey])
 
-  // Reset loaded history whenever the range changes.
+  useEffect(() => {
+    if (!repositoryReady) return
+    const current = stateRef.current
+    const node = preferredViewNode(current, worktreeRows, status.data)
+    if (node !== null && node !== current.node) {
+      selectNode(node, current.nodeChosen && current.node === WORKTREE)
+    }
+  }, [repositoryReady, selectNode, status.data, worktreeRows])
+
+  // The checked set is part of the selected-HEAD range, not the all range.
   useEffect(() => {
     pageControllerRef.current?.abort()
     pageControllerRef.current = null
     setLog(idleLog())
     logKeyRef.current = ''
-  }, [state.repo, state.ref])
+  }, [historyScope])
 
   useEffect(() => () => {
     pageControllerRef.current?.abort()
     branchesControllerRef.current?.abort()
-  }, [])
+    abortDirectoryRequests()
+  }, [abortDirectoryRequests])
 
   // First history page, invalidated by refresh.
   useEffect(() => {
-    if (!repositoriesReady || state.repo === null) return undefined
-    if (capabilities !== null && Array.isArray(capabilities.ranges) && !capabilities.ranges.some(range => range.value === state.ref)) return undefined
-    const key = `${state.repo}|${state.ref}|${revision}`
+    if (!repositoryReady) return undefined
+    if (baseCapabilities !== null && Array.isArray(baseCapabilities.ranges) && !baseCapabilities.ranges.some(range => range.value === state.ref)) return undefined
+    const key = `${historyScope}|${revision}`
     if (logKeyRef.current === key) return undefined
     const controller = new AbortController()
     let settled = false
     setLog(previous => ({ ...previous, status: 'loading', error: null }))
-    api.log(state.repo, { ref: state.ref, skip: 0, limit: PAGE_SIZE }, controller.signal).then(page => {
+    api.log(state.repo, { ref: state.ref, worktrees: historyWorktrees, skip: 0, limit: PAGE_SIZE }, controller.signal).then(page => {
       if (controller.signal.aborted) return
       settled = true
       logKeyRef.current = key
@@ -459,6 +550,7 @@ export function VcsView({
       setLog({
         status: 'ready',
         commits,
+        worktreeHeads: Array.isArray(page?.worktreeHeads) ? page.worktreeHeads : null,
         error: null,
         truncated: page?.truncated === true,
         hasMore: commits.length >= PAGE_SIZE && page?.truncated !== true,
@@ -473,7 +565,7 @@ export function VcsView({
       controller.abort()
       if (!settled && logKeyRef.current === key) logKeyRef.current = ''
     }
-  }, [api, capabilities, repositoriesReady, state.repo, state.ref, revision])
+  }, [api, baseCapabilities, historyScope, historyWorktrees, repositoryReady, state.repo, state.ref, revision])
 
   // Returning to the panel after a while refreshes once, without polling.
   useEffect(() => {
@@ -497,11 +589,10 @@ export function VcsView({
     timelineScrollRef.current = restored.timelineScroll
     logKeyRef.current = ''
     setState(restored)
-    setStatus(idleStatus())
+    setStatuses({})
     setLog(idleLog())
-    setRepositories({ status: 'loading', list: [], truncated: false, error: null })
-    setDirChildren({})
-    setLoadingDirs({})
+    setRepositories({ status: 'loading', list: [], truncated: false, worktreesTruncated: false, error: null })
+    resetDirectories()
     setSingleView('timeline')
     setNotice(null)
     clearBranches()
@@ -511,19 +602,16 @@ export function VcsView({
     pendingReadyFocusRef.current = false
     pendingRestoreFocusRef.current = false
     pendingDetailFocusRef.current = false
-    attemptedDirsRef.current.clear()
     perRepoRef.current.clear()
     diffCacheRef.current.clear()
     commitCacheRef.current.clear()
     pageControllerRef.current?.abort()
     pageControllerRef.current = null
-  }, [abortBranches, clearBranches, resetActionsUi, sessionId])
+  }, [abortBranches, clearBranches, resetActionsUi, resetDirectories, sessionId])
 
-  const selectedRow = rowOf(commitIndex, state.node, { worktreeRow })
-  const summary = state.node === null || state.node === WORKTREE
-    ? null
-    : log.commits[commitIndex.get(state.node)] ?? null
-  const hasTimelineRows = worktreeRow || log.commits.length > 0
+  const selectedRow = rowOf(commitIndex, state.node, worktreeRows)
+  const summary = commits[commitIndex.get(state.node)] ?? null
+  const hasTimelineRows = worktreeRows.length > 0 || commits.length > 0
   const timelineSettled = hasTimelineRows || log.status === 'ready' || log.status === 'error'
 
   /**
@@ -676,35 +764,38 @@ export function VcsView({
 
   /** Load the direct children of one untracked directory. */
   const expandUntracked = useCallback(async (key, path) => {
-    if (state.repo === null) return
-    const repo = state.repo
+    if (!repositoryReady || detailRoot === null || directoryRequestsRef.current.has(key)) return
+    const controller = new AbortController()
+    directoryRequestsRef.current.set(key, controller)
     attemptedDirsRef.current.add(key)
     setLoadingDirs(previous => ({ ...previous, [key]: true }))
     try {
-      const answer = await api.untracked(repo, path)
-      if (stateRef.current.repo !== repo) return
+      const answer = await detailApi.untracked(detailRoot, path, controller.signal)
+      if (controller.signal.aborted) return
       const entries = Array.isArray(answer.entries) ? answer.entries : []
       setDirChildren(previous => ({ ...previous, [key]: entries }))
       if (answer.truncated === true) {
         setNotice({ tone: 'error', text: t('changes.untrackedTruncated', { count: formatCount(entries.length, locale) }) })
       }
     } catch (error) {
-      if (error?.name === 'AbortError') return
-      if (stateRef.current.repo !== repo) return
+      if (error?.name === 'AbortError' || controller.signal.aborted) return
       update({ dirs: omit(stateRef.current.dirs, key) })
       setNotice({ tone: 'error', text: errorMessage(t, error) })
     } finally {
-      setLoadingDirs(previous => omit(previous, key))
+      if (directoryRequestsRef.current.get(key) === controller) {
+        directoryRequestsRef.current.delete(key)
+        setLoadingDirs(previous => omit(previous, key))
+      }
     }
-  }, [api, state.repo, t, locale, update])
+  }, [detailApi, detailRoot, repositoryReady, t, locale, update])
 
   // Re-open persisted untracked directories once their repository's status is
   // known. The directories live in the unstaged group now; a path that is no
   // longer an untracked directory is simply dropped.
   useEffect(() => {
-    if (state.repo === null || status.data === null) return
+    if (selectedWorktree === null || detailStatus.data === null) return
     const loadable = new Set(
-      (status.data.groups?.untracked ?? [])
+      (detailStatus.data.groups?.untracked ?? [])
         .filter(entry => entry.directory === true)
         .map(entry => dirKey('unstaged', entry.path)),
     )
@@ -715,7 +806,7 @@ export function VcsView({
       if (attemptedDirsRef.current.has(key)) continue
       void expandUntracked(key, `${key.slice(UNSTAGED_PREFIX.length)}/`)
     }
-  }, [state.repo, state.dirs, status.data, dirChildren, loadingDirs, expandUntracked])
+  }, [selectedWorktree, state.dirs, detailStatus.data, dirChildren, loadingDirs, expandUntracked])
 
   /** Toggle a group or directory row; an untracked directory loads on open. */
   const toggleRow = useCallback(row => {
@@ -740,7 +831,7 @@ export function VcsView({
 
   /** Choose the node on one timeline row. */
   const selectRow = useCallback(index => {
-    const node = nodeAt(log.commits, index, { worktreeRow, workingCopyNode })
+    const node = nodeAt(commits, index, { worktrees: worktreeRows, workingCopyNode })
     if (node === null) return
     panelOwnsFocusRef.current = true
     if (singleColumn) {
@@ -754,15 +845,15 @@ export function VcsView({
     navZoneRef.current = 'timeline'
     pendingRestoreFocusRef.current = true
     selectNode(node, true)
-  }, [log.commits, selectNode, singleColumn, worktreeRow, workingCopyNode])
+  }, [commits, selectNode, singleColumn, worktreeRows, workingCopyNode])
 
   /** Keyboard movement along the timeline; the selection follows the cursor. */
   const moveTimeline = useCallback(delta => {
-    const maxIndex = log.commits.length + (worktreeRow ? 1 : 0) - 1
+    const maxIndex = commits.length + worktreeRows.length - 1
     if (maxIndex < 0) return
     const base = selectedRow < 0 ? 0 : selectedRow
     const next = Math.max(0, Math.min(maxIndex, base + delta))
-    const node = nodeAt(log.commits, next, { worktreeRow, workingCopyNode })
+    const node = nodeAt(commits, next, { worktrees: worktreeRows, workingCopyNode })
     if (node === null) return
     panelOwnsFocusRef.current = true
     navZoneRef.current = 'timeline'
@@ -770,13 +861,13 @@ export function VcsView({
     pendingRestoreFocusRef.current = !sameNode
     selectNode(node, true)
     if (sameNode) timelineControl.current?.restoreFocus()
-  }, [log.commits, selectNode, selectedRow, worktreeRow, workingCopyNode])
+  }, [commits, selectNode, selectedRow, worktreeRows, workingCopyNode])
 
   /** Move the keyboard into the selected node's files, or wait while they load. */
   const openDetail = useCallback(() => {
     panelOwnsFocusRef.current = true
     if (selectedRow < 0 && hasTimelineRows) {
-      const first = nodeAt(log.commits, 0, { worktreeRow, workingCopyNode })
+      const first = nodeAt(commits, 0, { worktrees: worktreeRows, workingCopyNode })
       if (first !== null) selectNode(first, true)
     }
     pendingDetailFocusRef.current = true
@@ -806,7 +897,7 @@ export function VcsView({
         }
       })
     })
-  }, [hasTimelineRows, log.commits, selectNode, selectedRow, singleColumn, worktreeRow, workingCopyNode])
+  }, [commits, hasTimelineRows, selectNode, selectedRow, singleColumn, worktreeRows, workingCopyNode])
 
   /** Complete a deferred detail focus once the selected node's rows arrive. */
   const onDetailSettled = useCallback(hasRows => {
@@ -884,14 +975,14 @@ export function VcsView({
   }, [selectNode, singleColumn])
 
   // Read through a ref so the detail's request effects do not restart on every status answer.
-  const statusDataRef = useRef(null)
-  statusDataRef.current = status.data
+  const fallbackNodeRef = useRef(null)
+  fallbackNodeRef.current = preferredViewNode({ ...state, node: null, nodeChosen: false }, worktreeRows, status.data)
+    ?? worktreeRows[0]?.id ?? workingCopyNode
 
   /** A selected commit vanished (amend, rebase): fall back to the default. */
   const onMissing = useCallback(() => {
-    const node = preferredNode({ node: null, nodeChosen: false }, statusDataRef.current)
-    selectNode(node ?? (worktreeRow ? WORKTREE : workingCopyNode), false)
-  }, [selectNode, worktreeRow, workingCopyNode])
+    selectNode(fallbackNodeRef.current, false)
+  }, [selectNode])
 
   const onReading = useCallback(anchor => {
     anchorRef.current = anchor
@@ -908,26 +999,30 @@ export function VcsView({
     pageControllerRef.current = controller
     setLog(previous => ({ ...previous, loadingMore: true }))
     try {
-      const page = await api.log(repo, { ref, skip: log.commits.length, limit: PAGE_SIZE }, controller.signal)
-      if (controller.signal.aborted) return
-      if (stateRef.current.repo !== repo || stateRef.current.ref !== ref) return
-      const commits = Array.isArray(page?.commits) ? page.commits : []
+      const page = await api.log(repo, { ref, worktrees: historyWorktrees, skip: log.commits.length, limit: PAGE_SIZE }, controller.signal)
+      if (controller.signal.aborted || historyScopeRef.current !== historyScope) return
+      if (JSON.stringify(page?.worktreeHeads ?? null) !== JSON.stringify(log.worktreeHeads)) {
+        setLog(previous => ({ ...previous, loadingMore: false }))
+        refresh()
+        return
+      }
+      const nextCommits = Array.isArray(page?.commits) ? page.commits : []
       setLog(previous => ({
         ...previous,
         loadingMore: false,
-        commits: [...previous.commits, ...commits],
+        commits: [...previous.commits, ...nextCommits],
         truncated: page?.truncated === true,
-        hasMore: commits.length >= PAGE_SIZE && page?.truncated !== true,
+        hasMore: nextCommits.length >= PAGE_SIZE && page?.truncated !== true,
       }))
     } catch (error) {
       if (error?.name === 'AbortError' || controller.signal.aborted) return
-      if (stateRef.current.repo !== repo || stateRef.current.ref !== ref) return
+      if (historyScopeRef.current !== historyScope) return
       setLog(previous => ({ ...previous, loadingMore: false }))
       setNotice({ tone: 'error', text: errorMessage(t, error) })
     } finally {
       if (pageControllerRef.current === controller) pageControllerRef.current = null
     }
-  }, [api, log.commits.length, log.hasMore, log.loadingMore, state.repo, state.ref, t])
+  }, [api, historyScope, historyWorktrees, log.commits.length, log.worktreeHeads, log.hasMore, log.loadingMore, refresh, state.repo, state.ref, t])
 
   /** Keep focus on the active navigation stop across primary clicks on discrete buttons. */
   const onMouseDown = event => {
@@ -1079,21 +1174,26 @@ export function VcsView({
       <TopBar
         repositories={repositories.list}
         repo={state.repo}
+        worktrees={worktrees}
+        checkedPaths={checkedPaths}
+        onToggleWorktree={toggleCheckedWorktree}
+        sessionPath={repoInfo?.enclosing === true ? state.repo : null}
         onRepoChange={(repo, fromPointer) => {
           const entry = repositories.list.find(candidate => candidate.path === repo)
-          switchRepo(repo, entry?.capabilities)
+          if (entry === undefined || entry.path === state.repo) return
+          switchRepo(entry)
           if (fromPointer) {
             panelOwnsFocusRef.current = true
             pendingReadyFocusRef.current = true
           }
         }}
-        status={status.data}
+        status={checkedPaths.length > 1 ? null : status.data}
         capabilities={capabilities}
         refMode={state.ref}
         onRefMode={ref => { update({ ref }) }}
         onRefresh={() => { refresh() }}
         refreshing={refreshing === 'refresh'}
-        revalidating={status.status === 'refreshing'}
+        revalidating={Object.values(statuses).some(entry => entry.status === 'refreshing')}
         onSync={() => { void actions.sync() }}
         syncing={actions.syncing || refreshing === 'sync'}
         branches={branches.list}
@@ -1116,6 +1216,7 @@ export function VcsView({
         locale={locale}
       />
       {repositories.truncated ? <p className="vcs-note">{t('repositories.truncated', { count: formatCount(repositories.list.length, locale) })}</p> : null}
+      {repositories.worktreesTruncated ? <p className="vcs-note">{t('repositories.worktreesTruncated')}</p> : null}
       {repositories.status === 'loading' ? (
         // Nothing is known yet, not even the backend: draw both columns as
         // they will be, so the panel settles in place instead of popping in.
@@ -1144,12 +1245,11 @@ export function VcsView({
           {showTimeline ? (
             <section className="vcs-sidebar" style={singleColumn ? undefined : { width: `${state.sidebarWidth}px` }}>
               <Timeline
-                key={`${state.repo}|${state.ref}`}
-                commits={log.commits}
+                key={historyScope}
+                commits={commits}
                 layout={layout}
                 status={status.data}
-                statusState={status.status}
-                worktreeRow={worktreeRow}
+                worktrees={worktreeRows}
                 selectedRow={selectedRow}
                 onSelectRow={selectRow}
                 onMove={moveTimeline}
@@ -1199,18 +1299,20 @@ export function VcsView({
           ) : null}
           {showDetail ? (
             <section className="vcs-content">
-              {state.node === null ? (
+              {state.node === null || state.node === WORKTREE || (worktreePath(state.node) !== null && selectedWorktree === null) ? (
                 <TreeSkeleton label={t('changes.loading')} />
               ) : (
                 <DetailPane
                   key={`${state.repo}|${state.node}`}
-                  api={api}
-                  repo={state.repo}
+                  api={detailApi}
+                  repo={detailRoot}
                   node={state.node}
+                  worktree={selectedWorktree}
+                  showCurrentHead={showCurrentHead}
                   summary={summary}
-                  status={status.data}
-                  statusState={status.status}
-                  statusError={status.error}
+                  status={detailStatus.data}
+                  statusState={detailStatus.status}
+                  statusError={detailStatus.error}
                   dirChildren={dirChildren}
                   loadingDirs={loadingDirs}
                   dirs={state.dirs}

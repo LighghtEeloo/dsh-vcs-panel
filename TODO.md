@@ -46,6 +46,9 @@
   服务端抽取 `lib/git-utils.js` / `lib/ref-utils.js`、`branchOp` / `tagOp` / `commitOp` 分发、`createGitBranch` 可选 `checkout` 及 `GET /api/vcs.commit` 并行读写与引用标注；
   客户端将 8 种语言词典拆为 `src/client/locales/*.js` 并修复被覆盖与死键，抽取 `useFloatingMenu.js` 与 `useRepoActions.js`（按仓库隔离单飞锁、`busy` 与 `blocked` 对话框隔离、`sync` 无缝交接刷新），新增详情头部可点击/键盘激活的引用徽标、时间线 `+N` 溢出与全部引用暴露、提交祖先裁剪、创建分支立即检出、菜单内部滚动保留与 `Tab` 离开关闭、禁用无上游推送原因提示、远程删除与仅 `Hard` 重置危险按钮样式及未合并升级时取消焦点保护。
   自动化验证已通过全部 `node --test` 用例（Host 集成、解析器、客户端状态/祖先裁剪/API、i18n 双向死键与重复键检查、`esbuild` bundle 不变量、`FakeElement` DOM/键盘与多仓库并发组件夹具），并在 sandbox 内执行 `node scripts/build.mjs --check`。真实 DSH Web / Desktop 侧栏中的视觉与交互观察仍待手工复核。
+- 2026-11-18：仓库选择器与工作树勾选分离，已选树在同一张 Git 历史图上显示各自的改动。Host 夹具覆盖同仓库分组、
+  多起点去重与分页、未选分离头指针、失效路径与写入拒绝；图和组件测试覆盖共享 `HEAD`、最后一项保护、状态回退及同名 diff 隔离。
+  在运行中的 DSH Web（临时 `DSH_HOME`、真实 Git 夹具）实测了键盘勾选、窄栏详情、全屏双栏、两档历史、同名文件 diff、刷新恢复及取消勾选后恢复单树操作。
 - 具体改动见 `CHANGELOG.md`；完成过程与夹具证据留在工作区任务记录里，不进本仓库。
 
 ## 待验证

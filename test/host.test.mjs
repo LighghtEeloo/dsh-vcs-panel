@@ -17,6 +17,7 @@ import { delimiter, dirname, join, basename, resolve as resolvePath, sep } from 
 import { tmpdir } from 'node:os'
 
 import { apply, createHandlers, createTurnTracker, normalizeConfig } from '../index.js'
+import { parseGitWorktrees } from '../lib/worktrees.js'
 
 // Keep the fixtures independent of the user's global git configuration.
 process.env.GIT_CONFIG_GLOBAL = '/dev/null'
@@ -466,7 +467,12 @@ const handlers = createHandlers(createHost())
 
 /** Build one route URL with encoded query parameters. */
 function route(path, params) {
-  return `${path}?${new URLSearchParams(params)}`
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (Array.isArray(value)) for (const item of value) query.append(key, item)
+    else query.set(key, value)
+  }
+  return `${path}?${query}`
 }
 
 /** Call one handler and decode its JSON answer. */
@@ -526,6 +532,223 @@ test('repositories distinguishes unknown sessions from sessions without a cwd', 
   const noSessionId = await call(handlers.repositories, '/api/vcs.repositories')
   assert.equal(noSessionId.status, 400)
   assert.equal(noSessionId.body.error.code, 'bad-request')
+})
+
+function linkedWorktreeFixture(t) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'vcs-worktrees-')))
+  t.after(() => { rmSync(root, { recursive: true, force: true }) })
+  const source = join(root, 'source')
+  const linked = join(root, 'branch checkout')
+  initRepo(source)
+  writeFileSync(join(source, 'tracked.txt'), 'base\n')
+  git(source, ['add', '-A'])
+  git(source, ['commit', '-qm', 'base'])
+  git(source, ['worktree', 'add', '-qb', 'topic/preview', linked])
+  const worktreeSessions = new Map([
+    ['source', { header: { cwd: source } }],
+    ['linked', { header: { cwd: linked } }],
+  ])
+  const host = createHost({ sessions: { get: id => worktreeSessions.get(id) } })
+  return { root, source, linked, repo: { sessionId: 'source', repo: source }, handlers: createHandlers(host) }
+}
+
+test('Git worktree porcelain keeps spaces and newlines, with detached, locked, and skipped records', () => {
+  const branchPath = join(tmpdir(), 'repo with spaces')
+  const detachedPath = join(tmpdir(), 'repo\nwith newline')
+  const head = 'b'.repeat(40)
+  const records = [
+    [`worktree ${branchPath}`, `HEAD ${head}`, 'branch refs/heads/topic/slash', 'locked reason with prunable in it'],
+    [`worktree ${detachedPath}`, `HEAD ${head}`, 'detached'],
+    [`worktree ${join(tmpdir(), 'unborn')}`, `HEAD ${'0'.repeat(40)}`, 'branch refs/heads/unborn'],
+    [`worktree ${join(tmpdir(), 'gone')}`, 'prunable gitdir file points to non-existent location'],
+    [`worktree ${join(tmpdir(), 'bare')}`, 'bare'],
+    ['worktree relative', 'branch refs/heads/main'],
+  ]
+  const stdout = `${records.map(record => record.join('\0')).join('\0\0')}\0\0`
+  assert.deepEqual([...parseGitWorktrees(stdout)], [
+    { path: branchPath, branch: 'topic/slash', head },
+    { path: detachedPath, branch: null, head },
+    { path: join(tmpdir(), 'unborn'), branch: 'unborn', head: null },
+  ])
+})
+
+test('registered Git worktrees outside the session show their own read-only status and diffs', async t => {
+  const { root, source, linked, repo, handlers } = linkedWorktreeFixture(t)
+  const detached = join(root, 'detached')
+  git(source, ['worktree', 'add', '-q', '--detach', detached])
+  git(source, ['worktree', 'lock', detached])
+  const directlyDiscovered = join(source, 'direct')
+  git(source, ['worktree', 'add', '-qb', 'direct', directlyDiscovered])
+
+  writeFileSync(join(linked, 'linked.txt'), 'linked commit\n')
+  git(linked, ['add', 'linked.txt'])
+  git(linked, ['commit', '-qm', 'linked head'])
+  const linkedHead = git(linked, ['rev-parse', 'HEAD'])
+  writeFileSync(join(linked, 'tracked.txt'), 'base\npreview index\n')
+  git(linked, ['add', 'tracked.txt'])
+  writeFileSync(join(linked, 'tracked.txt'), 'base\npreview index\npreview worktree\n')
+  mkdirSync(join(linked, 'drafts'))
+  writeFileSync(join(linked, 'drafts', 'note.txt'), 'preview note\n')
+  writeFileSync(join(source, 'tracked.txt'), 'base\nsource only\n')
+
+  const snapshot = cwd => [
+    gitRaw(cwd, ['status', '--porcelain=v2', '-z', '--branch']),
+    git(cwd, ['ls-files', '-s']),
+    git(cwd, ['rev-parse', 'HEAD']),
+  ]
+  const before = [snapshot(source), snapshot(linked)]
+  const listing = await call(handlers.repositories, route('/api/vcs.repositories', { sessionId: 'source' }))
+  assert.equal(listing.status, 200)
+  assert.equal(listing.body.cwd, source)
+  assert.deepEqual(listing.body.repositories.map(entry => entry.path), [source], 'one option for checkouts sharing a common directory')
+  assert.equal(listing.body.worktreesTruncated, false)
+  const offered = listing.body.repositories[0].worktrees
+  assert.deepEqual(new Set(offered.map(tree => tree.path)), new Set([source, directlyDiscovered, linked, detached]))
+  assert.equal(offered[0].path, source, 'the session checkout is first')
+  assert.deepEqual(offered.find(entry => entry.path === linked), { path: linked, name: 'branch checkout', branch: 'topic/preview', head: linkedHead })
+  assert.equal(offered.find(entry => entry.path === detached)?.branch, null)
+
+  const reverse = await call(handlers.repositories, route('/api/vcs.repositories', { sessionId: 'linked' }))
+  const reverseWorktrees = reverse.body.repositories[0].worktrees
+  assert.equal(reverseWorktrees[0].path, linked, 'a session may start on a linked checkout')
+  assert.equal(reverseWorktrees.find(entry => entry.path === source)?.branch, 'main')
+  const base = await call(handlers.status, route('/api/vcs.status', repo))
+  assert.equal(base.body.branch.name, 'main')
+  assert.deepEqual(base.body.groups.staged, [])
+  const clean = await call(handlers.status, route('/api/vcs.status', { ...repo, worktree: detached }))
+  assert.equal(clean.status, 200)
+  assert.equal(clean.body.branch.detached, true)
+  assert.equal(clean.body.defaultNode, 'worktree', 'a clean preview still opens its working changes')
+
+  const target = { ...repo, worktree: linked }
+  const status = await call(handlers.status, route('/api/vcs.status', target))
+  assert.equal(status.status, 200)
+  assert.deepEqual(status.body.repo, { path: linked, name: 'branch checkout' })
+  assert.equal(status.body.branch.name, 'topic/preview')
+  for (const capability of ['sync', 'branchSwitch', 'branchOps', 'tagOps', 'commitOps']) {
+    assert.equal(status.body.capabilities[capability], false, capability)
+    assert.equal(listing.body.repositories[0].capabilities[capability], true, capability)
+  }
+  assert.equal(status.body.capabilities.untracked, true)
+  assert.deepEqual(Object.fromEntries(Object.entries(status.body.groups).map(([group, files]) => [group, files.map(file => file.path)])), {
+    staged: ['tracked.txt'], unstaged: ['tracked.txt'], untracked: ['drafts/'],
+  })
+  const drafts = await call(handlers.untracked, route('/api/vcs.untracked', { ...target, path: 'drafts/' }))
+  assert.deepEqual(drafts.body.entries, [{ name: 'note.txt', path: 'drafts/note.txt', type: 'file' }])
+  for (const [scope, path, line] of [
+    ['staged', 'tracked.txt', '+preview index'],
+    ['unstaged', 'tracked.txt', '+preview worktree'],
+    ['untracked', 'drafts/note.txt', '+preview note'],
+  ]) {
+    const diff = await call(handlers.diff, route('/api/vcs.diff', { ...target, scope, path }))
+    assert.equal(diff.status, 200)
+    assert.equal(diff.body.path, path)
+    assert.deepEqual(diff.body.hunks.flatMap(hunk => hunk.lines.filter(line => line.startsWith('+'))), [line])
+  }
+  const { body: log } = await call(handlers.log, route('/api/vcs.log', target))
+  assert.equal(log.commits[0].sha, linkedHead, 'HEAD is the sibling tree’s HEAD')
+  const { body: commit } = await call(handlers.commit, route('/api/vcs.commit', { ...target, sha: linkedHead }))
+  assert.equal(commit.commit.subject, 'linked head')
+  assert.deepEqual([snapshot(source), snapshot(linked)], before)
+})
+
+test('worktree selection refuses stale and foreign roots, escapes, and every write route', async t => {
+  const { root, source, linked, repo, handlers } = linkedWorktreeFixture(t)
+  const unrelated = join(root, 'unrelated')
+  const missing = join(root, 'missing')
+  const replaced = join(root, 'replaced')
+  initRepo(unrelated)
+  git(source, ['worktree', 'add', '-qb', 'missing', missing])
+  rmSync(missing, { recursive: true })
+  git(source, ['worktree', 'add', '-qb', 'replaced', replaced])
+  renameSync(replaced, join(root, 'moved'))
+  initRepo(replaced)
+  writeFileSync(join(unrelated, 'outside.txt'), 'outside\n')
+  symlinkSync(join(unrelated, 'outside.txt'), join(linked, 'escape.txt'))
+
+  const listed = await call(handlers.repositories, route('/api/vcs.repositories', { sessionId: 'source' }))
+  assert.deepEqual(listed.body.repositories[0].worktrees.map(entry => entry.path), [source, linked])
+  for (const query of [
+    { ...repo, worktree: unrelated }, { ...repo, worktree: missing }, { ...repo, worktree: replaced },
+    { ...repo, worktree: source }, { ...repo, worktree: 'relative' }, { ...repo, worktree: '' },
+    { ...repo, repo: unrelated, worktree: linked }, { ...repo, repo: linked },
+  ]) {
+    const denied = await call(handlers.status, route('/api/vcs.status', query))
+    assert.equal(denied.status, 400, JSON.stringify(query))
+    assert.equal(denied.body.error.code, 'not-a-repo')
+  }
+  const escaped = await call(handlers.diff, route('/api/vcs.diff', { ...repo, worktree: linked, scope: 'untracked', path: 'escape.txt' }))
+  assert.equal(escaped.status, 400)
+  assert.equal(escaped.body.error.code, 'bad-request')
+
+  const before = [git(source, ['symbolic-ref', 'HEAD']), git(linked, ['symbolic-ref', 'HEAD'])]
+  for (const [handler, path, body] of [
+    [handlers.sync, '/api/vcs.sync', {}],
+    [handlers.switchBranch, '/api/vcs.switch', { branch: 'topic/preview' }],
+    [handlers.branchOp, '/api/vcs.branch', { action: 'rename', branch: 'main', name: 'renamed' }],
+    [handlers.tagOp, '/api/vcs.tag', { action: 'delete', tag: 'v1' }],
+    [handlers.commitOp, '/api/vcs.commit-op', { action: 'checkout', sha: git(source, ['rev-parse', 'HEAD']) }],
+  ]) {
+    for (const [url, target, expected] of [
+      [path, { ...repo, worktree: linked }, 'forbidden'],
+      [route(path, { worktree: linked }), repo, 'forbidden'],
+      [path, { ...repo, repo: linked }, 'not-a-repo'],
+    ]) {
+      const answer = await handler(new Request(`http://127.0.0.1${url}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...target, ...body }),
+      }))
+      assert.equal(answer.status, expected === 'forbidden' ? 403 : 400, path)
+      assert.equal((await answer.json()).error.code, expected, path)
+    }
+  }
+  assert.deepEqual([git(source, ['symbolic-ref', 'HEAD']), git(linked, ['symbolic-ref', 'HEAD'])], before)
+  assert.equal(git(source, ['branch', '--list', 'renamed']), '')
+})
+
+test('selected history walks divergent HEADs once and all history includes unselected refs', async t => {
+  const { root, source, linked, repo, handlers } = linkedWorktreeFixture(t)
+  const common = git(source, ['rev-parse', 'HEAD'])
+  const commit = (cwd, name) => {
+    git(cwd, ['commit', '--allow-empty', '-qm', name])
+    return git(cwd, ['rev-parse', 'HEAD'])
+  }
+  const mainHead = commit(source, 'main-only')
+  const linkedHead = commit(linked, 'linked-only')
+  const duplicate = join(root, 'same linked HEAD')
+  const detached = join(root, 'unselected')
+  const unrelated = join(root, 'foreign')
+  git(source, ['worktree', 'add', '-q', '--detach', duplicate, linkedHead])
+  git(source, ['worktree', 'add', '-q', '--detach', detached, common])
+  const unselectedHead = commit(detached, 'unselected-only')
+  initRepo(unrelated)
+  const read = (params = {}) => call(handlers.log, route('/api/vcs.log', { ...repo, ...params }))
+  const selection = { worktree: [source, linked, duplicate] }
+  const selected = await read(selection)
+  assert.equal(selected.status, 200)
+  assert.equal(selected.body.commits.length, 3)
+  assert.deepEqual(new Set(selected.body.commits.map(entry => entry.sha)), new Set([mainHead, linkedHead, common]))
+  assert.deepEqual(Object.fromEntries(selected.body.worktreeHeads.map(tree => [tree.path, tree.head])), {
+    [source]: mainHead, [linked]: linkedHead, [duplicate]: linkedHead,
+  })
+  assert.equal(selected.body.commits.at(-1).sha, common)
+  const page = await read({ ...selection, limit: 2, skip: 1 })
+  assert.deepEqual(page.body.commits.map(entry => entry.sha), selected.body.commits.slice(1).map(entry => entry.sha))
+  const single = await read({ worktree: [linked] })
+  assert.deepEqual(single.body.commits.map(entry => entry.sha), [linkedHead, common])
+  const all = await read({ ref: 'all' })
+  assert.deepEqual(new Set(all.body.commits.map(entry => entry.sha)), new Set([mainHead, linkedHead, common, unselectedHead]))
+
+  const denied = await read({ worktree: [source, unrelated] })
+  assert.equal(denied.status, 400)
+  assert.equal(denied.body.error.code, 'not-a-repo')
+  for (const paths of [[source, `${source}/`], [source, '--all'], Array(52).fill(source)]) {
+    const invalid = await read({ worktree: paths })
+    assert.equal(invalid.status, 400)
+    assert.equal(invalid.body.error.code, 'bad-request')
+  }
+  const multipleStatus = await call(handlers.status, route('/api/vcs.status', { ...repo, ...selection }))
+  assert.equal(multipleStatus.body.error.code, 'bad-request')
+  assert.deepEqual([git(source, ['rev-parse', 'HEAD']), git(linked, ['rev-parse', 'HEAD'])], [mainHead, linkedHead])
 })
 
 test('status reports branch facts and all three groups with counts', async () => {

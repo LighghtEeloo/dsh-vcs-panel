@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { WORKTREE } from '../state.js'
+import { sharedRefs } from '../worktrees.js'
 import { errorMessage, formatCount, formatDateTime, shortChangeId, shortSha } from '../format.js'
 import { messageBody } from '../history/commits.js'
 import { worktreeSummary } from '../history/timeline.js'
@@ -151,8 +151,9 @@ export function DetailPane({
   folds, onToggleFold, onSetFolds, split, wrap, onToggleSplit, onToggleWrap,
   singleColumn, onBack, onLeaveNav, onSelectCommit, isLoaded, onMissing, onSettled,
   revision, cache, commitCache, initialAnchor, onReading, control, capabilities, onRefActions, t, locale,
+  worktree = null, showCurrentHead = true,
 }) {
-  const isWorktree = node === WORKTREE && capabilities?.workingCopy !== 'commit'
+  const isWorktree = worktree !== null
   const workingCopyNode = capabilities?.workingCopyNode ?? null
   const isWorkingCopy = workingCopyNode !== null && node === workingCopyNode
   const commitCacheKey = `${repo}|${node}|${revision}`
@@ -300,6 +301,7 @@ export function DetailPane({
   )
 
   const refs = summary?.refs ?? commitState.commit?.refs ?? []
+  const displayedRefs = showCurrentHead ? refs : sharedRefs(refs)
   const summaryCounts = isWorktree ? worktreeSummary(status) : null
   const commitCounts = isWorktree || commitState.commit === null ? null : commitSummary(commitState.commit.files)
   const commitSource = commitState.commit ?? summary ?? null
@@ -320,7 +322,7 @@ export function DetailPane({
         {singleColumn ? <IconButton label={t('detail.back')} onClick={onBack}><BackIcon /></IconButton> : null}
         {isWorktree ? (
           <>
-            <strong className="vcs-detail-title">{t('timeline.worktree')}</strong>
+            <strong className="vcs-detail-title" title={worktree.path}>{worktree.label}</strong>
             {status?.branch?.name ? <span className="vcs-detail-branch vcs-dim"><BranchIcon /><span className="vcs-detail-branch-name">{status.branch.name}</span></span> : null}
             {summaryCounts !== null && summaryCounts.changed > 0 ? (
               <span className="vcs-detail-stat">
@@ -340,7 +342,7 @@ export function DetailPane({
               <code className="vcs-detail-change" title={t('commit.changeId')}>{shortChangeId(commitState.commit.changeId)}</code>
             ) : null}
             <span className="vcs-detail-refs">
-              {refs.map(reference => (
+              {displayedRefs.map(reference => (
                 <RefBadge
                   key={`${reference.kind}:${reference.name}`}
                   reference={reference}

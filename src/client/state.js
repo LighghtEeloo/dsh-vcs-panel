@@ -13,8 +13,20 @@ import { isRowKey } from './detail/tree.js'
 /** Prefix that keeps this plugin's keys apart from any other tab state. */
 const KEY_PREFIX = 'vcs:'
 
-/** The synthetic working-tree row; commits use their own id. */
+/** The backend's default-node token; the panel gives each checkout its own row identity. */
 export const WORKTREE = 'worktree'
+
+const WORKTREE_PREFIX = 'worktree:'
+
+export function worktreeNode(path) {
+  return `${WORKTREE_PREFIX}${path}`
+}
+
+export function worktreePath(node) {
+  return typeof node === 'string' && node.startsWith(WORKTREE_PREFIX) && node.length > WORKTREE_PREFIX.length
+    ? node.slice(WORKTREE_PREFIX.length)
+    : null
+}
 
 /** The working-copy commit of a backend whose working copy is a commit. */
 export const WORKING_COPY = '@'
@@ -36,6 +48,7 @@ const COMMIT_DIR_PREFIX = 'commit|'
 export function defaultState() {
   return {
     repo: null,
+    worktrees: [],
     node: null,
     nodeChosen: false,
     ref: 'HEAD',
@@ -89,6 +102,7 @@ function booleanKeys(value) {
 export function isNode(value) {
   return value === WORKTREE
     || value === WORKING_COPY
+    || worktreePath(value) !== null
     || (typeof value === 'string' && /^[0-9a-f]{7,64}$/iu.test(value))
 }
 
@@ -114,6 +128,9 @@ export function sanitizeState(raw) {
   const state = defaultState()
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return state
   state.repo = textOrNull(raw.repo)
+  if (Array.isArray(raw.worktrees)) {
+    state.worktrees = [...new Set(raw.worktrees.filter(path => textOrNull(path) !== null))]
+  }
   state.node = isNode(raw.node) ? raw.node : null
   state.nodeChosen = state.node !== null && raw.nodeChosen === true
   if (REFS.includes(raw.ref)) state.ref = raw.ref
@@ -169,6 +186,9 @@ export function preferredNode(state, status) {
  */
 export function nodePatch(state, node, chosen) {
   if (state.node === node) return chosen === state.nodeChosen ? {} : { nodeChosen: chosen }
+  if ((worktreePath(state.node) ?? state.repo) !== (worktreePath(node) ?? state.repo)) {
+    return { node, nodeChosen: chosen, anchor: null, folds: {}, collapsed: {}, dirs: {} }
+  }
   const collapsed = {}
   for (const key of Object.keys(state.collapsed ?? {})) {
     if (!key.startsWith(COMMIT_DIR_PREFIX)) collapsed[key] = true

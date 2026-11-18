@@ -323,8 +323,8 @@ test('empty commit list yields an empty layout', () => {
 })
 
 /** The working-tree node the timeline prepends, waiting for HEAD. */
-function worktree(head) {
-  return { sha: 'worktree', parents: head === null ? [] : [head], refs: [], worktree: true }
+function worktree(head, id = 'worktree') {
+  return { sha: id, parents: head === null ? [] : [head], refs: [], worktree: true }
 }
 
 test('the working-tree lane is dashed and ends on HEAD, which continues solid in its color', () => {
@@ -375,4 +375,21 @@ test('a working tree on a root HEAD ends there, and one without commits has no l
   assert.equal(unborn.paths.length, 0)
   assert.equal(unborn.dots.length, 1)
   assert.equal(unborn.dots[0].type, 'worktree')
+})
+
+test('multiple dashed worktree lanes can share a HEAD without turning merge ancestry dashed', () => {
+  const layout = buildGraph([
+    worktree('M', 'merge-checkout'), worktree('R', 'right-one'), worktree('R', 'right-two'),
+    worktree(null, 'unborn'), node('M', ['L', 'R']), node('L', ['B']), node('R', ['B']), node('B'),
+  ])
+  assertAllFinite(layout)
+  assertPathsDrawable(layout)
+  assert.deepEqual(layout.dots.map(dot => dot.type), ['worktree', 'worktree', 'worktree', 'worktree', 'merge', 'default', 'default', 'default'])
+  const dashed = layout.paths.filter(path => path.dashed === true)
+  assert.equal(dashed.length, 3)
+  assert.deepEqual(dashed.map(path => path.points[0]), layout.dots.slice(0, 3).map(dot => dot.center))
+  assert.deepEqual(dashed.map(path => path.points.at(-1)), [layout.dots[4].center, layout.dots[6].center, layout.dots[6].center])
+  assert.ok(layout.paths.some(path => path.dashed !== true
+    && path.points[0].y === layout.dots[4].center.y
+    && path.points.at(-1).y === layout.dots[6].center.y), 'the real second-parent edge reaches R on a solid lane')
 })

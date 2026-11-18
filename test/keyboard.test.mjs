@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url'
 import { createApi } from '../src/client/api.js'
 import { buildNodeRows } from '../src/client/detail/tree.js'
 import { budgetFolds, streamSections } from '../src/client/detail/detail.js'
-import { GIT_CAPABILITIES } from '../lib/vcs/capabilities.js'
+import { GIT_CAPABILITIES, GIT_WORKTREE_CAPABILITIES } from '../lib/vcs/capabilities.js'
 
 const require = createRequire(import.meta.url)
 const { build } = require('esbuild')
@@ -2393,6 +2393,158 @@ test('VcsView scopes in-flight writes per repository without locking another rep
   }
 })
 
+test('VcsView overlays the checked trees, preserves repository history across all-range checks, and isolates diffs', async () => {
+  const harness = createHarness({ width: 1000 })
+  const restore = harness.installGlobals()
+  const fakeWin = installFakeWindow()
+  const savedFetch = globalThis.fetch
+  const source = '/repo'
+  const sibling = '/elsewhere/other tree'
+  const base = { sha: 'a'.repeat(40), refs: [], parents: [], author: 'Ada', subject: 'common base' }
+  const main = { ...base, sha: 'b'.repeat(40), refs: [{ kind: 'branch', name: 'main', current: true }], parents: [base.sha], subject: 'main-only commit' }
+  const topic = { ...base, sha: 'c'.repeat(40), parents: [base.sha], subject: 'topic-only commit' }
+  let offered = true
+  let mainDirectorySignal
+  let releaseMainDirectory
+  let requestedDiff = null
+  const historyReads = []
+  const writes = []
+  const json = body => ({ ok: true, status: 200, async json() { return body } })
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(url, 'http://127.0.0.1')
+    if (init.method !== 'GET') writes.push(url)
+    assert.equal(parsed.searchParams.get('sessionId'), 'worktree-session')
+    const target = parsed.searchParams.get('worktree')
+    if (parsed.pathname === '/api/vcs.repositories') {
+      const worktrees = [{ path: source, name: 'repo', branch: 'main', head: main.sha }]
+      if (offered) worktrees.push({ path: sibling, name: 'other tree', branch: 'topic/preview', head: topic.sha })
+      return json({ repositories: [{ path: source, name: 'repo', enclosing: true, worktrees, capabilities: GIT_CAPABILITIES }] })
+    }
+    assert.equal(parsed.searchParams.get('repo'), source)
+    const preview = target === sibling
+    if (parsed.pathname === '/api/vcs.status') {
+      return json({
+        capabilities: preview ? GIT_WORKTREE_CAPABILITIES : GIT_CAPABILITIES,
+        defaultNode: 'worktree',
+        branch: { name: preview ? 'topic/preview' : 'main', oid: preview ? topic.sha : main.sha, upstream: 'origin/main' },
+        total: 1,
+        groups: { staged: [], unstaged: [], untracked: [{ path: 'drafts/', directory: true }] },
+      })
+    }
+    if (parsed.pathname === '/api/vcs.log') {
+      const paths = parsed.searchParams.getAll('worktree')
+      const ref = parsed.searchParams.get('ref')
+      historyReads.push({ ref, paths })
+      if (ref === 'all') return json({ commits: [topic, main, base] })
+      if (paths.length === 0) return json({ commits: [main, base] })
+      return json({
+        commits: [...(paths.includes(sibling) ? [topic] : []), ...(paths.includes(source) ? [main] : []), base],
+        worktreeHeads: paths.map(path => ({ path, head: path === sibling ? topic.sha : main.sha })),
+      })
+    }
+    if (parsed.pathname === '/api/vcs.untracked') {
+      assert.equal(parsed.searchParams.get('path'), 'drafts/')
+      if (!preview) {
+        mainDirectorySignal = init.signal
+        await new Promise(resolve => { releaseMainDirectory = resolve })
+      }
+      const name = preview ? 'preview.txt' : 'source.txt'
+      return json({ entries: [{ name, path: `drafts/${name}`, type: 'file' }] })
+    }
+    if (parsed.pathname === '/api/vcs.diff') {
+      requestedDiff = Object.fromEntries(parsed.searchParams)
+      return json({ kind: 'text', before: false, after: true, hunks: [] })
+    }
+    throw new Error(`unexpected route: ${parsed.pathname}`)
+  }
+  try {
+    const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+    harness.mount(harness.react.createElement(VcsView, { sessionId: 'worktree-session', t }))
+    await harness.settle()
+    const body = harness.document.body
+    const chooseRepo = body.querySelector('.vcs-repo-select')
+    const button = body.querySelector('.vcs-worktree-button')
+    const items = () => body.querySelectorAll('[data-worktree-item]')
+    const rows = () => body.querySelectorAll('.vcs-worktree-row')
+    assert.deepEqual(chooseRepo.children.map(option => option.props.value), [source])
+    assert.notEqual(body.querySelector('.vcs-branch-button'), null)
+    button.focus()
+    harness.keyDown(button, 'ArrowDown')
+    await harness.settle()
+    assert.equal(harness.document.activeElement, items()[0])
+    assert.equal(items()[0].attributes.get('aria-checked'), 'true')
+    assert.equal(items()[0].attributes.get('aria-disabled'), 'true')
+    items()[0].props.onClick()
+    await harness.settle()
+    assert.equal(rows().length, 1, 'the last checked option stays checked')
+    harness.keyDown(items()[0], 'ArrowDown')
+    assert.equal(harness.document.activeElement, items()[1])
+    items()[1].props.onClick()
+    await harness.settle()
+    assert.equal(items()[1].attributes.get('aria-checked'), 'true')
+    assert.equal(harness.document.activeElement, items()[1], 'checking a box keeps the menu and its keyboard focus')
+    assert.deepEqual(historyReads.at(-1), { ref: 'HEAD', paths: [source, sibling] })
+    assert.deepEqual(rows().map(row => row.attributes.get('title')), [source, sibling])
+    assert.match(textOf(body.querySelector('.vcs-timeline')), /topic-only commit/u)
+    assert.equal(body.querySelector('.vcs-branch-button'), null)
+    assert.equal(body.querySelector('.vcs-sync'), null)
+    assert.equal(body.querySelector('.vcs-readonly').attributes.get('title'), 'top.readonlyHintWorktrees')
+    harness.keyDown(items()[1], 'Escape')
+    await harness.settle()
+    assert.equal(harness.document.activeElement, button)
+    assert.equal(body.querySelector('.vcs-worktree-menu'), null)
+
+    rows()[0].props.onClick()
+    await harness.settle()
+    body.querySelector('.vcs-tree-dir-head').props.onClick()
+    await harness.settle()
+    assert.equal(mainDirectorySignal.aborted, false)
+    rows()[1].props.onClick()
+    await harness.settle()
+    assert.equal(mainDirectorySignal.aborted, true)
+    assert.match(textOf(body.querySelector('.vcs-detail-title')), /other tree/u)
+    body.querySelector('.vcs-tree-dir-head').props.onClick()
+    await harness.settle()
+    releaseMainDirectory()
+    await harness.settle()
+    assert.match(textOf(body.querySelector('.vcs-tree-file-head')), /preview\.txt/u)
+    assert.doesNotMatch(textOf(body.querySelector('.vcs-content')), /source\.txt/u)
+    body.querySelector('.vcs-tree-file-head').props.onClick()
+    for (const observer of harness.intersections) observer.trigger(() => true)
+    await harness.settle()
+    assert.deepEqual(requestedDiff, { sessionId: 'worktree-session', repo: source, worktree: sibling, scope: 'untracked', path: 'drafts/preview.txt' })
+
+    body.querySelectorAll('.vcs-segmented-item')[1].props.onClick()
+    await harness.settle()
+    const requestCount = historyReads.length
+    assert.deepEqual(historyReads.at(-1), { ref: 'all', paths: [] })
+    button.props.onClick()
+    await harness.settle()
+    items()[0].props.onClick()
+    await harness.settle()
+    assert.equal(historyReads.length, requestCount, 'checking changes only the worktree rows in all-history scope')
+    assert.equal(rows().length, 1)
+    assert.equal(rows()[0].attributes.get('title'), sibling)
+    assert.match(textOf(body.querySelector('.vcs-timeline')), /main-only commit/u)
+    assert.equal(body.querySelector('.vcs-branch-button'), null, 'a single sibling stays read-only')
+
+    offered = false
+    body.querySelector('[aria-label="top.refresh"]').props.onClick()
+    await harness.settle()
+    assert.equal(chooseRepo.props.value, source)
+    assert.equal(rows().length, 1)
+    assert.equal(rows()[0].attributes.get('title'), source, 'a removed selection falls back to the session worktree')
+    assert.notEqual(body.querySelector('.vcs-branch-button'), null)
+    assert.deepEqual(writes, [])
+  } finally {
+    releaseMainDirectory?.()
+    harness.unmount()
+    fakeWin.restore()
+    restore()
+    globalThis.fetch = savedFetch
+  }
+})
+
 test('BranchDialog, TagDialog, and CommitDialog cover blocked state, unmerged focus, delete-remote danger, and branch checkout UX', async () => {
   const harness = createHarness({ width: 1000 })
   const restore = harness.installGlobals()
@@ -3001,8 +3153,7 @@ test('Timeline virtualization, paging, ChangeTree hunk entry, header scroll-back
           commits,
           layout,
           status: null,
-          statusState: 'ready',
-          worktreeRow: true,
+          worktrees: [{ id: 'worktree:/repo', path: '/repo', label: 'Working tree', status: null, statusState: 'ready', refLabel: null }],
           selectedRow: selected,
           onSelectRow(idx) { selected = idx; renderTimeline() },
           onMove(delta) {

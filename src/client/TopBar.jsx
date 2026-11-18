@@ -24,6 +24,7 @@ import { BRANCH_BUSY_KEYS } from './branch.js'
 import { TAG_BUSY_KEYS } from './tag.js'
 import { COMMIT_BUSY_KEYS } from './commit.js'
 import { useFloatingMenu } from './useFloatingMenu.js'
+import { worktreeRefLabel } from './worktrees.js'
 
 /** Range choices when no backend has answered yet. */
 const FALLBACK_RANGES = [
@@ -241,6 +242,101 @@ function BranchSwitcher({
   )
 }
 
+/** A checklist changes the display only; keep it open for successive checks. */
+function WorktreeChecklist({ worktrees, checkedPaths, sessionPath, onToggle, t, locale }) {
+  const [position, setPosition] = useState(null)
+  const triggerRef = useRef(null)
+  const menuRef = useRef(null)
+  const close = useCallback(restore => {
+    setPosition(null)
+    if (restore) triggerRef.current?.focus({ preventScroll: true })
+  }, [])
+  const { onKeyDown, onBlur } = useFloatingMenu({
+    open: position !== null,
+    triggerRef,
+    menuRef,
+    itemSelector: '[data-worktree-item]',
+    onClose: close,
+    dismissOnScroll: false,
+  })
+  const open = () => {
+    const rect = triggerRef.current?.getBoundingClientRect()
+    if (rect === undefined) return
+    const viewport = typeof window === 'undefined' ? rect.left + MENU_WIDTH + MENU_MARGIN : window.innerWidth
+    const left = Math.max(MENU_MARGIN, Math.min(rect.left, viewport - MENU_WIDTH - MENU_MARGIN))
+    setPosition({ left, top: rect.bottom + MENU_GAP })
+  }
+  useEffect(() => {
+    if (position === null) return undefined
+    const frame = requestAnimationFrame(() => {
+      const target = menuRef.current?.querySelector('[aria-checked="true"]') ?? menuRef.current
+      target?.focus({ preventScroll: true })
+    })
+    return () => { cancelAnimationFrame(frame) }
+  }, [position])
+
+  return (
+    <span className="vcs-branch-wrap" onBlur={onBlur}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="vcs-branch vcs-worktree-button"
+        aria-haspopup="menu"
+        aria-expanded={position !== null}
+        onClick={() => { if (position === null) open(); else close(true) }}
+        onKeyDown={event => {
+          if (position !== null || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return
+          event.preventDefault()
+          open()
+        }}
+      >
+        {t('top.worktreeSelection', { count: formatCount(checkedPaths.length, locale) })}
+        <Chevron open={position !== null} />
+      </button>
+      {position !== null ? (
+        <div
+          ref={menuRef}
+          className="vcs-branch-menu vcs-worktree-menu"
+          role="menu"
+          aria-label={t('top.worktrees')}
+          tabIndex={-1}
+          style={{ left: `${position.left}px`, top: `${position.top}px` }}
+          onKeyDown={onKeyDown}
+        >
+          <p className="vcs-branch-menu-title">{t('top.worktrees')}</p>
+          {worktrees.map(tree => {
+            const checked = checkedPaths.includes(tree.path)
+            const last = checked && checkedPaths.length === 1
+            const label = worktreeRefLabel(tree, t)
+            return (
+              <button
+                key={tree.path}
+                type="button"
+                role="menuitemcheckbox"
+                className="vcs-menu-item vcs-worktree-item"
+                data-worktree-item=""
+                tabIndex={-1}
+                aria-checked={checked}
+                aria-disabled={last ? 'true' : undefined}
+                title={tree.path}
+                onClick={() => { if (!last) onToggle(tree.path) }}
+              >
+                <span className="vcs-worktree-check" aria-hidden="true">{checked ? <CheckIcon /> : null}</span>
+                <span className="vcs-menu-item-name">
+                  {tree.name}
+                  {label === null || label === tree.name ? null : <small>{label}</small>}
+                </span>
+                {tree.path === sessionPath ? <span className="vcs-worktree-current">{t('top.sessionWorktree')}</span> : null}
+              </button>
+            )
+          })}
+          <p className="vcs-branch-menu-note">{t('top.keepWorktree')}</p>
+        </div>
+      ) : null}
+    </span>
+  )
+}
+
 /**
  * The sync control: icon plus the counts it would settle.
  *
@@ -288,6 +384,7 @@ function SyncButton({ branch, syncing, onSync, t, locale }) {
  */
 export function TopBar({
   repositories, repo, onRepoChange, status, capabilities, refMode, onRefMode, onRefresh, refreshing,
+  worktrees = [], checkedPaths = [], onToggleWorktree, sessionPath,
   revalidating = false, onSync, syncing, branches = [], branchesStatus = 'idle', branchesError = null,
   branchesTruncated = false, onLoadBranches = () => {}, onSwitchBranch = () => {}, onBranchActions = () => {},
   onRestoreFocus = () => {}, switching = false, branchBusy = null, tagBusy = null, commitBusy = null, notice,
@@ -344,6 +441,8 @@ export function TopBar({
     }
   } else if (capacity?.snapshots === true) {
     readonlyHint = t('top.readonlyHintSnapshots')
+  } else if (checkedPaths.length > 1) {
+    readonlyHint = t('top.readonlyHintWorktrees')
   }
   return (
     <div className="vcs-topbar">
@@ -367,6 +466,10 @@ export function TopBar({
           <option key={entry.path} value={entry.path}>{entry.enclosing ? entry.name : `${entry.name}  (${entry.path})`}</option>
         ))}
       </select>
+      {worktrees.length > 0 ? (
+        <WorktreeChecklist key={repo} worktrees={worktrees} checkedPaths={checkedPaths} sessionPath={sessionPath}
+          onToggle={onToggleWorktree} t={t} locale={locale} />
+      ) : null}
       <Segmented
         value={refMode}
         label={t('history.refLabel')}

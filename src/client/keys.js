@@ -161,7 +161,7 @@ export function isNavigationStop(element, stop = null) {
 
 /**
  * Whether `element` lives inside a modal dialog, floating menu, or the branch
- * switcher button that owns its own dropdown keyboard behavior.
+ * or worktree picker that owns its own dropdown keyboard behavior.
  * @param {unknown} element - candidate element.
  * @param {unknown} [stop=null] - panel root boundary.
  * @returns {boolean} true for overlay/menu controls.
@@ -172,6 +172,7 @@ export function isOverlayOrMenuTarget(element, stop = null) {
     || hasClass(node, 'vcs-branch-menu')
     || hasClass(node, 'vcs-ref-ops')
     || hasClass(node, 'vcs-branch-button')
+    || hasClass(node, 'vcs-worktree-button')
     || hasClass(node, 'vcs-ref-button')
   )) !== null
 }

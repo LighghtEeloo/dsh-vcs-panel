@@ -169,13 +169,12 @@ class PathHelper {
 /**
  * Build the lane graph for commits already sorted by `git log --topo-order`.
  *
- * The timeline puts the working tree first as a virtual node (`worktree:
- * true`) whose only parent is HEAD. Its lane is marked `dashed` and ends on
- * HEAD's dot; HEAD's history continues as a new solid lane in the same slot
- * and color, so a lane is either wholly dashed or wholly solid.
+ * The timeline prepends virtual worktree nodes whose only parent is their
+ * HEAD (if born). Dashed lanes end on those commits, and are not reused for
+ * real commit edges. Several worktrees can end on the same commit dot.
  *
  * @param {Array<{ sha: string, parents: string[], refs: Array<{ name: string, kind: string }>, worktree?: boolean }>} commits
- *   Ordered nodes: the optional working-tree node, then commits from `vcs.log`.
+ *   Ordered nodes: selected worktrees, then commits from `vcs.log`.
  * @returns {{
  *   paths: Array<{ points: Array<{ x: number, y: number }>, color: number, dashed?: boolean }>,
  *   links: Array<{ start: { x: number, y: number }, control: { x: number, y: number }, end: { x: number, y: number }, color: number }>,
@@ -201,19 +200,15 @@ export function buildGraph(commits) {
   const colorOverflow = { n: 0 }
   let offsetY = -HALF_ROW_UNIT
 
-  // Index `unsolved` by `.next` for O(1) merge-parent lookup. Matches the
-  // upstream `.find()` "first wins" semantics when several lanes wait for the
-  // same sha.
+  // Index solid lanes for merge-parent lookup. A dashed worktree lane
+  // represents a checkout, never ancestry, even when both target one SHA.
   const nextMap = new Map()
   const trackNext = (line) => {
-    if (!nextMap.has(line.next)) nextMap.set(line.next, line)
+    if (!line.path.dashed && !nextMap.has(line.next)) nextMap.set(line.next, line)
   }
   const untrackNext = (line) => {
     if (nextMap.get(line.next) === line) nextMap.delete(line.next)
   }
-
-  // The lane from the working-tree node to HEAD, while it waits for HEAD.
-  let worktreeLine = null
 
   for (const commit of list) {
     const sha = commit && commit.sha
@@ -229,11 +224,10 @@ export function buildGraph(commits) {
     for (let index = 0; index < unsolved.length; index++) {
       const line = unsolved[index]
       if (line.next === sha) {
-        if (major === null && line === worktreeLine) {
+        if (major === null && line.path.dashed) {
           // The dashed working-tree lane ends on HEAD; HEAD's own history
           // continues as a solid lane in the same slot and color.
           offsetX += LANE_UNIT
-          worktreeLine = null
           line.end(offsetX, offsetY, HALF_ROW_UNIT)
           untrackNext(line)
           if (parents.length > 0) {
@@ -287,13 +281,10 @@ export function buildGraph(commits) {
           x: offsetX,
           y: offsetY,
         })
+        if (commit.worktree === true) major.path.dashed = true
         unsolved.push(major)
         trackNext(major)
         result.paths.push(major.path)
-        if (commit.worktree === true) {
-          major.path.dashed = true
-          worktreeLine = major
-        }
       }
     }
 

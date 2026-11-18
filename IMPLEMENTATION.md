@@ -10,14 +10,14 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 
 | 路由 | 查询参数 | 应答字段 |
 | --- | --- | --- |
-| `GET /api/vcs.repositories` | `sessionId` | `cwd`、`repositories[]`（`path`、`name`、`enclosing`、`vcs`、`capabilities`）、`truncated` |
-| `GET /api/vcs.status` | `sessionId`、`repo` | `repo`、`vcs`、`capabilities`、`defaultNode`、`branch`、`workingCopy?`、`groups`、`total`、`truncated` |
+| `GET /api/vcs.repositories` | `sessionId` | `cwd`、`repositories[]`（`path`、`name`、`enclosing`、`vcs`、`capabilities`；Git 另有 `worktrees[]`：`path`、`name`、`branch`、`head`）、`truncated`、`worktreesTruncated` |
+| `GET /api/vcs.status` | `sessionId`、`repo`、`worktree?` | `repo`、`vcs`、`capabilities`、`defaultNode`、`branch`、`workingCopy?`、`groups`、`total`、`truncated` |
 | `GET /api/vcs.branches` | `sessionId`、`repo` | `branches[]`（`name`、`current`）、`truncated`（仅 `capabilities.branchSwitch` 为真时可用） |
 | `GET /api/vcs.remotes` | `sessionId`、`repo` | `remotes[]`、`truncated`（`capabilities.tagOps` 或 `capabilities.branchOps` 为真时可用） |
-| `GET /api/vcs.untracked` | `sessionId`、`repo`、`path`（`/` 结尾） | `path`、`entries[]`（`name`、`path`、`type`）、`truncated`（仅 `capabilities.untracked` 为真时可用） |
-| `GET /api/vcs.diff` | `sessionId`、`repo`、`scope`、`path`、`oldPath?`、`rev?` | `VcsFileDiff` |
-| `GET /api/vcs.log` | `sessionId`、`repo`、`ref`、`limit`、`skip` | `commits[]`、`truncated`、`nextSkip` |
-| `GET /api/vcs.commit` | `sessionId`、`repo`、`sha` | `commit`（`CommitDetail`，不含 patch；`refs` 含 `current`、分离 `head` 及 `remote`/`branch` 标注）、`truncated` |
+| `GET /api/vcs.untracked` | `sessionId`、`repo`、`worktree?`、`path`（`/` 结尾） | `path`、`entries[]`（`name`、`path`、`type`）、`truncated`（仅 `capabilities.untracked` 为真时可用） |
+| `GET /api/vcs.diff` | `sessionId`、`repo`、`worktree?`、`scope`、`path`、`oldPath?`、`rev?` | `VcsFileDiff` |
+| `GET /api/vcs.log` | `sessionId`、`repo`、`worktree?`（Git，可重复）、`ref`、`limit`、`skip` | `commits[]`、`truncated`、`nextSkip`；传入工作树时另有 `worktreeHeads[]`（`path`、`head`） |
+| `GET /api/vcs.commit` | `sessionId`、`repo`、`worktree?`、`sha` | `commit`（`CommitDetail`，不含 patch；`refs` 含 `current`、分离 `head` 及 `remote`/`branch` 标注）、`truncated` |
 | `GET /api/vcs.turn` | `sessionId`、`turn`、`seq?` | `turn`、`head`（`TurnHead \| null`）、`changed`、`added`、`deleted` |
 | `POST /api/vcs.sync` | JSON 请求体 `{ sessionId, repo }` | `upstream`、`pulled`、`pushed`（仅 `capabilities.sync` 为真时可用） |
 | `POST /api/vcs.switch` | JSON 请求体 `{ sessionId, repo, branch }` | `branch`（仅 `capabilities.branchSwitch` 为真时可用） |
@@ -31,6 +31,11 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 
 - **会话与仓库白名单**：`sessionId` 必须命中带有效 `header.cwd` 的活跃会话；`repo` 必须命中当次 `discoverRepositories` 的结果（`sameRepoPath`）。
 - **仓库发现与符号链接收敛**：从 `cwd` 向上最多 64 层查找最近的仓库标记，再扫描 `cwd` 下一层子目录（忽略 `node_modules`，不递归）。标记用 `lstat` 检测且 `.jj` 优先于 `.git`，兼容 linked worktree 的 `.git` 文件与 submodule。根路径经 `ctx.fs.resolve` 规范化，子仓库规范路径必须仍在 `cwd` 内；读取文件前再经 `containPath` 做 `realpath` 校验，确保目标留在仓库根内。
+- **Git 仓库分组与工作树白名单**：`groupRepositories` 按 Git common directory 归组，保留首个已授权工作树作为该组入口（`repo`），并在组内把它放在首位。
+  `lib/worktrees.js` 解析该入口的 `git worktree list --porcelain -z`，略过 bare、prunable 和不在线的树。
+  候选路径经规范化后，用 `git rev-parse --path-format=absolute --show-toplevel --git-common-dir` 核实它是同一仓库的工作树根，避免读到占据旧路径的无关仓库。
+  详情读取的 `worktree` 只接收一个目标，历史读取可接收多个无重复的绝对路径；每次根据 `repo` 重新校验。文件路径约束使用所选树的根。
+  写请求仍只接受原仓库白名单，带 `worktree` 参数一律拒绝。
 - **路径与修订号净化**：`validateRelPath` 拒绝绝对路径、反斜杠、空段、`.`、`..`、`-` 前缀与控制字符，Git 侧再包 `:(literal)` pathspec，Jujutsu 侧用 `file:"..."` fileset。提交 ID 先做 7–64 位十六进制校验；Git 再经 `rev-parse --verify <sha>^{commit}` 解析，Jujutsu 仅接受 `@` 或十六进制 ID。
 - **写请求栅栏**：`vcs.sync`、`vcs.switch`、`vcs.branch`、`vcs.tag` 与 `vcs.commit-op` 只接受 `POST`，`content-type` 必须是 `application/json`（跨站页面不经 CORS 预检发不出），`Sec-Fetch-Site` 存在且不是 `same-origin` / `none` 时返回 `403 forbidden`；请求体中的 `sessionId` 与 `repo` 再走与读取相同的会话与仓库白名单。切换的 `branch` 与分支操作的 `branch`、`name`、`local` 必须是字符串：拒绝空串、超过 255 字符、空白或控制字符、`-` 前缀。`vcs.branch` 的 `action` 必须是 `rename`、`delete`、`merge`、`rebase`、`push`、`checkout-remote`、`delete-remote`、`merge-remote` 或 `pull-remote` 之一；`name` 只用于 `rename`，`local` 只用于 `checkout-remote`，`force` 只用于 `delete` 且必须是布尔值。本地分支操作的目标必须命中该仓库的本地分支列表；重命名与远程检出的新名字还要通过 `git check-ref-format refs/heads/<name>`。远程分支操作的目标必须由后端按 `git remote` 的最长远程名切分，并命中一个真实、非符号引用的 `refs/remotes/<remote>/<branch>`；不支持 `<remote>/HEAD`。删除只发送 `refs/heads/<branch>` 且不带 `--force`；拉取只抓取命名的 `refs/heads/<branch>` 到对应的 `refs/remotes/<remote>/<branch>`。`vcs.tag` 的 `action` 必须是 `delete` 或 `push`；`tag` 拒绝空串、超过 255 字符、空白或控制字符与 `-` 前缀，再通过 `git check-ref-format refs/tags/<name>` 并确认该 ref 存在；`push` 的 `remote` 必须命中 `git remote` 的结果。`vcs.commit-op` 的 `action` 必须是 `tag`、`branch`、`checkout`、`cherry-pick`、`revert`、`drop`、`merge`、`rebase` 或 `reset`；`sha` 为 7–64 位十六进制；`tag` / `branch` 的 `name` 复用引用名校验；`branch` 的可选 `checkout` 必须是布尔值；`tag` 的 `message` 是长度不超过 4,000 的字符串；`reset` 的 `mode` 必须是 `soft`、`mixed` 或 `hard`。同一仓库根同时只允许一次写操作，第二次返回 `409 busy`；这些写互相排斥。
 
@@ -38,13 +43,13 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 
 | `code` | HTTP | 触发情形 |
 | --- | --- | --- |
-| `bad-request` / `not-a-repo` | 400 | 参数非法，或仓库不在当前会话发现列表内 |
+| `bad-request` / `not-a-repo` | 400 | 参数非法、仓库不在当前会话发现列表内，或所选工作树不属于该来源仓库 |
 | `not-found` | 404 | 目标文件或提交不存在 |
 | `no-session` / `no-cwd` | 409 | 会话不存在或无工作目录 |
 | `output-too-large` | 413 | 子进程输出超出字节上限（`lossy`） |
 | `vcs-missing` / `timeout` | 503 | 宿主缺少 `git`/`jj` 可执行文件，或命令超时 |
 | `internal` | 500 | 未预期的后端失败 |
-| `forbidden` | 403 | 浏览器声明为跨站的写请求 |
+| `forbidden` | 403 | 浏览器声明为跨站的写请求，或写请求携带 `worktree` 参数 |
 | `busy` | 409 | 同一仓库已有写操作在进行 |
 | `no-upstream` | 409 | 分离头指针、分支没有上游，或上游在远程上不存在 |
 | `diverged` | 409 | 分支与上游各有新提交 |
@@ -81,7 +86,7 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 - **Git**：固定 `-c core.quotepath=false`，环境设 `GIT_CONFIG_COUNT=0`、`GIT_TERMINAL_PROMPT=0`、`GIT_OPTIONAL_LOCKS=0`；比较命令加 `--no-pager`、`--no-ext-diff`、`--no-color`、`-U3`。
 - **Jujutsu**：固定 `--color=never`、`--no-pager`，环境设 `JJ_EDITOR=true`；除工作副本快照外的读取均带 `--ignore-working-copy`。
 
-每个后端实现 `require`、`head`、`status`、`log`、`commit`、`diff`（可选 `untracked`、`sync`、`branches` / `switchBranch`、`branchOp`、`remotes` / `tagOp`、`commitOp`）并声明 `capabilities`；Client 仅按能力对象驱动布局，不按后端名称分支：
+每个后端实现 `require`、`head`、`status`、`log`、`commit`、`diff`（可选 `untracked`、`worktrees`、`sync`、`branches` / `switchBranch`、`branchOp`、`remotes` / `tagOp`、`commitOp`）并声明 `capabilities`；Client 仅按能力对象驱动布局，不按后端名称分支：
 
 | 能力字段 | Git | Jujutsu |
 | --- | --- | --- |
@@ -90,9 +95,14 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 | `changeId` / `snapshots` | `false` | `true` |
 | `ranges`（`defaultRange`） | **`HEAD`**、`all` | **`@`**、`all` |
 
+Git 工作树预览保留 Git 的读取能力。单选其他工作树或多选时，Client 将 `sync`、`branchSwitch`、`branchOps`、`tagOps` 与 `commitOps` 置为 `false`，不提供写入目标；其他工作树的 `status` 也返回只读能力。
+
 两个后端的读写规则差异：
 
 - **Git**：`head` 仅读取 `symbolic-ref -q --short HEAD` 与 `rev-parse -q --verify HEAD^{commit}`，不扫描索引与工作区；`status` 组合 `status --porcelain=v2 -z --branch --untracked-files=normal` 与两次 `diff --numstat -z`（index 与工作区），按 `XY` 拆成 `staged`、`unstaged`、`untracked`（两侧均改时各出现一次，冲突标 `U`）。`diff` 按 `staged`（对 `HEAD`）、`unstaged`（对 index）、`untracked`（按新文件合成）、`commit`（对第一父，root 对空树）取值；空仓库读取 `HEAD` 日志视为空历史而非错误。`GitBackend.commit` 并行读取详情（`show`）、`HEAD` 符号/分支指向（`for-each-ref %(refname)%00%(HEAD)`、`symbolic-ref`、`rev-parse HEAD`）并在含远程引用时并行读取远程列表，为详情返回与 `log` 一致的 `current: true`、分离 `head` 及 `remote`/`branch` 标注。
+- **Git 多起点历史**：在 `HEAD` 范围读取时，取所选树经校验的非空 `head` 对象 ID，去重后传给一次 `git log --topo-order`；没有已存在的 `HEAD` 就返回空历史。
+  单选入口树时直接读取 `HEAD`，`all` 保持使用 `git log --all`。Client 把所选根路径集合纳入 `HEAD` 范围的分页键，下一页发现 `worktreeHeads` 已变更则重新载入首屏。
+  非默认树的单选和多选中，前端隐藏读取命令所在树的 `current` / `head` 装饰，改用工作区行显示各树的 `HEAD`。
 - **Git 共享底层工具**：`lib/git-utils.js` 复用 `listGitRemotes`、`remoteNames`（上限 500）、`readBranchUpstream` 与 `runPorcelainPush`；`lib/ref-utils.js` 复用 `RESET_MODES`、`refExists`、`validateRefFormat`、`requireLocalBranch`、`runAbortableOp`、`mergeRevisionIntoCurrent` 与 `rebaseCurrentOntoRevision`。
 - **Git 同步**（`lib/sync.js`）：复用 `readBranchUpstream` 与 `runPorcelainPush`，在远程不是 `.` 时执行 `fetch --quiet <remote>`，再用 `rev-list --left-right --count HEAD...@{upstream}` 比较：两侧都有提交返回 `diverged`；只落后执行 `merge --ff-only --quiet @{upstream}`；只领先推送且不带 `--force`，不跳过钩子，抓取与推送使用远程命令超时。
 - **Git 分支切换**：`branches` 用 `for-each-ref --sort=-committerdate --count 501 --format=%(refname:short)%00%(HEAD) refs/heads` 读取本地分支，`current` 来自 `%(HEAD)`；只列 `refs/heads`，远程跟踪分支不在其中，也不会被检出为新的本地分支。`switchBranch` 先用 `requireLocalBranch` 确认目标，再用 `git switch --no-guess --quiet <branch>`；不带 `--force`、不贮藏、不丢弃改动，Git 自己拒绝会覆盖本地或未跟踪文件的切换，该拒绝映射为 `switch-blocked`。目标已是当前分支时直接返回，不执行命令。
@@ -212,7 +222,8 @@ type TurnSummary = {
 
 | 项目 | 上限 | 执行位置 |
 | --- | --- | --- |
-| 单会话列出的仓库数 | 50 | Host `discoverRepositories` |
+| 单会话初始仓库根 / 附加 Git 工作树数 | 各 50 | Host `discoverRepositories` / `groupRepositories` |
+| 工作树状态读取并发 / 一次历史请求的工作树数 | 4 / 51（入口树及最多 50 棵其他树） | Client `VcsView` / Host `log` |
 | 每组状态文件数（Git）/ 单提交详情文件数 / 未跟踪目录展开条目数 / 本地分支列表 / 远程列表 | 各 500 | Host `status` / `commit` / `untracked` / `branches` / `remotes` |
 | 单文件 diff 输出 / 渲染行数 | 2 MB / 5,000 行 | Host `diff`、Client `FileDiff` |
 | “全部展开”的 diff 预算 | 单文件 1,000 行；单节点累计 20,000 行 | Client `budgetFolds`、`expandedFileFolds` |
@@ -244,7 +255,10 @@ Client 顶层注入 `['slots', 'locale', 'uiConversation', 'sidebarRight', 'side
 
 ### 状态持久化与锚点恢复
 
-会话状态保存在 `sessionStorage` 的 `vcs:<sessionId>`，包含 `repo`、`node`、`nodeChosen`、`ref`、`dirs`、`collapsed`、`folds`、`anchor`（`{ key, offset }`）、`split`、`wrap`、`twoColumns`（默认 `true`，只有显式 `false` 表示单栏）、`sidebarWidth` 与 `timelineScroll`；内存另外按仓库记住切换前的选中节点、目录折叠与历史范围。页签身份与右侧栏布局由宿主的 `sidebarRight` 存储按会话保存，应用重启后恢复；面板自己的阅读状态（含时间线宽度）单独保存。
+会话状态保存在 `sessionStorage` 的 `vcs:<sessionId>`，包含 `repo`、`worktrees`、`node`、`nodeChosen`、`ref`、`dirs`、`collapsed`、`folds`、`anchor`（`{ key, offset }`）、`split`、`wrap`、`twoColumns`（默认 `true`，只有显式 `false` 表示单栏）、`sidebarWidth` 与 `timelineScroll`；内存另外按仓库记住切换前的勾选、选中节点、目录折叠与历史范围。页签身份与右侧栏布局由宿主的 `sidebarRight` 存储按会话保存，应用重启后恢复；面板自己的阅读状态（含时间线宽度）单独保存。
+
+`repo` 保存仓库入口，`worktrees` 保存当前仓库勾选的路径。恢复时只保留目录仍可用的项，选集为空则回到入口树。Git 工作区节点以 `worktree:<path>` 标识，旧的单工作区节点 `worktree` 读取时映射到选中的第一棵树。
+工作区状态和 diff 分别按根路径加载；详情跨工作树切换时取消旧目录展开请求并重置目录阅读状态，避免串用同名文件和目录。
 
 `folds` 只为用户显式操作过的文件保存布尔值：空记录表示文件全部收起，也就是详情的默认形态。行键前缀白名单为 `staged|`、`unstaged|`、`commit|`；`sanitizeState` 在读取时丢弃未知字段与旧版遗留的 `untracked|` 键。数据刷新、折叠全部文件或收起吸顶文件头时，统一先记录锚点行与行内像素偏移，重排后恢复；锚点行未渲染时沿“文件行 → 父目录链 → 分组行”降级。
 
@@ -252,9 +266,12 @@ Client 顶层注入 `['slots', 'locale', 'uiConversation', 'sidebarRight', 'side
 
 ### 图布局与变更树管线
 
-- **时间线图布局**：`buildGraph` 接收拓扑序节点，按 `pass / goto / end` 遍历活动 lane（第一父延续当前 lane，其余父节点分配或复用侧 lane，lane 结束时回收颜色；Git 工作区虚节点以虚线连向 `HEAD`），输出路径与圆点坐标，与虚拟列表共用滚动容器渲染；分页追加时 O(n) 重算整图并按提交锚点恢复位置。
+- **时间线图布局**：`buildGraph` 接收勾选的工作树虚节点与一份拓扑序提交，按 `pass / goto / end` 遍历活动 lane，输出路径与圆点坐标，与虚拟列表共用滚动容器渲染。
+  每个 Git 工作树虚节点的虚线路径终止在它自己的 `HEAD`；多个虚线可终止于同一圆点。提交第二父等真实祖先边只复用实线。分页追加时重算整图并按提交锚点恢复位置。
 - **时间线、详情缓存与变更树请求调度**：`Timeline` 在虚拟窗口 `[first, last)` 之外额外保留 `focusRow` 挂载以防止大幅滚动丢焦，通过 `useLayoutEffect` 同步滚入选中行，并支持 `PageUp`/`PageDown`/`Home`/`End`。`DetailPane` 用 `${repo}|${node}|${revision}` 键缓存已读提交详情（`commitCache`，上限 `COMMIT_CACHE_LIMIT = 200`），避免反复切换提交重复请求，并在刷新或切仓时清空。变更树客户端将 Git 的 `untracked` 条目并入 `unstaged` 分组（可按需展开的未跟踪目录不参与单子目录链压缩），生成单一扁平行列表供渲染、roving tabindex 键盘导航与滚动锚点共用；文件默认收起，只有展开的行才请求 `vcs.diff`。发起请求时仍按条目自身的 `untracked` 标记还原 `scope`（未跟踪项走 `untracked`，重命名带 `oldPath`）。变更树窄于 640 px（`SPLIT_MIN_WIDTH`）时将 `FileDiff` 的 `split` 置为 `false` 单栏渲染。展开文件由 `IntersectionObserver` 入队请求，离开视口时经 `AbortController` 取消。`↑` / `↓` 或 `j` / `k` 沿一条纵向列表移动：分组、目录、文件行与展开文件的 hunk header 共用同一光标，hunk header 设 `tabIndex=-1` 以便程序聚焦但仍沿用行的 roving tabindex；第 0 行按 `↑`/`k` 或 `[` 滚回 `scrollTop = 0` 查看提交头部；`[` / `]` 只按树行移动，`PageUp`/`PageDown`/`Home`/`End` 翻页并对齐光标与滚动；`→`/`l` 在已展开文件上进入首个 hunk，`←`/`h` 先收起展开文件再回到时间线，`Esc` 直接返回。滚动或点击 hunk 与无选区 diff 正文时同步光标、焦点与吸顶阅读位置。键盘匹配排除 `AltGraph`，保证需要 AltGr 输入 `[` / `]` 的键盘布局可用。
-- **右侧栏布局**：`VcsView` 按自身宽度与 `twoColumns` 偏好决定栏数：`singleColumn = narrow || !twoColumns`，`narrow` 为根节点宽度 `< 760px`（`NARROW_WIDTH`）；不为对话输入框预留底部空间。单栏时 `singleView`（`'timeline'` / `'detail'`）决定显示哪一栏，选中或进入节点切到详情，返回按钮与 `Esc` 回到时间线，切换仓库或会话时回到时间线。根节点的 `data-narrow` 只管窄栏顶部栏换行与高度自适应（避免右端控件被裁掉），`data-single-column` 让时间线在单栏时占满整宽。顶部栏开关（`.vcs-columns-toggle`）调用 `setTwoColumns`：宽栏里关掉时有选中节点则切到详情；窄栏只改偏好，不改正在显示的栏。
+- **右侧栏布局**：`VcsView` 按自身宽度与 `twoColumns` 偏好决定栏数：`singleColumn = narrow || !twoColumns`，`narrow` 为根节点宽度 `< 760px`（`NARROW_WIDTH`）；不为对话输入框预留底部空间。
+  单栏时 `singleView`（`'timeline'` / `'detail'`）决定显示哪一栏，选中时间线节点或进入它时切到详情，返回按钮与 `Esc` 回到时间线。切换仓库或会话回到时间线。
+  根节点的 `data-narrow` 只管窄栏顶部栏换行与高度自适应（避免右端控件被裁掉），`data-single-column` 让时间线在单栏时占满整宽。顶部栏开关（`.vcs-columns-toggle`）调用 `setTwoColumns`：宽栏里关掉时有选中节点则切到详情；窄栏只改偏好，不改正在显示的栏。
 
 ## 复用与来源
 

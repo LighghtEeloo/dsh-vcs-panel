@@ -26,14 +26,16 @@ export class ApiError extends Error {
 
 /**
  * Build the query string for one request.
- * @param {Record<string, string | number | undefined | null>} params - query values.
+ * @param {Record<string, string | number | string[] | undefined | null>} params - query values.
  * @returns {string} the query string including the leading `?`.
  */
 export function queryString(params) {
   const search = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null) continue
-    search.set(key, String(value))
+    if (Array.isArray(value)) {
+      for (const item of value) search.append(key, item)
+    } else search.set(key, String(value))
   }
   const text = search.toString()
   return text === '' ? '' : `?${text}`
@@ -56,9 +58,13 @@ function toAbortError(error) {
  * @param {object} [options] - injection seam for tests.
  * @param {typeof fetch} [options.fetchImpl] - fetch implementation.
  * @param {string} [options.base] - URL prefix; empty means relative to the app.
+ * @param {string | null} [options.worktreeOf] - allowed repository anchoring a worktree preview.
  * @returns {object} the route methods.
  */
-export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' } = {}) {
+export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '', worktreeOf = null } = {}) {
+  /** In a preview, the selected root is the worktree, not the allowed repository. */
+  const browseTarget = repo => worktreeOf === null ? { repo } : { repo: worktreeOf, worktree: repo }
+
   /**
    * Decode one Host answer, turning a non-2xx status into an {@link ApiError}.
    * @param {Response} response - the transport answer.
@@ -91,7 +97,7 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
   /**
    * One JSON read.
    * @param {string} path - exact Host route path.
-   * @param {Record<string, string | number | undefined | null>} params - query values.
+   * @param {Record<string, string | number | string[] | undefined | null>} params - query values.
    * @param {AbortSignal} [signal] - cancellation.
    * @returns {Promise<unknown>} the decoded body.
    */
@@ -138,7 +144,7 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
     /**
      * Repositories the Session may show.
      * @param {AbortSignal} [signal] - cancellation.
-     * @returns {Promise<{ repositories: object[], cwd: string, truncated: boolean }>} the list.
+     * @returns {Promise<{ repositories: object[], cwd: string, truncated: boolean, worktreesTruncated: boolean }>} the repositories and their checkouts.
      */
     repositories(signal) {
       return get('/api/vcs.repositories', {}, signal)
@@ -151,7 +157,7 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
      * @returns {Promise<object>} the status.
      */
     status(repo, signal) {
-      return get('/api/vcs.status', { repo }, signal)
+      return get('/api/vcs.status', browseTarget(repo), signal)
     },
 
     /**
@@ -162,7 +168,7 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
      * @returns {Promise<object>} the directory listing.
      */
     untracked(repo, path, signal) {
-      return get('/api/vcs.untracked', { repo, path }, signal)
+      return get('/api/vcs.untracked', { ...browseTarget(repo), path }, signal)
     },
 
     /**
@@ -174,7 +180,7 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
      */
     diff(repo, target, signal) {
       return get('/api/vcs.diff', {
-        repo,
+        ...browseTarget(repo),
         scope: target.scope,
         path: target.path,
         oldPath: target.oldPath,
@@ -185,12 +191,12 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
     /**
      * One page of commits.
      * @param {string} repo - repository root.
-     * @param {{ ref?: string, skip?: number, limit?: number }} page - page selection.
+     * @param {{ ref?: string, skip?: number, limit?: number, worktrees?: string[] }} page - range, worktree roots, and pagination.
      * @param {AbortSignal} [signal] - cancellation.
      * @returns {Promise<object>} the commit page.
      */
     log(repo, page = {}, signal) {
-      return get('/api/vcs.log', { repo, ref: page.ref, skip: page.skip, limit: page.limit }, signal)
+      return get('/api/vcs.log', { repo, worktree: page.worktrees, ref: page.ref, skip: page.skip, limit: page.limit }, signal)
     },
 
     /**
@@ -201,7 +207,7 @@ export function createApi(sessionId, { fetchImpl = globalThis.fetch, base = '' }
      * @returns {Promise<object>} the commit detail.
      */
     commit(repo, sha, signal) {
-      return get('/api/vcs.commit', { repo, sha }, signal)
+      return get('/api/vcs.commit', { ...browseTarget(repo), sha }, signal)
     },
 
     /**

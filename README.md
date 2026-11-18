@@ -7,7 +7,8 @@ Version control in the DeepSeek Harness right Sidebar. Adds a `VCS` tab to inspe
 ## Features
 
 - **In the Sidebar.** The panel lives in a `VCS` tab beside files and terminals, with a card on the Sidebar guide. The Turn banner and the shortcut open the same tab. A header toggle shows the timeline beside the changes, or one column at a time so a wide Sidebar gives the diff its full width.
-- **Timeline & lane graph.** Working changes (`Working tree` in Git, `@` in Jujutsu) sit above topological commit history with branches, bookmarks, tags, and scope toggle (`HEAD` / `@` or all commits). Supports multi-repository workspaces.
+- **Timeline & lane graph.** Browse working changes and topological commit history together, with branches, bookmarks, and tags. The **Repository** dropdown switches between repositories in a workspace.
+- **Git worktrees on one graph.** Use **Worktrees** to check one or more checkouts; the session worktree is selected by default. Each checked worktree has its own staged, unstaged, and untracked changes above the shared graph. Switch between **Selected worktrees** and **All commits**; viewing multiple worktrees is read-only and leaves your session directory and branches unchanged.
 - **Inline change tree.** Browse changed files as a collapsible list, or expand any file to read its diff in place with sticky headers, unified or split view, and line wrapping.
 - **Git & Jujutsu native.** Shows staged and unstaged groups (untracked items marked `U`, new additions `A`) and ahead/behind in Git; shows `@`, change IDs, and bookmarks in Jujutsu.
 - **Turn banner & shortcut.** File-changing turns end with a compact VCS banner showing that turn's branch (or `@`), changed-file count, and `+` / `−` line totals in place of Chat's changed-files card. Open the Sidebar tab from anywhere with `⌘⇧G` / `Ctrl+Shift+G`, and press it again to slide back to the conversation.

@@ -54,6 +54,8 @@ export function useRepoActions({
 
   const menuReturnRef = useRef(null)
   const tagRemotesControllerRef = useRef(null)
+  const writeRootRef = useRef(repo)
+  writeRootRef.current = repo
 
   useEffect(() => () => {
     tagRemotesControllerRef.current?.abort()
@@ -146,7 +148,7 @@ export function useRepoActions({
 
   /** Load configured remotes for the tag push dialog. */
   const loadTagRemotes = useCallback(() => {
-    const repo = stateRef.current.repo
+    const repo = writeRootRef.current
     if (repo === null) return
     tagRemotesControllerRef.current?.abort()
     const controller = new AbortController()
@@ -174,8 +176,8 @@ export function useRepoActions({
 
   /** Sync the chosen repository's branch with its upstream, then refresh. */
   const sync = useCallback(async () => {
-    const repo = stateRef.current.repo
-    if (repo === null || inFlightRef.current.has(repo)) return
+    const repo = writeRootRef.current
+    if (capabilities?.sync !== true || repo === null || inFlightRef.current.has(repo)) return
     setNotice(null)
     await runRepoWrite(repo, 'sync', 'sync', () => api.sync(repo), run => {
       const outcome = run.ok
@@ -186,12 +188,12 @@ export function useRepoActions({
         setNotice(outcome)
       }
     })
-  }, [api, locale, refresh, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
+  }, [api, capabilities, locale, refresh, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
 
   /** Check out one local branch, resetting reading state on success. */
   const switchBranch = useCallback(async branch => {
-    const repo = stateRef.current.repo
-    if (repo === null || inFlightRef.current.has(repo)) return
+    const repo = writeRootRef.current
+    if (capabilities?.branchSwitch !== true || repo === null || inFlightRef.current.has(repo)) return
     setNotice(null)
     abortBranches()
     const run = await runRepoWrite(repo, 'switch', 'switch', () => api.switchBranch(repo, branch))
@@ -200,11 +202,11 @@ export function useRepoActions({
       setNotice({ tone: 'error', text: errorMessage(t, run.error) })
       return
     }
-    resetReadingForNewHead()
+    if (writeRootRef.current === repo) resetReadingForNewHead()
     clearBranches()
     refresh('switch')
     setNotice({ tone: 'info', text: switchMessage(t, run.value, branch) })
-  }, [abortBranches, api, clearBranches, refresh, resetReadingForNewHead, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
+  }, [abortBranches, api, capabilities, clearBranches, refresh, resetReadingForNewHead, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
 
   /** Open the local or remote branch actions menu. */
   const openBranchActions = useCallback((entry, point, returnElement) => {
@@ -296,8 +298,8 @@ export function useRepoActions({
 
   /** Execute one branch action (`rename`, `delete`, `merge`, `rebase`, `push`, or remote actions). */
   const runBranchAction = useCallback(async (action, branch, options = {}) => {
-    const repo = stateRef.current.repo
-    if (repo === null || inFlightRef.current.has(repo)) return
+    const repo = writeRootRef.current
+    if (capabilities?.branchOps !== true || repo === null || inFlightRef.current.has(repo)) return
     setDialogError(null)
     setNotice(null)
     const run = await runRepoWrite(repo, 'branch', action, () => api.branchOp(repo, action, { branch, ...options }))
@@ -310,16 +312,16 @@ export function useRepoActions({
     setDialog(null)
     setDialogError(null)
     clearBranches()
-    if (action === 'checkout-remote') resetReadingForNewHead()
+    if (action === 'checkout-remote' && writeRootRef.current === repo) resetReadingForNewHead()
     refresh('branch')
     setNotice({ tone: 'info', text: branchOpMessage(t, action, branch, run.value) })
     if (action !== 'push') restoreFocus(false)
-  }, [api, clearBranches, refresh, resetReadingForNewHead, restoreFocus, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
+  }, [api, capabilities, clearBranches, refresh, resetReadingForNewHead, restoreFocus, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
 
   /** Execute one tag action (`delete` or `push`). */
   const runTagAction = useCallback(async (action, tag, options = {}) => {
-    const repo = stateRef.current.repo
-    if (repo === null || inFlightRef.current.has(repo)) return
+    const repo = writeRootRef.current
+    if (capabilities?.tagOps !== true || repo === null || inFlightRef.current.has(repo)) return
     setDialogError(null)
     setNotice(null)
     const run = await runRepoWrite(repo, 'tag', action, () => api.tagOp(repo, action, { tag, ...options }))
@@ -334,12 +336,12 @@ export function useRepoActions({
     refresh('tag')
     setNotice({ tone: 'info', text: tagOpMessage(t, action, tag, run.value) })
     restoreFocus(false)
-  }, [api, refresh, restoreFocus, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
+  }, [api, capabilities, refresh, restoreFocus, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
 
   /** Execute one commit action (`tag`, `branch`, `checkout`, `cherry-pick`, `revert`, `drop`, `merge`, `rebase`, `reset`). */
   const runCommitAction = useCallback(async (action, target, values = {}) => {
-    const repo = stateRef.current.repo
-    if (repo === null || inFlightRef.current.has(repo)) return
+    const repo = writeRootRef.current
+    if (capabilities?.commitOps !== true || repo === null || inFlightRef.current.has(repo)) return
     setDialogError(null)
     setNotice(null)
     const run = await runRepoWrite(repo, 'commit', action, () => api.commitOp(repo, action, { sha: target.sha, ...values }))
@@ -356,12 +358,12 @@ export function useRepoActions({
       || (action === 'reset' && values.mode === 'hard')
       || (action === 'branch' && values.checkout === true)
     ) {
-      resetReadingForNewHead()
+      if (writeRootRef.current === repo) resetReadingForNewHead()
     }
     refresh('commit')
     setNotice({ tone: 'info', text: commitOpMessage(t, action, target, run.value) })
     restoreFocus(false)
-  }, [api, clearBranches, refresh, resetReadingForNewHead, restoreFocus, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
+  }, [api, capabilities, clearBranches, refresh, resetReadingForNewHead, restoreFocus, runRepoWrite, sessionId, sessionRef, setNotice, stateRef, t])
 
   /** Handle selecting an item from the shared actions menu. */
   const chooseMenuAction = useCallback(action => {

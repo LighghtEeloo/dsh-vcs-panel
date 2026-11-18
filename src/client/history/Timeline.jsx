@@ -1,8 +1,8 @@
 /**
- * The timeline: an optional working-tree row, loaded commits, and the lane
+ * The timeline: checked worktree rows, loaded commits, and the lane
  * graph overlaid.
  *
- * A backend with a separate working tree contributes row 0; a backend whose
+ * A backend with separate working trees contributes virtual rows; a backend whose
  * working copy is a commit contributes only its commits, one of which is `@`.
  * The graph and the rows share one scrollport and one row height, so lanes
  * never drift from their rows. Only the visible window is rendered; the graph
@@ -60,10 +60,10 @@ function WorktreeMeta({ status, statusState, t, locale }) {
 
 /**
  * Render the timeline.
- * @param {{ commits: object[], layout: object, status: object | null, statusState: string, worktreeRow?: boolean, selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, onRefActions?: Function, onCommitActions?: Function, control?: { current: object | null }, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
+ * @param {{ commits: object[], layout: object, status: object | null, worktrees?: object[], selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, onRefActions?: Function, onCommitActions?: Function, control?: { current: object | null }, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
  */
 export function Timeline({
-  commits, layout, status, statusState, worktreeRow = true, selectedRow, onSelectRow, onMove, onOpen,
+  commits, layout, status, worktrees = [], selectedRow, onSelectRow, onMove, onOpen,
   onRefActions, onCommitActions, control, t, locale,
   loading, loadingMore, error, hasMore, truncated, onLoadMore, onRetry,
   initialScrollTop = 0, onScrollOffset,
@@ -113,7 +113,7 @@ export function Timeline({
     }
   }, [selectedRow])
 
-  const rowCount = commits.length + (worktreeRow ? 1 : 0)
+  const rowCount = commits.length + worktrees.length
   const gutter = graphWidth(layout)
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
   const last = Math.min(rowCount, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN)
@@ -123,7 +123,7 @@ export function Timeline({
 
   const workingSummary = status?.workingCopy?.summary ?? null
   const renderRow = index => {
-    const commit = worktreeRow && index === 0 ? null : commits[worktreeRow ? index - 1 : index]
+    const worktree = worktrees[index]
     const common = {
       type: 'button',
       'data-timeline-index': index,
@@ -135,17 +135,20 @@ export function Timeline({
         onSelectRow(index)
       },
     }
-    if (commit === null) {
-      const clean = status !== null && (status.total ?? 0) === 0
+    if (worktree !== undefined) {
+      const { status: treeStatus, statusState } = worktree
+      const clean = treeStatus !== null && (treeStatus.total ?? 0) === 0
       return (
-        <button key="worktree" className="vcs-timeline-row vcs-worktree-row" data-clean={clean ? 'true' : undefined} {...common}>
-          <span className="vcs-timeline-title">{t('timeline.worktree')}</span>
+        <button key={worktree.id} className="vcs-timeline-row vcs-worktree-row" title={worktree.path} data-clean={clean ? 'true' : undefined} {...common}>
+          <span className="vcs-timeline-title">{worktree.label}</span>
           <span className="vcs-timeline-meta">
-            <WorktreeMeta status={status} statusState={statusState} t={t} locale={locale} />
+            {worktree.refLabel === null ? null : <span className="vcs-worktree-ref">{worktree.refLabel}</span>}
+            <WorktreeMeta status={treeStatus} statusState={statusState} t={t} locale={locale} />
           </span>
         </button>
       )
     }
+    const commit = commits[index - worktrees.length]
     const workingCopy = commit.workingCopy === true
     const shortId = typeof commit.changeId === 'string' && commit.changeId !== ''
       ? shortChangeId(commit.changeId)

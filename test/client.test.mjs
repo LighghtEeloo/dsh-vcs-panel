@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   defaultState, isNode, loadState, nodePatch, preferredNode, saveState, sanitizeState,
-  SIDEBAR_MIN, SIDEBAR_MAX, storageKey, WORKING_COPY, WORKTREE,
+  SIDEBAR_MIN, SIDEBAR_MAX, storageKey, WORKING_COPY, WORKTREE, worktreeNode,
 } from '../src/client/state.js'
 import {
   branchOpMessage, commitOpMessage, errorMessage, formatCommitTime, formatCount, formatDateTime, lineCounts,
@@ -21,7 +21,8 @@ import {
   rowAt, streamSections, worktreeGroups,
 } from '../src/client/detail/detail.js'
 import { createQueue } from '../src/client/detail/queue.js'
-import { graphInput, headOf, nodeAt, rowOf, worktreeSummary } from '../src/client/history/timeline.js'
+import { graphInput, nodeAt, rowOf, worktreeSummary } from '../src/client/history/timeline.js'
+import { checkedWorktrees, preferredViewNode, sharedRefs, toggleWorktree } from '../src/client/worktrees.js'
 import { ApiError, createApi, queryString } from '../src/client/api.js'
 import {
   commitBranchRelation, hasSeveralAuthors, indexCommits, messageBody, reachableCommits,
@@ -410,6 +411,44 @@ test('createApi builds exact Host routes', async () => {
   assert.match(calls[6], /sha=abc1234/)
   assert.equal(calls[7], '/api/vcs.turn?sessionId=session+1&turn=3&seq=42')
   assert.equal(calls[8], '/api/vcs.turn?sessionId=session+1&turn=4')
+})
+
+test('worktree content reads carry the allowed repository and the selected checkout separately', async () => {
+  const calls = []
+  const api = createApi('s', {
+    worktreeOf: '/repo',
+    fetchImpl: async (url, init) => {
+      const parsed = new URL(url, 'http://127.0.0.1')
+      assert.equal(init.method, 'GET')
+      assert.equal(parsed.searchParams.get('sessionId'), 's')
+      assert.equal(parsed.searchParams.get('repo'), '/repo')
+      assert.equal(parsed.searchParams.get('worktree'), '/cwd/other tree')
+      calls.push(parsed.pathname)
+      return Response.json({})
+    },
+  })
+  const checkout = '/cwd/other tree'
+  await api.status(checkout)
+  await api.untracked(checkout, 'drafts/')
+  await api.diff(checkout, { scope: 'staged', path: 'a.js' })
+  await api.commit(checkout, 'abc1234')
+  assert.deepEqual(calls, ['status', 'untracked', 'diff', 'commit'].map(name => `/api/vcs.${name}`))
+})
+
+test('the history request carries all checked worktree paths in one GET', async () => {
+  const worktrees = ['/repo', '/another tree']
+  const api = createApi('s', {
+    fetchImpl: async (url, init) => {
+      const parsed = new URL(url, 'http://127.0.0.1')
+      assert.equal(init.method, 'GET')
+      assert.equal(parsed.pathname, '/api/vcs.log')
+      assert.equal(parsed.searchParams.get('repo'), '/repo')
+      assert.deepEqual(parsed.searchParams.getAll('worktree'), worktrees)
+      assert.equal(parsed.searchParams.get('skip'), '300')
+      return Response.json({ commits: [] })
+    },
+  })
+  assert.deepEqual(await api.log('/repo', { ref: 'HEAD', worktrees, skip: 300 }), { commits: [] })
 })
 
 test('createApi sends sync as an uncancellable same-origin JSON POST and maps its refusals', async () => {
@@ -988,44 +1027,52 @@ test('indexCommits answers which commits are loaded and where', () => {
   assert.equal(indexCommits([]).size, 0)
 })
 
-test('timeline rows put the working tree first and map back to nodes', () => {
+test('timeline rows map independent worktrees above one shared commit sequence', () => {
   const commits = [{ sha: 'c1', parents: ['c2'], refs: [] }, { sha: 'c2', parents: [], refs: [] }]
   const index = indexCommits(commits)
-  assert.equal(nodeAt(commits, 0), WORKTREE)
-  assert.equal(nodeAt(commits, 1), 'c1')
-  assert.equal(nodeAt(commits, 3), null)
-  assert.equal(rowOf(index, WORKTREE), 0)
-  assert.equal(rowOf(index, 'c2'), 2)
-  assert.equal(rowOf(index, 'missing'), -1)
-  assert.equal(rowOf(index, null), -1)
-
-  const input = graphInput(commits, 'c1')
-  assert.deepEqual(input[0], { sha: WORKTREE, parents: ['c1'], refs: [], worktree: true })
-  assert.equal(input.length, 3)
-  assert.deepEqual(graphInput([], null)[0].parents, [], 'no commit yet: the working tree has no parent')
+  const worktrees = [{ id: worktreeNode('/repo'), head: 'c1' }, { id: worktreeNode('/unborn'), head: null }]
+  assert.equal(nodeAt(commits, 0, { worktrees }), worktrees[0].id)
+  assert.equal(nodeAt(commits, 1, { worktrees }), worktrees[1].id)
+  assert.equal(nodeAt(commits, 2, { worktrees }), 'c1')
+  assert.equal(nodeAt(commits, 4, { worktrees }), null)
+  assert.equal(rowOf(index, worktrees[1].id, worktrees), 1)
+  assert.equal(rowOf(index, 'c2', worktrees), 3)
+  assert.equal(rowOf(index, 'missing', worktrees), -1)
+  assert.equal(rowOf(index, null, worktrees), -1)
+  assert.deepEqual(graphInput(commits, worktrees), [
+    { sha: worktrees[0].id, parents: ['c1'], refs: [], worktree: true },
+    { sha: worktrees[1].id, parents: [], refs: [], worktree: true },
+    ...commits,
+  ])
 
   // Without a synthetic row, the loaded commit at row 0 is the node.
-  assert.equal(nodeAt(commits, 0, { worktreeRow: false }), 'c1')
+  assert.equal(nodeAt(commits, 0), 'c1')
   const jjCommits = [{ sha: 'c1', workingCopy: true }, { sha: 'c2' }]
   const jjIndex = indexCommits(jjCommits)
-  assert.equal(nodeAt(jjCommits, 0, { worktreeRow: false }), WORKING_COPY)
-  assert.equal(rowOf(jjIndex, WORKING_COPY, { worktreeRow: false }), 0)
+  assert.equal(nodeAt(jjCommits, 0), WORKING_COPY)
+  assert.equal(rowOf(jjIndex, WORKING_COPY), 0)
   assert.equal(jjIndex.get(WORKING_COPY), 0)
   assert.equal(jjIndex.get('c1'), 0)
-  assert.equal(nodeAt(commits, 1, { worktreeRow: false }), 'c2')
-  assert.equal(nodeAt(commits, 2, { worktreeRow: false }), null)
-  assert.equal(rowOf(index, 'c1', { worktreeRow: false }), 0)
-  assert.equal(rowOf(index, 'c2', { worktreeRow: false }), 1)
-  assert.equal(rowOf(index, WORKING_COPY, { worktreeRow: false }), -1)
-  assert.deepEqual(graphInput(commits, 'c1', { worktreeRow: false }), commits)
+  assert.equal(nodeAt(commits, 1), 'c2')
+  assert.equal(rowOf(index, WORKING_COPY), -1)
+  assert.deepEqual(graphInput(commits, []), commits)
 })
 
-test('headOf prefers the status answer and falls back to the HEAD range', () => {
-  const commits = [{ sha: 'c1' }]
-  assert.equal(headOf({ branch: { oid: 'o1' } }, commits, 'all'), 'o1')
-  assert.equal(headOf({ branch: { oid: null, unborn: true } }, commits, 'HEAD'), null)
-  assert.equal(headOf(null, commits, 'HEAD'), 'c1')
-  assert.equal(headOf(null, commits, 'all'), null, 'an all-branch range does not start at HEAD')
+test('the checklist restores valid choices, defaults to the anchor, and refuses an empty set', () => {
+  const main = { path: '/repo', status: { total: 0 } }
+  const sibling = { path: '/sibling', status: { total: 1 } }
+  const trees = [main, sibling]
+  const state = sanitizeState({ repo: '/repo', node: worktreeNode('/missing'), nodeChosen: true, worktrees: ['/sibling', 'gone', '/sibling', 1] })
+  assert.deepEqual(state.worktrees, ['/sibling', 'gone'])
+  assert.deepEqual(checkedWorktrees(trees, state.worktrees), [sibling])
+  assert.deepEqual(checkedWorktrees(trees, ['gone']), [main])
+  assert.deepEqual(toggleWorktree(trees, [], main.path), [main.path])
+  assert.deepEqual(toggleWorktree(trees, [], sibling.path), [main.path, sibling.path])
+  assert.deepEqual(toggleWorktree(trees, [sibling.path, main.path], main.path), [sibling.path])
+  assert.equal(preferredViewNode(state, trees, null), worktreeNode(sibling.path))
+  assert.equal(preferredViewNode({ ...state, node: WORKTREE }, [main], null), worktreeNode(main.path))
+  assert.deepEqual(nodePatch({ ...state, dirs: { 'unstaged|docs': true } }, worktreeNode(sibling.path), true).dirs, {})
+  assert.deepEqual(sharedRefs([{ kind: 'head', name: 'HEAD' }, { kind: 'branch', name: 'main', current: true }]), [{ kind: 'branch', name: 'main' }])
 })
 
 test('worktreeSummary counts tracked lines and every changed entry', () => {

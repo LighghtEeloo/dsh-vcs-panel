@@ -15,10 +15,10 @@ const MENU_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'])
  * Scrolling inside `menuRef` itself is ignored so overflowing menus can scroll
  * via mouse wheel or Arrow keys without closing themselves.
  *
- * @param {{ open: boolean, menuRef: { current: any }, triggerRef?: { current: any }, itemSelector: string, onClose: (restoreFocus: boolean) => void }} options - menu refs and close handler.
+ * @param {{ open: boolean, menuRef: { current: any }, triggerRef?: { current: any }, itemSelector: string, onClose: (restoreFocus: boolean) => void, dismissOnScroll?: boolean }} options - menu refs and dismissal rules.
  * @returns {{ onKeyDown: (event: any) => void, onBlur: (event: any) => void }} keyboard and blur handlers.
  */
-export function useFloatingMenu({ open, menuRef, triggerRef, itemSelector, onClose }) {
+export function useFloatingMenu({ open, menuRef, triggerRef, itemSelector, onClose, dismissOnScroll = true }) {
   useEffect(() => {
     if (!open) return undefined
     const hasDocument = typeof document !== 'undefined'
@@ -37,16 +37,16 @@ export function useFloatingMenu({ open, menuRef, triggerRef, itemSelector, onClo
     if (hasDocument) document.addEventListener('pointerdown', dismiss, true)
     if (hasWindow) {
       window.addEventListener('resize', onResize)
-      window.addEventListener('scroll', onScroll, true)
+      if (dismissOnScroll) window.addEventListener('scroll', onScroll, true)
     }
     return () => {
       if (hasDocument) document.removeEventListener('pointerdown', dismiss, true)
       if (hasWindow) {
         window.removeEventListener('resize', onResize)
-        window.removeEventListener('scroll', onScroll, true)
+        if (dismissOnScroll) window.removeEventListener('scroll', onScroll, true)
       }
     }
-  }, [menuRef, onClose, open, triggerRef])
+  }, [dismissOnScroll, menuRef, onClose, open, triggerRef])
 
   const onKeyDown = event => {
     if (!MENU_KEYS.has(event.key)) return
