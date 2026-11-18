@@ -15,7 +15,7 @@ import { messageBody } from '../history/commits.js'
 import { worktreeSummary } from '../history/timeline.js'
 import {
   BackIcon, BranchIcon, Button, CheckIcon, CompareSplitIcon, CopyIcon, FoldIcon, IconButton,
-  NowrapIcon, RefBadge, WrapIcon,
+  NowrapIcon, RefBadge, WorkingCopyBadge, WrapIcon,
 } from '../ui.jsx'
 import { MetaSkeleton, TreeSkeleton } from '../skeleton.jsx'
 import { buildNodeRows } from './tree.js'
@@ -46,18 +46,17 @@ function ShaButton({ sha, t }) {
 }
 
 /** The commit header block: subject, people, parents, and message body. */
-function CommitHeader({ commitState, summary, onSelectCommit, isLoaded, onRetry, t, locale }) {
+function CommitHeader({ commitState, summary, copyLabels, onSelectCommit, isLoaded, onRetry, t, locale }) {
   const detail = commitState.commit
   const subject = detail?.subject ?? summary?.subject ?? ''
   const body = messageBody(detail?.message)
   const changeId = detail?.changeId ?? summary?.changeId
-  const workingCopy = detail?.workingCopy === true
   const parents = Array.isArray(detail?.parents) ? detail.parents : []
   const files = Array.isArray(detail?.files) ? detail.files : []
   return (
     <header className="vcs-node-header">
       <div className="vcs-node-heading">
-        {workingCopy ? <span className="vcs-working-badge" title={t('commit.workingCopy')}>@</span> : null}
+        <WorkingCopyBadge labels={copyLabels} title={t('commit.workingCopy')} />
         <h2 className="vcs-node-title">{subject === '' ? t('commit.noDescription') : subject}</h2>
       </div>
       {commitState.status === 'error' ? (
@@ -151,11 +150,10 @@ export function DetailPane({
   folds, onToggleFold, onSetFolds, split, wrap, onToggleSplit, onToggleWrap,
   singleColumn, onBack, onLeaveNav, onSelectCommit, isLoaded, onMissing, onSettled,
   revision, cache, commitCache, initialAnchor, onReading, control, capabilities, onRefActions, t, locale,
-  worktree = null, showCurrentHead = true,
+  worktree = null, workingCopies = [], snapshotError = null, showCurrentHead = true,
 }) {
   const isWorktree = worktree !== null
-  const workingCopyNode = capabilities?.workingCopyNode ?? null
-  const isWorkingCopy = workingCopyNode !== null && node === workingCopyNode
+  const copyLabels = workingCopies.map(copy => copy.label)
   const commitCacheKey = `${repo}|${node}|${revision}`
   const [commitState, setCommitState] = useState(() => {
     if (!isWorktree && commitCache !== undefined && commitCache !== null) {
@@ -213,9 +211,8 @@ export function DetailPane({
     () => (isWorktree ? worktreeGroups(status) : commitGroups(commitState.commit)),
     [commitState.commit, isWorktree, status],
   )
-  // The working-copy commit is addressed as `@` so a rewrite between the
-  // commit detail and its diff requests cannot leave the diff on a stale id.
-  const rev = isWorktree ? null : (isWorkingCopy ? workingCopyNode : (commitState.commit?.sha ?? node))
+  // Use the id of the files we are showing even if a snapshot is in flight.
+  const rev = isWorktree ? null : (commitState.commit?.sha ?? node)
   // The expand action follows the fully expanded order, so collapsing a
   // directory never changes which other files stay folded.
   const allSections = useMemo(() => streamSections(groups, dirChildren, rev), [dirChildren, groups, rev])
@@ -283,6 +280,7 @@ export function DetailPane({
       <CommitHeader
         commitState={commitState}
         summary={summary}
+        copyLabels={copyLabels}
         onSelectCommit={onSelectCommit}
         isLoaded={isLoaded}
         onRetry={() => { setAttempt(value => value + 1) }}
@@ -293,6 +291,9 @@ export function DetailPane({
 
   const before = (
     <>
+      {snapshotError === null ? null : (
+        <p className="vcs-note" role="alert">{t('changes.error')} {errorMessage(t, snapshotError)}</p>
+      )}
       {header}
       {isWorktree && status?.truncated === true ? <p className="vcs-note">{t('changes.truncatedMany')}</p> : null}
       {/* The commit's files arrive with its facts; the facts' shape already speaks for both. */}
@@ -334,9 +335,7 @@ export function DetailPane({
           </>
         ) : (
           <>
-            {commitState.commit?.workingCopy === true ? (
-              <span className="vcs-working-badge" title={t('commit.workingCopy')}>@</span>
-            ) : null}
+            <WorkingCopyBadge labels={copyLabels} title={t('commit.workingCopy')} />
             <ShaButton sha={commitState.commit?.sha ?? summary?.sha ?? node} t={t} />
             {typeof commitState.commit?.changeId === 'string' && commitState.commit.changeId !== '' ? (
               <code className="vcs-detail-change" title={t('commit.changeId')}>{shortChangeId(commitState.commit.changeId)}</code>

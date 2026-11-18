@@ -22,7 +22,7 @@ import {
 } from '../src/client/detail/detail.js'
 import { createQueue } from '../src/client/detail/queue.js'
 import { graphInput, nodeAt, rowOf, worktreeSummary } from '../src/client/history/timeline.js'
-import { checkedWorktrees, preferredViewNode, sharedRefs, toggleWorktree } from '../src/client/worktrees.js'
+import { attachWorkingCopies, checkedWorktrees, preferredViewNode, sharedRefs, toggleWorktree } from '../src/client/worktrees.js'
 import { ApiError, createApi, queryString } from '../src/client/api.js'
 import {
   commitBranchRelation, hasSeveralAuthors, indexCommits, messageBody, reachableCommits,
@@ -1047,15 +1047,28 @@ test('timeline rows map independent worktrees above one shared commit sequence',
 
   // Without a synthetic row, the loaded commit at row 0 is the node.
   assert.equal(nodeAt(commits, 0), 'c1')
-  const jjCommits = [{ sha: 'c1', workingCopy: true }, { sha: 'c2' }]
-  const jjIndex = indexCommits(jjCommits)
-  assert.equal(nodeAt(jjCommits, 0), WORKING_COPY)
-  assert.equal(rowOf(jjIndex, WORKING_COPY), 0)
-  assert.equal(jjIndex.get(WORKING_COPY), 0)
-  assert.equal(jjIndex.get('c1'), 0)
   assert.equal(nodeAt(commits, 1), 'c2')
   assert.equal(rowOf(index, WORKING_COPY), -1)
   assert.deepEqual(graphInput(commits, []), commits)
+})
+
+test('Jujutsu workspace paths index real commits, including two workspaces sharing one head', () => {
+  const main = { path: '/repo', head: 'c1' }
+  const sibling = { path: '/sibling', head: 'c1' }
+  const commits = attachWorkingCopies([{ sha: 'c1' }, { sha: 'c2', workingCopy: true }], [main, sibling])
+  assert.equal(commits.length, 2)
+  assert.deepEqual(commits[0].workingCopies, [main, sibling])
+  assert.equal(commits[0].workingCopy, true)
+  assert.equal(commits[1].workingCopy, false, 'unchecked working-copy commits are ordinary history')
+  const index = indexCommits(commits)
+  assert.equal(nodeAt(commits, 0), worktreeNode(main.path))
+  assert.equal(rowOf(index, worktreeNode(sibling.path)), 0)
+  assert.equal(index.get('c1'), 0)
+  assert.equal(nodeAt(commits, 1), 'c2')
+  assert.deepEqual(graphInput(commits, []), commits)
+  const legacy = { repo: '/repo', node: WORKING_COPY, nodeChosen: true }
+  assert.equal(preferredViewNode(legacy, [main, sibling], null, true), worktreeNode(main.path))
+  assert.equal(preferredViewNode(legacy, [sibling], null, true), worktreeNode(sibling.path))
 })
 
 test('the checklist restores valid choices, defaults to the anchor, and refuses an empty set', () => {

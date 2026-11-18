@@ -17,14 +17,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Arrow, BranchIcon, CheckIcon, Chevron, IconButton, LockIcon, RefreshIcon, RefBadge, SyncIcon,
-  TimelineBesideIcon, Turning,
+  TimelineBesideIcon, Turning, WorkingCopyBadge,
 } from './ui.jsx'
 import { errorMessage, formatCount, shortChangeId } from './format.js'
 import { BRANCH_BUSY_KEYS } from './branch.js'
 import { TAG_BUSY_KEYS } from './tag.js'
 import { COMMIT_BUSY_KEYS } from './commit.js'
 import { useFloatingMenu } from './useFloatingMenu.js'
-import { worktreeRefLabel } from './worktrees.js'
+import { workingCopyLabel, worktreeRefLabel } from './worktrees.js'
 
 /** Ref badges shown in the header before the rest are left to the timeline. */
 const HEADER_REFS = 3
@@ -373,23 +373,19 @@ function RepositoryPicker({ repositories, current, onRepoChange, t }) {
 
 /** The choices affect what is displayed; keep the menu open for successive changes. */
 function WorktreePicker({
-  worktrees, checkedPaths, sessionPath, workingCopyChoice, onToggle, ranges, refMode, onRefMode, t, locale,
+  worktrees, checkedPaths, sessionPath, commitBased, onToggle, ranges, refMode, onRefMode, t, locale,
 }) {
-  const selectedPaths = workingCopyChoice === null ? checkedPaths : [workingCopyChoice.path]
   const currentRange = ranges.find(range => range.value === refMode)
   const rangeLabel = t('history.refLabel')
   function renderOptions() {
-    // A worktree row or a working-copy commit describes the same UI choice,
-    // but only the former participates in worktree requests and selection.
-    const choices = workingCopyChoice === null
-      ? worktrees.map(tree => ({ path: tree.path, name: tree.name, refLabel: worktreeRefLabel(tree, t) }))
-      : [workingCopyChoice]
     return (
       <>
         <div className="vcs-worktree-choices">
-          {choices.map(({ path, name, refLabel }) => {
-            const checked = selectedPaths.includes(path)
-            const last = checked && selectedPaths.length === 1
+          {worktrees.map(tree => {
+            const { path, name } = tree
+            const refLabel = worktreeRefLabel(tree, t, commitBased)
+            const checked = checkedPaths.includes(path)
+            const last = checked && checkedPaths.length === 1
             return (
               <button
                 key={path}
@@ -412,7 +408,7 @@ function WorktreePicker({
             )
           })}
         </div>
-        {choices.length > 1 ? <p className="vcs-picker-menu-note">{t('top.keepWorktree')}</p> : null}
+        {worktrees.length > 1 ? <p className="vcs-picker-menu-note">{t('top.keepWorktree')}</p> : null}
         {ranges.length > 0 ? (
           <div className="vcs-worktree-range" role="group" aria-label={rangeLabel}>
             <p className="vcs-picker-menu-title" aria-hidden="true">{rangeLabel}</p>
@@ -436,7 +432,7 @@ function WorktreePicker({
     <HeaderPicker
       kind="worktree"
       label={t('top.worktrees')}
-      summary={t('top.worktreeSelection', { count: formatCount(selectedPaths.length, locale) })}
+      summary={t('top.worktreeSelection', { count: formatCount(checkedPaths.length, locale) })}
       title={currentRange === undefined ? undefined : t(currentRange.title)}
       dismissOnScroll={false}
     >
@@ -508,11 +504,7 @@ export function TopBar({
   const workingCopy = status?.workingCopy
   const showsWorkingCopy = capabilities?.workingCopy === 'commit'
   const currentRepository = repositories.find(entry => entry.path === repo)
-  // Represent a commit-based working copy in the menu only, without a
-  // separate worktree row or any worktree requests.
-  const workingCopyChoice = showsWorkingCopy && currentRepository !== undefined
-    ? { path: currentRepository.path, name: currentRepository.name, refLabel: capabilities.workingCopyNode ?? null }
-    : null
+  const activeWorkspace = showsWorkingCopy ? worktrees.find(tree => tree.path === checkedPaths[0]) : undefined
   let branchText = ''
   if (branch !== undefined && branch !== null) {
     if (branch.unborn) branchText = t('top.unborn')
@@ -560,13 +552,13 @@ export function TopBar({
   return (
     <div className="vcs-topbar">
       <RepositoryPicker repositories={repositories} current={currentRepository} onRepoChange={onRepoChange} t={t} />
-      {worktrees.length > 0 || workingCopyChoice !== null ? (
+      {worktrees.length > 0 ? (
         <WorktreePicker
           key={repo}
           worktrees={worktrees}
           checkedPaths={checkedPaths}
           sessionPath={sessionPath}
-          workingCopyChoice={workingCopyChoice}
+          commitBased={showsWorkingCopy}
           onToggle={onToggleWorktree}
           ranges={ranges}
           refMode={refMode}
@@ -578,7 +570,8 @@ export function TopBar({
       {showsWorkingCopy ? (
         workingCopy === null || workingCopy === undefined ? null : (
           <span className="vcs-working-copy" title={t('top.workingCopyTitle')}>
-            <span className="vcs-working-badge">@</span>
+            <WorkingCopyBadge labels={[activeWorkspace === undefined ? '@' : workingCopyLabel(activeWorkspace, worktrees.length > 1)]}
+              title={t('top.workingCopyTitle')} />
             {typeof workingCopy.changeId === 'string' && workingCopy.changeId !== ''
               ? <code className="vcs-working-change">{shortChangeId(workingCopy.changeId)}</code>
               : null}

@@ -10,13 +10,13 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 
 | 路由 | 查询参数 | 应答字段 |
 | --- | --- | --- |
-| `GET /api/vcs.repositories` | `sessionId` | `cwd`、`repositories[]`（`path`、`name`、`enclosing`、`vcs`、`capabilities`；Git 另有 `worktrees[]`：`path`、`name`、`branch`、`head`）、`truncated`、`worktreesTruncated` |
+| `GET /api/vcs.repositories` | `sessionId` | `cwd`、`repositories[]`（`path`、`name`、`enclosing`、`vcs`、`capabilities`、`worktrees[]`：`path`、`name`、`head`、Git 的 `branch`）、`truncated`、`worktreesTruncated` |
 | `GET /api/vcs.status` | `sessionId`、`repo`、`worktree?` | `repo`、`vcs`、`capabilities`、`defaultNode`、`branch`、`workingCopy?`、`groups`、`total`、`truncated` |
 | `GET /api/vcs.branches` | `sessionId`、`repo` | `branches[]`（`name`、`current`）、`truncated`（仅 `capabilities.branchSwitch` 为真时可用） |
 | `GET /api/vcs.remotes` | `sessionId`、`repo` | `remotes[]`、`truncated`（`capabilities.tagOps` 或 `capabilities.branchOps` 为真时可用） |
 | `GET /api/vcs.untracked` | `sessionId`、`repo`、`worktree?`、`path`（`/` 结尾） | `path`、`entries[]`（`name`、`path`、`type`）、`truncated`（仅 `capabilities.untracked` 为真时可用） |
 | `GET /api/vcs.diff` | `sessionId`、`repo`、`worktree?`、`scope`、`path`、`oldPath?`、`rev?` | `VcsFileDiff` |
-| `GET /api/vcs.log` | `sessionId`、`repo`、`worktree?`（Git，可重复）、`ref`、`limit`、`skip` | `commits[]`、`truncated`、`nextSkip`；传入工作树时另有 `worktreeHeads[]`（`path`、`head`） |
+| `GET /api/vcs.log` | `sessionId`、`repo`、`worktree?`（可重复）、`ref`、`limit`、`skip` | `commits[]`、`truncated`、`nextSkip`；传入工作树时另有 `worktreeHeads[]`（`path`、`head`） |
 | `GET /api/vcs.commit` | `sessionId`、`repo`、`worktree?`、`sha` | `commit`（`CommitDetail`，不含 patch；`refs` 含 `current`、分离 `head` 及 `remote`/`branch` 标注）、`truncated` |
 | `GET /api/vcs.turn` | `sessionId`、`turn`、`seq?` | `turn`、`head`（`TurnHead \| null`）、`changed`、`added`、`deleted` |
 | `POST /api/vcs.sync` | JSON 请求体 `{ sessionId, repo }` | `upstream`、`pulled`、`pushed`（仅 `capabilities.sync` 为真时可用） |
@@ -31,10 +31,11 @@ Host 端为无运行时依赖的 Node ESM 插件，注入 `['connection', 'sessi
 
 - **会话与仓库白名单**：`sessionId` 必须命中带有效 `header.cwd` 的活跃会话；`repo` 必须命中当次 `discoverRepositories` 的结果（`sameRepoPath`）。
 - **仓库发现与符号链接收敛**：从 `cwd` 向上最多 64 层查找最近的仓库标记，再扫描 `cwd` 下一层子目录（忽略 `node_modules`，不递归）。标记用 `lstat` 检测且 `.jj` 优先于 `.git`，兼容 linked worktree 的 `.git` 文件与 submodule。根路径经 `ctx.fs.resolve` 规范化，子仓库规范路径必须仍在 `cwd` 内；读取文件前再经 `containPath` 做 `realpath` 校验，确保目标留在仓库根内。
-- **Git 仓库分组与工作树白名单**：`groupRepositories` 按 Git common directory 归组，保留首个已授权工作树作为该组入口（`repo`），并在组内把它放在首位。
-  `lib/worktrees.js` 解析该入口的 `git worktree list --porcelain -z`，略过 bare、prunable 和不在线的树。
-  候选路径经规范化后，用 `git rev-parse --path-format=absolute --show-toplevel --git-common-dir` 核实它是同一仓库的工作树根，避免读到占据旧路径的无关仓库。
-  详情读取的 `worktree` 只接收一个目标，历史读取可接收多个无重复的绝对路径；每次根据 `repo` 重新校验。文件路径约束使用所选树的根。
+- **仓库分组与工作树白名单**：`groupRepositories` 将验证为同一存储的工作树归组，以首个已授权工作树为入口（`repo`）；无法验证归属的独立发现根不合并。
+  Git 从 `git worktree list --porcelain -z` 读取目录，略过 bare、prunable 和不在线的树，并用 `git rev-parse --path-format=absolute --show-toplevel --git-common-dir` 核对工作树根和共享目录。
+  Jujutsu 从 `jj workspace list` 的 JSON 模板读取名称、登记路径和工作副本提交。实时目录必须指向同一个规范化的 `.jj/repo` 存储（链接文件以 `.jj` 为相对基准），
+  且其 `current_workspace` 名称须匹配登记项。该模板能力从 jj 0.47 提供；旧版本或没有登记路径的工作区保留独立发现的入口视图。
+  状态与详情读取的 `worktree` 只接收一个目标，历史读取可接收多个无重复的绝对路径；每次根据 `repo` 重新校验。Git 工作区文件路径约束使用所选树的根。
   写请求仍只接受原仓库白名单，带 `worktree` 参数一律拒绝。
 - **路径与修订号净化**：`validateRelPath` 拒绝绝对路径、反斜杠、空段、`.`、`..`、`-` 前缀与控制字符，Git 侧再包 `:(literal)` pathspec，Jujutsu 侧用 `file:"..."` fileset。提交 ID 先做 7–64 位十六进制校验；Git 再经 `rev-parse --verify <sha>^{commit}` 解析，Jujutsu 仅接受 `@` 或十六进制 ID。
 - **写请求栅栏**：`vcs.sync`、`vcs.switch`、`vcs.branch`、`vcs.tag` 与 `vcs.commit-op` 只接受 `POST`，`content-type` 必须是 `application/json`（跨站页面不经 CORS 预检发不出），`Sec-Fetch-Site` 存在且不是 `same-origin` / `none` 时返回 `403 forbidden`；请求体中的 `sessionId` 与 `repo` 再走与读取相同的会话与仓库白名单。切换的 `branch` 与分支操作的 `branch`、`name`、`local` 必须是字符串：拒绝空串、超过 255 字符、空白或控制字符、`-` 前缀。`vcs.branch` 的 `action` 必须是 `rename`、`delete`、`merge`、`rebase`、`push`、`checkout-remote`、`delete-remote`、`merge-remote` 或 `pull-remote` 之一；`name` 只用于 `rename`，`local` 只用于 `checkout-remote`，`force` 只用于 `delete` 且必须是布尔值。本地分支操作的目标必须命中该仓库的本地分支列表；重命名与远程检出的新名字还要通过 `git check-ref-format refs/heads/<name>`。远程分支操作的目标必须由后端按 `git remote` 的最长远程名切分，并命中一个真实、非符号引用的 `refs/remotes/<remote>/<branch>`；不支持 `<remote>/HEAD`。删除只发送 `refs/heads/<branch>` 且不带 `--force`；拉取只抓取命名的 `refs/heads/<branch>` 到对应的 `refs/remotes/<remote>/<branch>`。`vcs.tag` 的 `action` 必须是 `delete` 或 `push`；`tag` 拒绝空串、超过 255 字符、空白或控制字符与 `-` 前缀，再通过 `git check-ref-format refs/tags/<name>` 并确认该 ref 存在；`push` 的 `remote` 必须命中 `git remote` 的结果。`vcs.commit-op` 的 `action` 必须是 `tag`、`branch`、`checkout`、`cherry-pick`、`revert`、`drop`、`merge`、`rebase` 或 `reset`；`sha` 为 7–64 位十六进制；`tag` / `branch` 的 `name` 复用引用名校验；`branch` 的可选 `checkout` 必须是布尔值；`tag` 的 `message` 是长度不超过 4,000 的字符串；`reset` 的 `mode` 必须是 `soft`、`mixed` 或 `hard`。同一仓库根同时只允许一次写操作，第二次返回 `409 busy`；这些写互相排斥。
@@ -119,7 +120,10 @@ Git 工作树预览保留 Git 的读取能力。单选其他工作树或多选�
 - **Git 标签操作**（`lib/tag-ops.js`）：经 `runGitTagOp` 统一分发；`remotes` 复用 `listGitRemotes` 读取并校验远程（最多 500 个）。`deleteGitTag` 与 `pushGitTag` 经 `validateRefFormat` 确认标签名并确认存在；删除执行 `git tag --delete <tag>`，只移除本地 ref。推送复用 `runPorcelainPush`（目标由 `remoteNames` 精确校验），不带 `--force`，远程已有不同对象时返回 `tag-push-failed`。
 - **Git 提交操作**（`lib/commit-ops.js`）：经 `runGitCommitOp` 统一分发；`addGitTag` 经 `validateRefFormat` 校验并确认未占用后创建轻量或附注标签。`createGitBranch` 校验 `refs/heads/<name>` 后，默认执行 `git branch <name> <sha>` 创建分支；当请求带 `checkout: true` 时改用 `git switch --no-guess --quiet -c <name> <sha>` 一步创建并检出（返回 `{ branch, sha, checkedOut: true }`），会被本地改动或未跟踪文件覆盖时返回 `checkout-blocked`。`checkoutGitCommit` 执行 `git switch --detach --quiet <sha>`。`cherryPickGitCommit` / `revertGitCommit` 复用 `runAbortableOp`，冲突时仅当留下 `CHERRY_PICK_HEAD` / `REVERT_HEAD` 才执行对应 `--abort`，返回 `commit-conflict`。`dropGitCommit` 要求目标在当前分支上、只有单父提交，经 `runAbortableOp` 执行 `git rebase --onto <parent> <sha> <branch>`。`mergeGitCommit` / `rebaseGitCommit` 与分支版本共用 `mergeRevisionIntoCurrent` / `rebaseCurrentOntoRevision`。`resetGitCommit` 只执行 `git reset --soft|--mixed|--hard <sha>`；Hard 是唯一会丢弃索引/工作区改动的路径，且必须由对话框明确选择。
 - **Git 远程引用标注**：`log` 与 `commit` 在解析 `refs/remotes/...` 后，若有远程引用则通过 `remoteNames` 复用最长远程名匹配，给每个引用补上 `remote` 与 `branch`；`origin/HEAD` 这类符号引用不标注。前端据此只对带这两个字段的远程徽标开放菜单，服务端仍会再次校验。
-- **Jujutsu**：每次 `status` 刷新执行一次 `jj log --no-graph -r @ -T commit_id` 快照工作副本（并发请求复用同一 Promise，失败清空缓存），其余读取（含轮末 `head` 读取 `change_id`）均带 `--ignore-working-copy` 复用已记录状态，不触发额外快照。`log` 使用 `::@ ~ root()` 或 `all() ~ root()`；`diff` 使用 `jj diff --git -r <rev>`，输出含 NUL 或 `U+FFFD` 时按二进制处理。
+- **Jujutsu 多工作区与快照**：Client 串行请求勾选工作区的 `status`，各通过一次 `jj log --no-graph -r @ -T commit_id` 快照；同路径的并发请求复用快照 Promise。
+  Client 等这些状态请求完成后再读历史。单选入口时读取 `::@ ~ root()`，其他选择用已验证的提交 ID 构造祖先并集；`all` 始终读取 `all() ~ root()`。
+  历史不会启动快照；客户端按共享存储中的确切提交 ID 读取详情与 `jj diff --git -r <rev>`，也不触发快照。轮末 `head` 仅读取记录的 `change_id`。
+  `diff` 输出含 NUL 或 `U+FFFD` 时按二进制处理。
 - **每轮摘要与头指针记录**：`createTurnTracker`（`lib/turns.js`）监听活跃会话的 `session/event`、`agent/turn-stopping`、`tools/pre-execute` 与 `session/disposed`，在有工具执行或 `workspace/changes` 的轮次结束时串行读取外围仓库的 `head`（下一轮工具执行前等待上一轮完成，防止跨轮切分支串台）。`vcs.turn` 通过 `ctx.get('workspaceChanges')` 可选读取宿主的每轮 `{ total, added, deleted }`（校验 `turn` 与 `seq` 归属一致，剔除宿主路径与文件明细），并与该轮 `head` 合并返回；两者均不存在（如 Host 重启后的历史轮次）时返回 `404 not-found`。
 
 ## 核心数据形状
@@ -222,8 +226,9 @@ type TurnSummary = {
 
 | 项目 | 上限 | 执行位置 |
 | --- | --- | --- |
-| 单会话初始仓库根 / 附加 Git 工作树数 | 各 50 | Host `discoverRepositories` / `groupRepositories` |
-| 工作树状态读取并发 / 一次历史请求的工作树数 | 4 / 51（入口树及最多 50 棵其他树） | Client `VcsView` / Host `log` |
+| 单会话初始仓库根 / 附加工作树数 | 各 50 | Host `discoverRepositories` / `groupRepositories` |
+| 工作树状态读取并发 / 一次历史请求的工作树数 | Git 4、Jujutsu 1 / 51 | Client `VcsView` / Host `log` |
+| Jujutsu `.jj/repo` 路径链接 | 16 KiB | Host `jjCommonDirAt` |
 | 每组状态文件数（Git）/ 单提交详情文件数 / 未跟踪目录展开条目数 / 本地分支列表 / 远程列表 | 各 500 | Host `status` / `commit` / `untracked` / `branches` / `remotes` |
 | 单文件 diff 输出 / 渲染行数 | 2 MB / 5,000 行 | Host `diff`、Client `FileDiff` |
 | “全部展开”的 diff 预算 | 单文件 1,000 行；单节点累计 20,000 行 | Client `budgetFolds`、`expandedFileFolds` |
@@ -231,7 +236,7 @@ type TurnSummary = {
 | 历史分页 / 最多加载提交数 | 300 条/页，最多 10,000 条 | Host `log` |
 | 单会话保留的轮末头指针 / 客户端空闲轮次摘要缓存 | 2,000 轮 / 500 条 | Host `TurnTracker`、Client `turn-summary` |
 | 单条后端命令 | 30 s 超时（远程抓取与推送 120 s，含钩子），stdout 8 MB，stderr 尾部 16 KB，终止宽限 2 s | Host `CommandRunner`、`lib/sync.js`、`lib/branch-ops.js`、`lib/tag-ops.js`、`lib/commit-ops.js` |
-| 页面重新可见自动刷新阈值 / Jujutsu 快照频率 | 隐藏超过 30 s 刷新一次 / 每次刷新快照一次 | Client 可见性监听、Jujutsu 后端 |
+| 页面重新可见自动刷新阈值 / Jujutsu 快照频率 | 隐藏超过 30 s 刷新一次 / 每次刷新每棵勾选树一次 | Client 可见性监听、Jujutsu 后端 |
 | 加载轮廓与进度线的淡入延迟 | 180 ms（`--vcs-skeleton-delay`） | Client `styles.css` |
 | 转动图标：巡航周期 / 起转 / 收尾滑行 | 900 ms 一圈（减少动效 2,400 ms）/ 加速 90° / 250–1,000 ms | Client `turning.js` |
 | 进度线淡出 | 240 ms（`PROGRESS_FADE`） | Client `TopBar.jsx`、`styles.css` |
@@ -257,14 +262,15 @@ Client 顶层注入 `['slots', 'locale', 'uiConversation', 'sidebarRight', 'side
 
 会话状态保存在 `sessionStorage` 的 `vcs:<sessionId>`，包含 `repo`、`worktrees`、`node`、`nodeChosen`、`ref`、`dirs`、`collapsed`、`folds`、`anchor`（`{ key, offset }`）、`split`、`wrap`、`twoColumns`（默认 `true`，只有显式 `false` 表示单栏）、`sidebarWidth` 与 `timelineScroll`；内存另外按仓库记住切换前的勾选、选中节点、目录折叠与历史范围。页签身份与右侧栏布局由宿主的 `sidebarRight` 存储按会话保存，应用重启后恢复；面板自己的阅读状态（含时间线宽度）单独保存。
 
-`repo` 保存仓库入口，`worktrees` 保存当前仓库勾选的路径。恢复时只保留目录仍可用的项，选集为空则回到入口树。Git 工作区节点以 `worktree:<path>` 标识，旧的单工作区节点 `worktree` 读取时映射到选中的第一棵树。
+`repo` 保存仓库入口，`worktrees` 保存当前仓库勾选的路径。恢复时只保留目录仍可用的项，选集为空则回到入口树。
+Git 工作区行与 Jujutsu 工作副本提交都可用 `worktree:<path>` 选中。旧的单工作区节点 `worktree` / `@` 在恢复时归一为对应的工作树节点。
 工作区状态和 diff 分别按根路径加载；详情跨工作树切换时取消旧目录展开请求并重置目录阅读状态，避免串用同名文件和目录。
 
 `folds` 只为用户显式操作过的文件保存布尔值：空记录表示文件全部收起，也就是详情的默认形态。行键前缀白名单为 `staged|`、`unstaged|`、`commit|`；`sanitizeState` 在读取时丢弃未知字段与旧版遗留的 `untracked|` 键。数据刷新、折叠全部文件或收起吸顶文件头时，统一先记录锚点行与行内像素偏移，重排后恢复；锚点行未渲染时沿“文件行 → 父目录链 → 分组行”降级。
 
 顶部栏的菜单只保留临时打开状态。仓库与工作树菜单共用 `HeaderPicker`，本地分支菜单每次打开时重读，期间保留上一份列表。
 工作树菜单的范围选项由 `capabilities.ranges` 提供，选择更新同一个 `ref`。
-工作副本以提交表示时，菜单仅显示一个不可取消的当前选项。它不加入持久化的 `worktrees`，也不触发额外的工作树请求。
+Jujutsu 按工作树路径索引工作副本节点，将多个指向同一提交的工作区标记合并到该提交行，不生成虚拟节点。
 顶部栏菜单与 `RefActionsMenu` 共用 `useFloatingMenu.js`，统一处理外部指针按下、窗口尺寸变化、失焦退出与键盘移动。
 菜单内部滚动不触发关闭；工作树菜单也忽略外部滚动，以免调整视图引起的时间线重排打断连续操作。
 `RefActionsMenu` 在 `useLayoutEffect` 实测宽高后做视口边界夹紧并设最大宽度。

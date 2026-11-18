@@ -6,7 +6,7 @@
  * between row indexes and timeline nodes and build the lane-graph input.
  */
 
-import { WORKING_COPY } from '../state.js'
+import { worktreeNode } from '../state.js'
 
 /**
  * The lane-graph input.
@@ -26,14 +26,15 @@ export function graphInput(commits, worktrees) {
  * The node shown on one timeline row.
  * @param {object[]} commits - loaded commits.
  * @param {number} index - row index.
- * @param {{ worktrees?: { id: string }[], workingCopyNode?: string | null }} [options] - worktree rows and working-copy commit identity.
+ * @param {{ worktrees?: { id: string }[] }} [options] - virtual worktree rows before the commits.
  * @returns {string | null} the node, or null past the end.
  */
-export function nodeAt(commits, index, { worktrees = [], workingCopyNode = WORKING_COPY } = {}) {
+export function nodeAt(commits, index, { worktrees = [] } = {}) {
   if (index < worktrees.length) return worktrees[index]?.id ?? null
   const commit = commits[index - worktrees.length]
   if (commit === undefined || commit === null) return null
-  return commit.workingCopy === true ? workingCopyNode : commit.sha
+  const copy = commit.workingCopies?.[0]
+  return copy === undefined ? commit.sha : worktreeNode(copy.path)
 }
 
 /**

@@ -17,7 +17,7 @@ import { hasSeveralAuthors } from './commits.js'
 import { worktreeSummary } from './timeline.js'
 import { errorMessage, formatCommitTime, formatCount, shortChangeId, shortSha } from '../format.js'
 import { DOWN, findAncestor, FORWARD, hasClass, isDiscreteActionButton, isEditableTarget, movement, unmodified, UP } from '../keys.js'
-import { RefBadge } from '../ui.jsx'
+import { RefBadge, WorkingCopyBadge } from '../ui.jsx'
 import { Bar, TimelineSkeleton } from '../skeleton.jsx'
 
 /** Fixed row height in CSS pixels. */
@@ -60,10 +60,10 @@ function WorktreeMeta({ status, statusState, t, locale }) {
 
 /**
  * Render the timeline.
- * @param {{ commits: object[], layout: object, status: object | null, worktrees?: object[], selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, onRefActions?: Function, onCommitActions?: Function, control?: { current: object | null }, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
+ * @param {{ commits: object[], layout: object, worktrees?: object[], selectedRow: number, onSelectRow: (index: number) => void, onMove: (delta: number) => void, onOpen: () => void, onRefActions?: Function, onCommitActions?: Function, control?: { current: object | null }, t: Function, locale?: string, loading: boolean, loadingMore: boolean, error: object | null, hasMore: boolean, truncated: boolean, onLoadMore: Function, onRetry: Function, initialScrollTop?: number, onScrollOffset?: (top: number) => void }} props - timeline state.
  */
 export function Timeline({
-  commits, layout, status, worktrees = [], selectedRow, onSelectRow, onMove, onOpen,
+  commits, layout, worktrees = [], selectedRow, onSelectRow, onMove, onOpen,
   onRefActions, onCommitActions, control, t, locale,
   loading, loadingMore, error, hasMore, truncated, onLoadMore, onRetry,
   initialScrollTop = 0, onScrollOffset,
@@ -121,7 +121,6 @@ export function Timeline({
   const focusRow = rowCount === 0 ? -1 : Math.min(rowCount - 1, selectedRow >= 0 ? selectedRow : 0)
   const now = Date.now()
 
-  const workingSummary = status?.workingCopy?.summary ?? null
   const renderRow = index => {
     const worktree = worktrees[index]
     const common = {
@@ -149,7 +148,10 @@ export function Timeline({
       )
     }
     const commit = commits[index - worktrees.length]
-    const workingCopy = commit.workingCopy === true
+    const copies = commit.workingCopies ?? []
+    const copyLabels = copies.map(copy => copy.label)
+    const observed = copies.find(copy => copy.statusState !== 'error' && copy.status?.workingCopy?.commitId === commit.sha)
+    const workingSummary = observed?.status.workingCopy.summary
     const shortId = typeof commit.changeId === 'string' && commit.changeId !== ''
       ? shortChangeId(commit.changeId)
       : shortSha(commit.sha)
@@ -174,15 +176,15 @@ export function Timeline({
     return (
       <button
         key={commit.sha}
-        className={`vcs-timeline-row${workingCopy ? ' vcs-working-copy-row' : ''}`}
-        title={`${workingCopy ? '@  ' : ''}${commit.changeId === undefined ? shortSha(commit.sha) : commit.changeId}  ${subject}`}
+        className={`vcs-timeline-row${copies.length > 0 ? ' vcs-working-copy-row' : ''}`}
+        title={[copyLabels.join(', '), commit.changeId ?? shortSha(commit.sha), subject].filter(Boolean).join('  ')}
         {...common}
         onContextMenu={commitMenu?.onContextMenu}
         onKeyDown={commitMenu?.onKeyDown}
       >
         <span className="vcs-timeline-title">{subject}</span>
         <span className="vcs-timeline-meta">
-          {workingCopy ? <span className="vcs-working-badge" title={t('timeline.workingCopy')}>@</span> : null}
+          <WorkingCopyBadge labels={copyLabels} title={t('timeline.workingCopy')} />
           {commit.refs.slice(0, ROW_REFS).map(reference => (
             <RefBadge
               key={`${reference.kind}:${reference.name}`}
@@ -210,12 +212,13 @@ export function Timeline({
             </span>
           ) : null}
           <code className="vcs-timeline-sha" title={commit.sha}>{shortId}</code>
-          {workingCopy && workingSummary !== null && workingSummary.changed > 0 ? (
+          {workingSummary?.changed > 0 ? (
             <>
               <span>{t('timeline.changes', { count: formatCount(workingSummary.changed, locale) })}</span>
               <LineStat added={workingSummary.added} deleted={workingSummary.deleted} locale={locale} />
             </>
           ) : null}
+          {copies.some(copy => copy.statusState === 'error') ? <span className="vcs-timeline-error">{t('changes.error')}</span> : null}
           {showAuthor ? <span className="vcs-timeline-author">{commit.author}</span> : null}
           <span className="vcs-timeline-time">{formatCommitTime(commit.authorTime, now, locale)}</span>
         </span>

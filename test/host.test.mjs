@@ -235,6 +235,13 @@ const unbornPath = realpathSync(fixture.unborn)
 const plainPath = realpathSync(fixture.plain)
 const mergePath = realpathSync(fixture.merge)
 const jjPath = fixture.jj === null ? null : realpathSync(fixture.jj)
+const HAS_JJ_WORKSPACE_ROOTS = HAS_JJ && (() => {
+  try {
+    return jj(jjPath, ['--ignore-working-copy', 'workspace', 'list', '-T', 'if(current_workspace, root)']) === jjPath
+  } catch {
+    return false
+  }
+})()
 
 after(() => {
   rmSync(fixture.scratch, { recursive: true, force: true })
@@ -1536,6 +1543,162 @@ test('Jujutsu log pages the working copy and all visible history', { skip: !HAS_
   )
   assert.equal(wrongRange.status, 400)
   assert.equal(wrongRange.body.error.code, 'bad-request')
+})
+
+function jjWorkspaceFixture(t) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'vcs-jj-workspaces-')))
+  t.after(() => { rmSync(root, { recursive: true, force: true }) })
+  const source = join(root, 'source')
+  const linked = join(root, 'preview dir')
+  mkdirSync(source)
+  jj(source, ['--config', 'git.colocate=false', 'git', 'init'])
+  writeFileSync(join(source, 'tracked.txt'), 'base\n')
+  jj(source, ['describe', '-m', 'parent'])
+  jj(source, ['new', '-m', 'source work'])
+  const add = (path, name) => jj(source, ['workspace', 'add', '--name', name, '-m', name, path])
+  add(linked, 'review preview')
+  const worktreeSessions = new Map([
+    ['source', { header: { cwd: source } }],
+    ['linked', { header: { cwd: linked } }],
+  ])
+  const host = createHost({ sessions: { get: id => worktreeSessions.get(id) } })
+  return { root, source, linked, add, repo: { sessionId: 'source', repo: source }, handlers: createHandlers(host) }
+}
+
+const recordedJjHead = cwd => jj(cwd, ['--ignore-working-copy', 'log', '-r', '@', '--no-graph', '-T', 'commit_id'])
+
+test('registered Jujutsu workspaces share one history and keep their own snapshots and diffs', { skip: !HAS_JJ_WORKSPACE_ROOTS }, async t => {
+  const { source, linked, add, repo, handlers } = jjWorkspaceFixture(t)
+  const direct = join(source, 'nested')
+  add(direct, 'nested')
+  const oldSource = recordedJjHead(source)
+  const oldLinked = recordedJjHead(linked)
+  const nested = recordedJjHead(direct)
+  writeFileSync(join(source, 'tracked.txt'), 'base\nsource only\n')
+  writeFileSync(join(linked, 'tracked.txt'), 'base\npreview only\n')
+
+  const list = sessionId => call(handlers.repositories, route('/api/vcs.repositories', { sessionId }))
+  const listing = await list('source')
+  assert.equal(listing.status, 200)
+  assert.deepEqual(listing.body.repositories.map(entry => entry.path), [source], 'same store collapses the directly discovered workspace')
+  const worktrees = listing.body.repositories[0].worktrees
+  assert.equal(worktrees[0].path, source)
+  assert.deepEqual(worktrees.find(tree => tree.path === linked), { path: linked, name: 'review preview', head: oldLinked })
+  assert.ok(worktrees.some(tree => tree.path === direct && tree.head === nested))
+  const reverse = await list('linked')
+  assert.equal(reverse.body.repositories[0].path, linked)
+  assert.equal(reverse.body.repositories[0].worktrees[0].path, linked)
+  assert.ok(reverse.body.repositories[0].worktrees.some(tree => tree.path === source))
+  assert.deepEqual([recordedJjHead(source), recordedJjHead(linked)], [oldSource, oldLinked], 'discovery never snapshots')
+
+  const status = options => call(handlers.status, route('/api/vcs.status', { ...repo, ...options }))
+  const log = options => call(handlers.log, route('/api/vcs.log', { ...repo, ...options }))
+  const preview = await status({ worktree: linked })
+  assert.equal(preview.status, 200)
+  assert.deepEqual(preview.body.repo, { name: 'review preview', path: linked })
+  assert.equal(preview.body.defaultNode, '@')
+  assert.equal(preview.body.workingCopy.summary.changed, 1)
+  const linkedHead = preview.body.workingCopy.commitId
+  assert.notEqual(linkedHead, oldLinked)
+  const siblingOnly = await log({ worktree: [linked] })
+  assert.equal(siblingOnly.status, 200)
+  assert.deepEqual(siblingOnly.body.worktreeHeads, [{ path: linked, head: linkedHead }])
+  assert.deepEqual(siblingOnly.body.commits.map(commit => commit.subject), ['review preview', 'parent'])
+  const allWhilePreviewing = await log({ worktree: [linked], ref: 'all' })
+  assert.equal(allWhilePreviewing.status, 200)
+  assert.ok(allWhilePreviewing.body.commits.some(commit => commit.sha === nested))
+  const detail = await call(handlers.commit, route('/api/vcs.commit', { ...repo, sha: linkedHead }))
+  assert.equal(detail.status, 200)
+  assert.deepEqual(detail.body.commit.files.map(file => file.path), ['tracked.txt'])
+  const compare = (rev, options = {}) => call(handlers.diff, route('/api/vcs.diff', {
+    ...repo, scope: 'commit', rev, path: 'tracked.txt', ...options,
+  }))
+  const previewDiff = await compare(linkedHead)
+  assert.equal(previewDiff.status, 200)
+  assert.deepEqual(previewDiff.body.hunks.flatMap(hunk => hunk.lines), [' base', '+preview only'])
+  assert.equal(recordedJjHead(source), oldSource, 'selected history and SHA-based reads do not snapshot an unchecked anchor')
+
+  const base = await status()
+  assert.equal(base.status, 200)
+  const sourceHead = base.body.workingCopy.commitId
+  const selection = { worktree: [source, linked] }
+  const both = await log(selection)
+  assert.equal(both.status, 200)
+  assert.equal(both.body.commits.length, 3, 'the shared parent is not duplicated')
+  assert.deepEqual(new Set(both.body.commits.map(commit => commit.subject)), new Set(['source work', 'review preview', 'parent']))
+  assert.deepEqual(Object.fromEntries(both.body.worktreeHeads.map(tree => [tree.path, tree.head])), {
+    [source]: sourceHead, [linked]: linkedHead,
+  })
+  const page = await log({ ...selection, limit: 2, skip: 1 })
+  assert.deepEqual(page.body.commits, both.body.commits.slice(1))
+  assert.deepEqual(page.body.worktreeHeads, both.body.worktreeHeads)
+  assert.deepEqual((await compare(sourceHead)).body.hunks.flatMap(hunk => hunk.lines), [' base', '+source only'])
+  assert.deepEqual((await compare('@', { worktree: linked })).body.hunks, previewDiff.body.hunks)
+})
+
+test('Jujutsu previews refuse missing and unrelated workspace roots, and stay read-only', { skip: !HAS_JJ_WORKSPACE_ROOTS }, async t => {
+  const { root, source, linked, add, repo, handlers } = jjWorkspaceFixture(t)
+  const missing = join(root, 'missing')
+  const replaced = join(root, 'replaced')
+  const wrongWorkspace = join(root, 'wrong-workspace')
+  const moved = join(root, 'moved')
+  add(missing, 'missing')
+  add(replaced, 'replaced')
+  add(wrongWorkspace, 'stay-registered')
+  add(moved, 'move-me')
+  rmSync(missing, { recursive: true })
+  rmSync(replaced, { recursive: true })
+  mkdirSync(replaced)
+  jj(replaced, ['--config', 'git.colocate=false', 'git', 'init'])
+  rmSync(wrongWorkspace, { recursive: true })
+  // The replacement even shares the store, but it names a different workspace.
+  renameSync(moved, wrongWorkspace)
+
+  const listing = await call(handlers.repositories, route('/api/vcs.repositories', { sessionId: repo.sessionId }))
+  assert.deepEqual(listing.body.repositories[0].worktrees.map(tree => tree.path), [source, linked])
+  for (const path of [missing, replaced, wrongWorkspace, moved, source, 'relative']) {
+    const denied = await call(handlers.status, route('/api/vcs.status', { ...repo, worktree: path }))
+    assert.equal(denied.status, 400)
+    assert.equal(denied.body.error.code, 'not-a-repo')
+  }
+  const invalid = await call(handlers.log, route('/api/vcs.log', { ...repo, worktree: [source, replaced] }))
+  assert.equal(invalid.body.error.code, 'not-a-repo')
+  const duplicate = await call(handlers.log, route('/api/vcs.log', { ...repo, worktree: [linked, `${linked}/`] }))
+  assert.equal(duplicate.body.error.code, 'bad-request')
+  const deniedWrite = await handlers.sync(new Request('http://127.0.0.1/api/vcs.sync', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...repo, worktree: linked }),
+  }))
+  assert.equal(deniedWrite.status, 403)
+  assert.equal((await deniedWrite.json()).error.code, 'forbidden')
+})
+
+test('without the Jujutsu workspace template, the session still sees independently discovered roots', { skip: !HAS_JJ_WORKSPACE_ROOTS }, async t => {
+  const { source, add, repo } = jjWorkspaceFixture(t)
+  const direct = join(source, 'nested')
+  add(direct, 'nested')
+  const older = createHandlers(createHost({
+    sessions: { get: id => id === repo.sessionId ? { header: { cwd: source } } : undefined },
+    subprocess: {
+      ...fakeSubprocess,
+      spawn(spec) {
+        if (spec.argv.includes('workspace') && spec.argv.includes('list')) {
+          return { done: Promise.resolve({ exitCode: 1 }), collected: {} }
+        }
+        return fakeSubprocess.spawn(spec)
+      },
+    },
+  }))
+  const listing = await call(older.repositories, route('/api/vcs.repositories', { sessionId: repo.sessionId }))
+  assert.equal(listing.status, 200)
+  assert.deepEqual(listing.body.repositories.map(entry => [entry.path, entry.worktrees.map(tree => tree.path)]), [
+    [source, [source]], [direct, [direct]],
+  ])
+  const history = await call(older.log, route('/api/vcs.log', repo))
+  assert.equal(history.status, 200)
+  assert.equal(history.body.commits[0].subject, 'source work')
+  assert.equal(history.body.commits[0].workingCopy, true)
 })
 
 test('Jujutsu commit detail carries change id, refs, and file stats', { skip: !HAS_JJ }, async () => {

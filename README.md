@@ -8,9 +8,9 @@ Version control in the DeepSeek Harness right Sidebar. Adds a `VCS` tab to inspe
 
 - **In the Sidebar.** The panel lives in a `VCS` tab beside files and terminals, with a card on the Sidebar guide. The Turn banner and the shortcut open the same tab. A header toggle shows the timeline beside the changes, or one column at a time so a wide Sidebar gives the diff its full width.
 - **Timeline & lane graph.** Browse working changes and topological commit history together, with branches, bookmarks, and tags. Click the repository name in the header to switch repositories.
-- **Git worktrees on one graph.** In **Worktrees**, check one or more checkouts and choose **Selected worktrees** or **All commits** under **History range**. The session worktree is selected by default. Each checked worktree has its own staged, unstaged, and untracked changes above the shared graph. Viewing multiple worktrees is read-only and leaves your session directory and branches unchanged.
+- **Worktrees on one graph.** In **Worktrees**, check Git worktrees or Jujutsu workspaces and choose **Selected worktrees** or **All commits**. The session worktree is selected by default. Git shows a changes row for each selected worktree; Jujutsu marks each selected working-copy commit with `name@`. Checking a worktree leaves the session directory and checkouts in place.
 - **Inline change tree.** Browse changed files as a collapsible list, or expand any file to read its diff in place with sticky headers, unified or split view, and line wrapping.
-- **Git & Jujutsu native.** Shows staged and unstaged groups (untracked items marked `U`, new additions `A`) and ahead/behind in Git. Jujutsu shows `@`, change IDs, and bookmarks; its **Worktrees** menu lists the current working copy and lets you choose `@` or **All commits**.
+- **Git & Jujutsu native.** Shows staged and unstaged groups (untracked items marked `U`, new additions `A`) and ahead/behind in Git. Jujutsu shows change IDs and bookmarks; refreshing snapshots the checked workspaces so their working-copy diffs reflect the files on disk.
 - **Turn banner & shortcut.** File-changing turns end with a compact VCS banner showing that turn's branch (or `@`), changed-file count, and `+` / `−` line totals in place of Chat's changed-files card. Open the Sidebar tab from anywhere with `⌘⇧G` / `Ctrl+Shift+G`, and press it again to slide back to the conversation.
 - **One-click sync.** The button beside the Git branch shows ahead/behind counts; clicking it fetches the upstream, then fast-forwards or pushes. A diverged branch, a fast-forward that would overwrite local edits, or a branch without an upstream is left untouched with a note on what to do next.
 - **Branch switching.** The branch name opens the repository's local branches; picking one checks it out. Only local branches are listed—no implicit remote-tracking branches; remote branches are checked out explicitly from their history badges. Git refuses when local changes would be overwritten, so nothing is stashed, discarded, or forced.
@@ -39,6 +39,7 @@ Clicking toolbar buttons or switching back to the window keeps keyboard focus re
 ## Install
 
 Requires **DSH 0.2.2-rc.3+** (Desktop or Web) with the right-Sidebar tab and navigation APIs, and `git` or `jj` on `PATH`.
+Discovering Jujutsu sibling workspaces requires **jj 0.47+** and recorded workspace paths. The current workspace remains available without them.
 
 - **In DSH:** Open **Plugins → Add plugin**, select this directory, and restart DSH.
 - **Via CLI:**

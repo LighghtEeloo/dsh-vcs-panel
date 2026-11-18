@@ -13,7 +13,7 @@ import { isRowKey } from './detail/tree.js'
 /** Prefix that keeps this plugin's keys apart from any other tab state. */
 const KEY_PREFIX = 'vcs:'
 
-/** The backend's default-node token; the panel gives each checkout its own row identity. */
+/** The backend's virtual worktree token; the panel selects checkouts by path. */
 export const WORKTREE = 'worktree'
 
 const WORKTREE_PREFIX = 'worktree:'
@@ -28,7 +28,7 @@ export function worktreePath(node) {
     : null
 }
 
-/** The working-copy commit of a backend whose working copy is a commit. */
+/** The legacy single-workspace selection and the backend's working-copy token. */
 export const WORKING_COPY = '@'
 
 /** Ref modes a persisted range may name; the active backend narrows this list. */

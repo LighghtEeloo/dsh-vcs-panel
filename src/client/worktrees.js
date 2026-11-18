@@ -1,10 +1,10 @@
 /** The checked working copies are an ordered subset of a repository's catalog. */
 
-import { preferredNode, WORKTREE, worktreeNode, worktreePath } from './state.js'
+import { preferredNode, WORKING_COPY, WORKTREE, worktreeNode, worktreePath } from './state.js'
 import { shortSha } from './format.js'
 
 export function repositoryWorktrees(repository) {
-  if (repository?.capabilities?.workingCopy !== 'row') return []
+  if (repository?.capabilities?.workingCopy == null) return []
   return repository.worktrees?.length > 0
     ? repository.worktrees
     : [{ path: repository.path, name: repository.name, head: null, branch: null }]
@@ -23,19 +23,44 @@ export function toggleWorktree(worktrees, paths, path) {
   return checkedWorktrees(worktrees, [...checked, path]).map(tree => tree.path)
 }
 
-export function worktreeRefLabel(tree, t) {
+export function worktreeRefLabel(tree, t, commitBased = false) {
+  if (commitBased) return WORKING_COPY
   if (tree.branch !== null && tree.branch !== undefined) return tree.branch
   return tree.head ? `${t('top.detached')} · ${shortSha(tree.head)}` : null
 }
 
+export function workingCopyLabel(tree, named) {
+  return named ? `${tree.name}@` : WORKING_COPY
+}
+
+/** Name each checked working copy on its real commit, without cloning rows. */
+export function attachWorkingCopies(commits, worktrees) {
+  const byHead = new Map()
+  for (const tree of worktrees) {
+    if (tree.head === null) continue
+    const copies = byHead.get(tree.head)
+    if (copies === undefined) byHead.set(tree.head, [tree])
+    else copies.push(tree)
+  }
+  return commits.map(commit => {
+    const workingCopies = byHead.get(commit.sha)
+    if (workingCopies !== undefined) return { ...commit, workingCopy: true, workingCopies }
+    return commit.workingCopy === true ? { ...commit, workingCopy: false } : commit
+  })
+}
+
 /** In a multi-tree view (or a sibling preview), default to the working changes. */
-export function preferredViewNode(state, worktrees, status) {
+export function preferredViewNode(state, worktrees, status, commitBased = false) {
   if (worktrees.length === 0) return preferredNode(state, status)
   const current = worktreePath(state.node)
   if (state.nodeChosen && state.node !== null) {
+    if (state.node === WORKING_COPY) {
+      return worktreeNode((worktrees.find(tree => tree.path === state.repo) ?? worktrees[0]).path)
+    }
     if (state.node === WORKTREE) return worktreeNode(worktrees[0].path)
     if (current === null || worktrees.some(tree => tree.path === current)) return state.node
   }
+  if (commitBased) return worktreeNode(worktrees[0].path)
   if (worktrees.length !== 1 || worktrees[0].path !== state.repo) {
     const tree = worktrees.find(entry => entry.status?.total > 0) ?? worktrees[0]
     return worktreeNode(tree.path)

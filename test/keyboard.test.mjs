@@ -2662,39 +2662,73 @@ test('VcsView combines Git worktree and range choices and isolates diffs by work
   }
 })
 
-test('VcsView uses the same menu for Jujutsu with only the current working copy', async () => {
-  const harness = createHarness({ width: 320 })
+test('VcsView reads checked Jujutsu workspaces as commits and follows a rewritten workspace', async () => {
+  const harness = createHarness({ width: 1000 })
   const restore = harness.installGlobals()
   const savedFetch = globalThis.fetch
-  const path = '/jj-repo'
-  const copy = {
-    sha: 'a'.repeat(40), changeId: 'abcxyz', parents: [], refs: [], author: 'Ada',
-    authorTime: 1_700_000_000_000, subject: 'Working copy', workingCopy: true,
+  const repo = '/jj-repo'
+  const sibling = '/another checkout'
+  const base = {
+    sha: 'a'.repeat(40), parents: [], refs: [], author: 'Ada',
+    authorTime: 1_700_000_000_000, subject: 'Common parent',
   }
+  const primary = { ...base, sha: 'b'.repeat(40), changeId: 'main', parents: [base.sha], subject: 'Source work', workingCopy: true }
+  let preview = { ...base, sha: 'c'.repeat(40), changeId: 'preview', parents: [base.sha], subject: 'Preview work' }
   const historyReads = []
   const statusReads = []
+  let requestedDiff = null
+  let offered = true
+  let blockSnapshot = false
+  let releaseSnapshot = null
   const json = body => ({ ok: true, status: 200, async json() { return body } })
   globalThis.fetch = async (url, init) => {
     const { pathname, searchParams: params } = new URL(url, 'http://127.0.0.1')
     assert.equal(init.method, 'GET')
-    assert.deepEqual(params.getAll('worktree'), [], 'a worktree choice in the menu is not a backend worktree')
     if (pathname === '/api/vcs.repositories') {
-      return json({ repositories: [{ path, name: 'jj-repo', enclosing: true, capabilities: JUJUTSU_CAPABILITIES }] })
+      const worktrees = [{ path: repo, name: 'default', head: primary.sha }]
+      if (offered) worktrees.push({ path: sibling, name: 'review preview', head: preview.sha })
+      return json({ repositories: [{ path: repo, name: 'jj-repo', enclosing: true, capabilities: JUJUTSU_CAPABILITIES, worktrees }] })
     }
-    assert.equal(params.get('repo'), path)
+    assert.equal(params.get('repo'), repo)
     if (pathname === '/api/vcs.status') {
-      statusReads.push(path)
-      const { sha: commitId, changeId, refs } = copy
+      const selected = params.get('worktree')
+      statusReads.push(selected)
+      if (selected === sibling && !offered) {
+        return { ok: false, status: 400, async json() { return { error: { code: 'not-a-repo' } } } }
+      }
+      if (selected === sibling && blockSnapshot) await new Promise(resolve => { releaseSnapshot = resolve })
+      const { sha: commitId, changeId, refs } = selected === sibling ? preview : primary
       return json({
         defaultNode: '@', capabilities: JUJUTSU_CAPABILITIES,
-        workingCopy: { node: '@', commitId, changeId, refs, summary: { changed: 0, added: 0, deleted: 0 } },
+        workingCopy: { node: '@', commitId, changeId, refs, summary: { changed: 1, added: 2, deleted: 1 } },
       })
     }
     if (pathname === '/api/vcs.log') {
-      historyReads.push(params.get('ref'))
-      return json({ commits: [copy] })
+      const ref = params.get('ref')
+      const paths = params.getAll('worktree')
+      historyReads.push({ ref, paths })
+      const all = ref === 'all'
+      const commits = []
+      if (offered && (all || paths.includes(sibling))) commits.push(preview)
+      if (all || paths.length === 0 || paths.includes(repo)) commits.push(primary)
+      commits.push(base)
+      return json({
+        commits,
+        worktreeHeads: paths.length === 0 ? undefined : paths.map(path => ({ path, head: path === sibling ? preview.sha : primary.sha })),
+      })
     }
-    if (pathname === '/api/vcs.commit') return json({ commit: { ...copy, files: [] } })
+    // A working-copy diff is against exactly the commit whose files are shown,
+    // not the base workspace's @ or a directory outside the shared store.
+    assert.equal(params.has('worktree'), false)
+    if (pathname === '/api/vcs.commit') {
+      const copy = [primary, preview, base].find(commit => commit.sha === params.get('sha'))
+      assert.notEqual(copy, undefined)
+      return json({ commit: { ...copy, files: [{ path: 'same.txt', status: 'M', added: 2, deleted: 1 }] } })
+    }
+    if (pathname === '/api/vcs.diff') {
+      requestedDiff = Object.fromEntries(params)
+      return json({ kind: 'text', before: true, after: true, hunks: [] })
+    }
     throw new Error(`unexpected route: ${pathname}`)
   }
   try {
@@ -2703,38 +2737,83 @@ test('VcsView uses the same menu for Jujutsu with only the current working copy'
     await harness.settle()
     const body = harness.document.body
     const trigger = body.querySelector('.vcs-worktree-button')
+    const menu = () => body.querySelector('.vcs-worktree-menu')
+    const choices = () => menu().querySelectorAll('[role="menuitemcheckbox"]')
+    const ranges = () => menu().querySelectorAll('[role="menuitemradio"]')
+    const timeline = () => textOf(body.querySelector('.vcs-timeline'))
+    const copies = () => body.querySelectorAll('.vcs-working-copy-row')
     assert.equal(textOf(trigger), t('top.worktreeSelection', { count: '1' }))
-    assert.equal(body.querySelector('.vcs-worktree-row'), null)
+    assert.deepEqual(statusReads, [null])
+    assert.deepEqual(historyReads, [{ ref: '@', paths: [] }])
+    assert.equal(body.querySelector('.vcs-worktree-row'), null, 'commits, not synthetic working-tree rows')
     assert.equal(body.querySelector('[aria-label="history.refLabel"]'), null)
+
     trigger.focus()
     harness.keyDown(trigger, 'ArrowDown')
     await harness.settle()
-    const menu = body.querySelector('.vcs-worktree-menu')
-    const choices = menu.querySelectorAll('[role="menuitemcheckbox"]')
-    assert.equal(choices.length, 1)
-    const [workingCopy] = choices
-    assert.match(textOf(workingCopy), /jj-repo@/u)
-    assert.equal(workingCopy.attributes.get('aria-checked'), 'true')
-    assert.equal(workingCopy.attributes.get('aria-disabled'), 'true')
-    harness.keyClick(workingCopy)
-    await harness.settle()
-    assert.deepEqual(statusReads, [path])
-    assert.deepEqual(historyReads, ['@'])
+    const [current, other] = choices()
+    assert.match(textOf(current), /default@/u)
+    assert.match(textOf(other), /review preview@/u)
+    assert.equal(current.attributes.get('aria-disabled'), 'true')
+    harness.keyClick(current)
+    assert.equal(current.attributes.get('aria-checked'), 'true')
+    assert.deepEqual(ranges().map(textOf), ['history.selectedWorktrees', 'history.all'])
 
-    const ranges = menu.querySelectorAll('[role="menuitemradio"]')
-    assert.deepEqual(ranges.map(textOf), ['history.workingCopy', 'history.all'])
-    assert.deepEqual(ranges.map(item => item.attributes.get('aria-checked')), ['true', 'false'])
-    harness.keyDown(workingCopy, 'End')
-    harness.keyClick(ranges[1])
+    blockSnapshot = true
+    harness.keyDown(current, 'ArrowDown')
+    harness.keyClick(other, ' ')
     await harness.settle()
-    assert.deepEqual(historyReads, ['@', 'all'])
-    assert.deepEqual(ranges.map(item => item.attributes.get('aria-checked')), ['false', 'true'])
-    assert.equal(harness.document.activeElement, ranges[1])
-    assert.equal(workingCopy.attributes.get('aria-checked'), 'true')
-    harness.keyDown(ranges[1], 'Escape')
+    assert.deepEqual(statusReads, [null, null, sibling])
+    assert.equal(historyReads.length, 1, 'history waits until the sibling snapshot settles')
+    assert.equal(harness.document.activeElement, other)
+    blockSnapshot = false
+    releaseSnapshot()
+    await harness.settle()
+    assert.deepEqual(historyReads.at(-1), { ref: '@', paths: [repo, sibling] })
+    assert.equal(copies().length, 2)
+    assert.match(timeline(), /review preview@/u)
+    harness.keyDown(other, 'Escape')
     assert.equal(harness.document.activeElement, trigger)
-    assert.equal(body.querySelector('.vcs-worktree-menu'), null)
+
+    harness.mouseClick(copies().find(row => textOf(row).includes('Preview work')))
+    await harness.settle()
+    assert.equal(textOf(body.querySelector('.vcs-node-title')), 'Preview work')
+    body.querySelector('.vcs-tree-file-head').props.onClick()
+    for (const observer of harness.intersections) observer.trigger(() => true)
+    await harness.settle()
+    assert.deepEqual(requestedDiff, {
+      sessionId: 'jj-range-menu', repo, scope: 'commit', path: 'same.txt', rev: preview.sha,
+    })
+
+    harness.mouseClick(trigger)
+    await harness.settle()
+    harness.keyClick(choices()[0])
+    await harness.settle()
+    assert.deepEqual(historyReads.at(-1), { ref: '@', paths: [sibling] })
+    assert.doesNotMatch(timeline(), /Source work/u)
+    assert.equal(textOf(body.querySelector('.vcs-node-title')), 'Preview work')
+    harness.keyDown(harness.document.activeElement, 'End')
+    harness.keyClick(ranges()[1])
+    await harness.settle()
+    assert.deepEqual(historyReads.at(-1), { ref: 'all', paths: [sibling] })
+    assert.match(timeline(), /Source work/u)
+    assert.equal(copies().length, 1, 'unchecked @ is an ordinary commit in all history')
+    harness.keyDown(ranges()[1], 'Escape')
+
+    preview = { ...preview, sha: 'd'.repeat(40), subject: 'Preview after snapshot' }
+    harness.mouseClick(body.querySelector('[aria-label="top.refresh"]'))
+    await harness.settle()
+    assert.equal(textOf(body.querySelector('.vcs-node-title')), preview.subject)
+    assert.equal(copies()[0].attributes.get('aria-current'), 'true')
+    assert.equal(statusReads.at(-1), sibling)
+    offered = false
+    harness.mouseClick(body.querySelector('[aria-label="top.refresh"]'))
+    await harness.settle()
+    assert.deepEqual(historyReads.at(-1), { ref: 'all', paths: [] })
+    assert.equal(textOf(body.querySelector('.vcs-node-title')), 'Source work')
+    assert.equal(body.querySelector('.vcs-worktree-row'), null)
   } finally {
+    releaseSnapshot?.()
     harness.unmount()
     restore()
     globalThis.fetch = savedFetch

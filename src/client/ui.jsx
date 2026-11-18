@@ -193,6 +193,17 @@ export function RefBadge({ reference, onRefContextMenu, onRefActivate }) {
   )
 }
 
+/** A working-copy commit may be shared by more than one checked workspace. */
+export function WorkingCopyBadge({ labels, title }) {
+  if (labels.length === 0) return null
+  return (
+    <span className="vcs-working-badge" title={`${title}: ${labels.join(', ')}`}>
+      <span className="vcs-working-badge-label">{labels[0]}</span>
+      {labels.length > 1 ? <span>+{labels.length - 1}</span> : null}
+    </span>
+  )
+}
+
 /** Padlock glyph for the read-only marker. */
 export function LockIcon() {
   return (

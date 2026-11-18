@@ -1696,7 +1696,9 @@
   flex: none;
   align-items: center;
   justify-content: center;
+  gap: 3px;
   min-width: 16px;
+  max-width: 120px;
   height: 16px;
   padding: 0 4px;
   border: 0.5px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 65%, transparent);
@@ -1707,6 +1709,12 @@
   font-size: 10px;
   line-height: 15px;
   font-weight: 600;
+}
+
+.vcs-working-badge-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .vcs-working-copy {
