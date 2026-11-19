@@ -156,19 +156,19 @@ export function apply(ctx) {
   /**
    * Version control panel living in a right-Sidebar tab.
    *
-   * Opening or revealing the page asks the panel to land keyboard focus after
-   * the host has focused its pane. A page restored on reload carries no
-   * navigation revision and must not take focus.
+   * Opening or revealing the page asks the panel to refresh and land keyboard
+   * focus after the host has focused its pane. An already visible page starts
+   * with that request handled by the initial load.
    * @param {object} props - standard `sidebar.right.pane.tab` props.
    * @returns {object} the version control panel with the active locale.
    */
   function SidebarVcsView(props) {
     const locale = useActiveLocale()
     const { tab } = props.useTabInfo()
-    const [focusRequest, setFocusRequest] = useState(0)
     const navRevision = tab.navigation?.revision ?? 0
+    const [focusRequest, setFocusRequest] = useState(tab.visible && navRevision > 0 ? 1 : 0)
     const wasVisibleRef = useRef(tab.visible)
-    const lastRevisionRef = useRef(0)
+    const lastRevisionRef = useRef(tab.visible ? navRevision : 0)
 
     useEffect(() => {
       const becameVisible = tab.visible && !wasVisibleRef.current

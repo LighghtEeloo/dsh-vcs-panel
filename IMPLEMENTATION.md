@@ -236,7 +236,7 @@ type TurnSummary = {
 | 历史分页 / 最多加载提交数 | 300 条/页，最多 10,000 条 | Host `log` |
 | 单会话保留的轮末头指针 / 客户端空闲轮次摘要缓存 | 2,000 轮 / 500 条 | Host `TurnTracker`、Client `turn-summary` |
 | 单条后端命令 | 30 s 超时（远程抓取与推送 120 s，含钩子），stdout 8 MB，stderr 尾部 16 KB，终止宽限 2 s | Host `CommandRunner`、`lib/sync.js`、`lib/branch-ops.js`、`lib/tag-ops.js`、`lib/commit-ops.js` |
-| 页面重新可见自动刷新阈值 / Jujutsu 快照频率 | 隐藏超过 30 s 刷新一次 / 每次刷新每棵勾选树一次 | Client 可见性监听、Jujutsu 后端 |
+| Jujutsu 快照频率 | 每次刷新每棵勾选树一次 | Jujutsu 后端 |
 | 加载轮廓与进度线的淡入延迟 | 180 ms（`--vcs-skeleton-delay`） | Client `styles.css` |
 | 转动图标：巡航周期 / 起转 / 收尾滑行 | 900 ms 一圈（减少动效 2,400 ms）/ 加速 90° / 250–1,000 ms | Client `turning.js` |
 | 进度线淡出 | 240 ms（`PROGRESS_FADE`） | Client `TopBar.jsx`、`styles.css` |

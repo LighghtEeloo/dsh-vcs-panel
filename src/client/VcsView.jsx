@@ -4,9 +4,9 @@
  * One Session, one repository, one timeline (checked worktrees, then shared
  * commits) and one detail pane for the selected node. Host data is read
  * through `api.js`; this component owns request lifecycle, selection, paging,
- * layout, and the sessionStorage-backed state. `focusRequest` moves keyboard
- * focus into the selected timeline row after the Sidebar host has focused its
- * pane.
+ * layout, and the sessionStorage-backed state. `focusRequest` signals that the
+ * Sidebar opened or revealed the pane, so it can refresh and prepare keyboard
+ * navigation.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -22,7 +22,7 @@ import {
   errorMessage, formatCount,
 } from './format.js'
 import {
-  BACK, canClaimFocusFrom, findAncestor, hasClass, isDiscreteActionButton, isEditableTarget,
+  BACK, canClaimFocusFrom, findAncestor, hasAttr, hasClass, isDiscreteActionButton, isEditableTarget,
   isNavigationStop, isOverlayOrMenuTarget, isOverlayTarget, movement, rowStep, zoneOf,
 } from './keys.js'
 import { dirKey } from './detail/tree.js'
@@ -43,8 +43,6 @@ import { TimelineSkeleton, TreeSkeleton } from './skeleton.jsx'
 const PAGE_SIZE = 300
 /** Limit concurrent reads for backends that don't snapshot into a shared store. */
 const STATUS_CONCURRENCY = 4
-/** Reload when the panel becomes visible after this idle time. */
-const STALE_MS = 30_000
 /** Below this width the panel shows one column at a time, whatever the preference. */
 const NARROW_WIDTH = 760
 /** Width of the divider between the timeline and the detail. */
@@ -99,7 +97,7 @@ export function VcsView({
   const [settledStatusKey, setSettledStatusKey] = useState(null)
   const [log, setLog] = useState(idleLog)
   const [revision, setRevision] = useState(0)
-  // The control whose refresh is waiting for status: 'refresh', 'sync', or null.
+  // The action whose refresh is waiting for status, including 'auto' on activation.
   const [refreshing, setRefreshing] = useState(null)
   const [width, setWidth] = useState(0)
   // The column the single-column layout shows: 'timeline' or 'detail'.
@@ -116,7 +114,6 @@ export function VcsView({
   const rootRef = useRef(null)
   const sessionRef = useRef(sessionId)
   const logKeyRef = useRef('')
-  const lastLoaded = useRef(0)
   const dragRef = useRef(null)
   const attemptedDirsRef = useRef(new Set())
   const directoryRequestsRef = useRef(new Map())
@@ -322,12 +319,11 @@ export function VcsView({
 
   /**
    * Refresh repositories, status, history, and every open comparison.
-   * `requester` names the control the wait belongs to, so its icon is the
-   * one that turns.
+   * `requester` identifies the action that owns the progress indicator.
    */
   const refresh = useCallback((requester = 'refresh') => {
     setRefreshing(requester)
-    setNotice(null)
+    if (requester !== 'auto') setNotice(null)
     pageControllerRef.current?.abort()
     pageControllerRef.current = null
     resetDirectories()
@@ -482,7 +478,7 @@ export function VcsView({
     return () => { observer.disconnect() }
   }, [])
 
-  // Repositories: reload on mount and explicit refresh.
+  // Repositories: reload on mount and refresh.
   useEffect(() => {
     const controller = new AbortController()
     setRepositories(previous => ({ ...previous, status: previous.list.length === 0 ? 'loading' : 'ready', error: null }))
@@ -528,7 +524,6 @@ export function VcsView({
           const data = await reader.status(path, controller.signal)
           if (controller.signal.aborted) return
           setStatuses(previous => ({ ...previous, [path]: { status: 'ready', data, error: null } }))
-          lastLoaded.current = Date.now()
         } catch (error) {
           if (error?.name === 'AbortError' || controller.signal.aborted) return
           setStatuses(previous => ({ ...previous, [path]: { status: 'error', data: previous[path]?.data ?? null, error } }))
@@ -602,18 +597,46 @@ export function VcsView({
     }
   }, [api, baseCapabilities, historyKey, historyWorktrees, repositoryReady, state.repo, state.ref, waitingForSnapshots])
 
-  // Returning to the panel after a while refreshes once, without polling.
+  const handledFocusRequest = useRef(focusRequest)
+  const canAutoRefresh = useRef(false)
+  canAutoRefresh.current = visible && !actions.repoBusy && refreshing === null
+    && repositories.status !== 'loading'
+    && !Object.values(statuses).some(entry => entry.status === 'loading' || entry.status === 'refreshing')
+
+  // The first mount already loads the data. On later activations, group the
+  // pane, window, and document events that can accompany a single focus change.
   useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return
-      if (Date.now() - lastLoaded.current < STALE_MS) return
-      diffCacheRef.current.clear()
-      commitCacheRef.current.clear()
-      setRevision(value => value + 1)
+    const opened = handledFocusRequest.current !== focusRequest
+    handledFocusRequest.current = focusRequest
+    if (!visible) return undefined
+    let frame = null
+    const queueRefresh = () => {
+      if (frame !== null || !canAutoRefresh.current || document.visibilityState !== 'visible') return
+      frame = requestAnimationFrame(() => {
+        frame = null
+        if (canAutoRefresh.current && document.visibilityState === 'visible') refresh('auto')
+      })
     }
-    document.addEventListener('visibilitychange', onVisible)
-    return () => { document.removeEventListener('visibilitychange', onVisible) }
-  }, [])
+    const onFocusIn = ({ target, relatedTarget }) => {
+      // A missing origin can be focus restoration after a render or window switch.
+      if (relatedTarget == null) return
+      const root = rootRef.current
+      const pane = findAncestor(root, null, node => (
+        hasAttr(node, 'data-dockkit-pane') || hasAttr(node, 'data-dockkit-float')
+      )) ?? root
+      if (pane?.contains(target) && !pane.contains(relatedTarget)) queueRefresh()
+    }
+    document.addEventListener('focusin', onFocusIn)
+    document.addEventListener('visibilitychange', queueRefresh)
+    window.addEventListener('focus', queueRefresh)
+    if (opened) queueRefresh()
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame)
+      document.removeEventListener('focusin', onFocusIn)
+      document.removeEventListener('visibilitychange', queueRefresh)
+      window.removeEventListener('focus', queueRefresh)
+    }
+  }, [focusRequest, refresh, sessionId, visible])
 
   // A different Session may reuse this component instance; reload its state.
   useEffect(() => {
@@ -1223,7 +1246,7 @@ export function VcsView({
         onRefMode={ref => { update({ ref }) }}
         onRefresh={() => { refresh() }}
         refreshing={refreshing === 'refresh'}
-        revalidating={Object.values(statuses).some(entry => entry.status === 'refreshing')}
+        revalidating={refreshing === 'auto' || Object.values(statuses).some(entry => entry.status === 'refreshing')}
         onSync={() => { void actions.sync() }}
         syncing={actions.syncing || refreshing === 'sync'}
         branches={branches.list}

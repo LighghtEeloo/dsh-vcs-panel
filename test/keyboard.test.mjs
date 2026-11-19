@@ -3415,6 +3415,112 @@ test('VcsView claims keyboard readiness on window focus and visibility without s
   }
 })
 
+test('VcsView refreshes working changes and history on opening or regaining focus', async () => {
+  const harness = createHarness()
+  const restore = harness.installGlobals()
+  const previousFetch = globalThis.fetch
+  const reads = []
+  const repo = { path: '/repo', name: 'repo', enclosing: true, vcs: 'git', capabilities: GIT_CAPABILITIES }
+  let file = 'before.js'
+  let pendingStatus = null
+  globalThis.fetch = async url => {
+    const route = new URL(url, 'http://127.0.0.1').pathname
+    reads.push(route)
+    let data
+    if (route === '/api/vcs.repositories') {
+      data = { repositories: [repo] }
+    } else if (route === '/api/vcs.status') {
+      if (pendingStatus !== null) await pendingStatus.promise
+      data = {
+        repo, vcs: 'git', capabilities: GIT_CAPABILITIES, total: 1,
+        branch: { name: 'main', oid: null, unborn: true },
+        groups: { staged: [], unstaged: [{ path: file, status: 'M', added: 1, deleted: 0 }], untracked: [] },
+      }
+    } else {
+      assert.equal(route, '/api/vcs.log')
+      data = { commits: [] }
+    }
+    return { ok: true, status: 200, async json() { return data } }
+  }
+
+  try {
+    const { VcsView } = await loadClientModule('src/client/VcsView.jsx', harness)
+    const { document, react } = harness
+    const mount = (visible, focusRequest) => harness.mount(react.createElement('div', null,
+      react.createElement('textarea', { className: 'composer' }),
+      react.createElement('section', { 'data-dockkit-pane': 'right' },
+        react.createElement(VcsView, { sessionId: 'session-refresh', t, visible, focusRequest })),
+    ))
+    const expectRead = path => {
+      assert.deepEqual(reads.splice(0).sort(), ['/api/vcs.log', '/api/vcs.repositories', '/api/vcs.status'])
+      assert.ok(document.body.querySelector(`[data-row-key="unstaged|${path}"]`), path)
+    }
+
+    mount(true, 1)
+    await harness.settle()
+    expectRead('before.js')
+    const pane = document.body.querySelector('[data-dockkit-pane]')
+    const composer = document.body.querySelector('.composer')
+
+    mount(false, 1)
+    harness.dispatchWindow('focus')
+    harness.dispatchDocument('visibilitychange')
+    await harness.settle()
+    assert.deepEqual(reads, [], 'a hidden panel skips window events')
+
+    file = 'after-terminal.js'
+    mount(true, 2)
+    await harness.settle()
+    expectRead(file)
+
+    const root = document.body.querySelector('.vcs-root')
+    harness.dispatchDocument('focusin', { target: root, relatedTarget: pane })
+    await harness.settle()
+    assert.deepEqual(reads, [], 'moving to a control within the pane does not reload it')
+
+    file = 'after-composer.js'
+    harness.dispatchDocument('focusin', { target: pane, relatedTarget: composer })
+    await harness.settle()
+    expectRead(file)
+
+    file = 'after-reveal.js'
+    mount(true, 3)
+    await harness.settle()
+    expectRead(file)
+
+    file = 'after-window.js'
+    pendingStatus = Promise.withResolvers()
+    document.visibilityState = 'hidden'
+    harness.dispatchDocument('visibilitychange')
+    harness.dispatchWindow('focus')
+    await harness.settle()
+    assert.deepEqual(reads, [], 'a background page skips focus events')
+
+    document.visibilityState = 'visible'
+    harness.dispatchDocument('visibilitychange')
+    harness.dispatchWindow('focus')
+    await harness.settle()
+    harness.dispatchWindow('focus')
+    await harness.settle()
+    pendingStatus.resolve()
+    await harness.settle()
+    expectRead(file)
+
+    file = 'after-browser-tab.js'
+    document.visibilityState = 'hidden'
+    harness.dispatchDocument('visibilitychange')
+    document.visibilityState = 'visible'
+    harness.dispatchDocument('visibilitychange')
+    await harness.settle()
+    expectRead(file)
+  } finally {
+    pendingStatus?.resolve()
+    harness.unmount()
+    restore()
+    globalThis.fetch = previousFetch
+  }
+})
+
 test('Timeline virtualization, paging, ChangeTree hunk entry, header scroll-back, diff clicks/selection, narrow empty commit, and commitCache', async () => {
   // Part A: Timeline keeps focusRow mounted across large scroll offsets and handles PageUp/PageDown/Home/End.
   {
